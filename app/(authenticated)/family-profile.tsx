@@ -31,7 +31,8 @@ export default function FamilyProfileScreen() {
   const router = useRouter();
   const { data } = useOnboarding();
 
-  const isPersonalOnly = data.spaceType === 'personal';
+  const savedFamilyMembers = data.familyData?.familyMembers ?? [];
+  const isPersonalOnly = data.spaceType === 'personal' && savedFamilyMembers.length === 0;
   const screenTitle = isPersonalOnly ? 'ניהול פרופיל אישי' : 'ניהול פרופיל משפחתי';
 
   // Initialise from previously saved context data (unlike onboarding which starts empty)

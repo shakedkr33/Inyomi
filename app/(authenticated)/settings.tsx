@@ -47,9 +47,10 @@ export default function SettingsScreen() {
   const deleteMyAccount = useMutation(api.users.deleteMyAccount);
 
   const { data: onboardingData } = useOnboarding();
-  const isPersonalOnly = onboardingData.spaceType === 'personal';
+  const familyMembers = onboardingData.familyData?.familyMembers ?? [];
+  const isPersonalOnly = onboardingData.spaceType === 'personal' && familyMembers.length === 0;
   const profileRowTitle = isPersonalOnly ? 'ניהול פרופיל אישי' : 'ניהול פרופיל משפחתי';
-  const profileMemberCount = onboardingData.familyData?.familyMembers?.length ?? 0;
+  const profileMemberCount = familyMembers.length;
 
   // ============================================================================
   // פעולות
@@ -176,7 +177,7 @@ export default function SettingsScreen() {
               </Text>
               {profileMemberCount > 0 && (
                 <Text className={`text-zinc-400 text-xs mt-0.5 ${tw.textStart}`}>
-                  {profileMemberCount} בני משפחה
+                  {profileMemberCount} מחוברים
                 </Text>
               )}
             </View>

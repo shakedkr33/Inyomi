@@ -18,7 +18,8 @@
       "bundleIdentifier": "com.shakedkr.inyomi",
       "infoPlist": {
         "ExpoLocalization_supportsRTL": true,
-        "ExpoLocalization_forcesRTL": true
+        "ExpoLocalization_forcesRTL": true,
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -32,11 +33,11 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [],
+    "owner": "shakedkr",
     "extra": {
       "eas": {
-        "projectId": "bd8ce389-5f1b-44b7-808b-fbac15121d53"
+        "projectId": "1ebaed08-3c08-439c-9530-693eef771566"
       }
-    },
-    "owner": "shakedkr"
+    }
   }
 }
