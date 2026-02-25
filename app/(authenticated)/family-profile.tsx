@@ -1,6 +1,5 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -12,34 +11,31 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { AddPersonBottomSheet } from '../components/onboarding/AddPersonBottomSheet';
-import { ColorPicker, PET_COLORS, PROFILE_COLORS } from '../components/onboarding/ColorPicker';
+
+import { AddPersonBottomSheet } from '../../components/onboarding/AddPersonBottomSheet';
+import { ColorPicker, PET_COLORS, PROFILE_COLORS } from '../../components/onboarding/ColorPicker';
 import {
   FamilyMemberDisplayCard,
   FamilyMemberEditCard,
-} from '../components/onboarding/FamilyMemberCard';
-import { colors, shadows } from '../constants/theme';
-import type { FamilyMember } from '../contexts/OnboardingContext';
-import { useOnboarding } from '../contexts/OnboardingContext';
+} from '../../components/onboarding/FamilyMemberCard';
+import { colors, shadows } from '../../constants/theme';
+import type { FamilyMember } from '../../contexts/OnboardingContext';
+import { useOnboarding } from '../../contexts/OnboardingContext';
 import {
   MAX_PEOPLE,
   MAX_PETS,
   useFamilyProfileEditor,
-} from '../hooks/useFamilyProfileEditor';
+} from '../../hooks/useFamilyProfileEditor';
 
-export default function OnboardingStep4() {
+export default function FamilyProfileScreen() {
   const router = useRouter();
   const { data } = useOnboarding();
 
-  // ── Conditional initial view (Step 1 selection) ───────────────────────────
-  const initialView: 'personal' | 'family' =
-    data.spaceType === 'personal' ? 'personal' : 'family';
-  const cameFromPersonal = data.spaceType === 'personal';
+  const isPersonalOnly = data.spaceType === 'personal';
+  const screenTitle = isPersonalOnly ? 'ניהול פרופיל אישי' : 'ניהול פרופיל משפחתי';
 
-  const [currentView, setCurrentView] = useState<'personal' | 'family'>(initialView);
-
-  // ── All profile state + handlers come from the shared hook ────────────────
-  const editor = useFamilyProfileEditor();
+  // Initialise from previously saved context data (unlike onboarding which starts empty)
+  const editor = useFamilyProfileEditor(data.familyData?.familyMembers ?? []);
   const {
     firstName, setFirstName,
     personalColor, setPersonalColor,
@@ -61,24 +57,9 @@ export default function OnboardingStep4() {
     saveAll,
   } = editor;
 
-  // ── Navigation ────────────────────────────────────────────────────────────
-
-  const handlePersonalContinue = () => {
-    setOwnerFullName(firstName);
-    setCurrentView('family');
-  };
-
-  const handleFamilyBack = () => {
-    if (cameFromPersonal) {
-      setCurrentView('personal');
-    } else {
-      router.back();
-    }
-  };
-
-  const handleFamilyFinish = () => {
+  const handleSaveAndClose = () => {
     saveAll();
-    router.push('/(auth)/sign-in');
+    router.back();
   };
 
   // ── Shared edit card renderer ─────────────────────────────────────────────
@@ -102,9 +83,9 @@ export default function OnboardingStep4() {
     );
   };
 
-  // ── Render: Personal Space ────────────────────────────────────────────────
+  // ── Render: Personal-only mode ────────────────────────────────────────────
 
-  if (currentView === 'personal') {
+  if (isPersonalOnly) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: '#f6f7f8' }}>
         <KeyboardAvoidingView
@@ -122,8 +103,11 @@ export default function OnboardingStep4() {
             >
               <MaterialIcons name="arrow-forward" size={24} color={colors.slate} />
             </Pressable>
-            <Text className="text-base font-bold" style={{ color: colors.primary }}>
-              InYomi
+            <Text
+              className="text-base font-bold text-right"
+              style={{ color: colors.slate }}
+            >
+              {screenTitle}
             </Text>
             <View className="w-10" />
           </View>
@@ -134,18 +118,8 @@ export default function OnboardingStep4() {
             contentContainerStyle={{ paddingTop: 24, paddingBottom: 180 }}
             keyboardShouldPersistTaps="handled"
           >
-            <Text
-              className="text-[26px] font-bold text-right mb-1 leading-tight"
-              style={{ color: colors.slate }}
-            >
-              המרחב האישי שלך ב-InYomi
-            </Text>
-            <Text className="text-sm text-gray-400 text-right mb-6">
-              כרגע את מנהלת את הלו״ז רק לעצמך.
-            </Text>
-
             {/* Personal profile card */}
-            <View className="bg-white rounded-3xl p-5 mb-4" style={shadows.soft}>
+            <View className="bg-white rounded-3xl p-5" style={shadows.soft}>
               <View className="items-center mb-5">
                 <View className="relative">
                   <View
@@ -208,48 +182,22 @@ export default function OnboardingStep4() {
                 onSelectColor={setPersonalColor}
               />
             </View>
-
-            {/* Family prompt card */}
-            <View className="bg-white rounded-3xl p-5" style={shadows.soft}>
-              <Text className="text-base font-bold text-gray-900 text-right mb-1">
-                רוצה לנהל גם לו״ז משפחתי?
-              </Text>
-              <Text className="text-sm text-gray-400 text-right mb-4">
-                הוסיפי ילדים או בני משפחה וניהלי הכל במקום אחד.
-              </Text>
-              <Pressable
-                onPress={handlePersonalContinue}
-                accessible={true}
-                accessibilityRole="link"
-                accessibilityLabel="מעבר למרחב משפחתי"
-              >
-                <Text
-                  className="text-right font-semibold"
-                  style={{ color: colors.primary }}
-                >
-                  מעבר למרחב משפחתי ←
-                </Text>
-              </Pressable>
-            </View>
           </ScrollView>
 
+          {/* Bottom save button */}
           <View
             className="px-5 pb-10 pt-4"
             style={{ backgroundColor: 'rgba(246,247,248,0.97)' }}
           >
             <Pressable
-              onPress={handlePersonalContinue}
-              disabled={!firstName.trim()}
+              onPress={handleSaveAndClose}
               accessible={true}
               accessibilityRole="button"
-              accessibilityLabel="המשך"
+              accessibilityLabel="שמירה וסגירה"
               className="w-full h-16 rounded-2xl items-center justify-center"
-              style={[
-                { backgroundColor: firstName.trim() ? colors.primary : '#e5e7eb' },
-                shadows.primaryCta,
-              ]}
+              style={[{ backgroundColor: colors.primary }, shadows.primaryCta]}
             >
-              <Text className="text-white font-bold text-lg">המשך</Text>
+              <Text className="text-white font-bold text-lg">שמירה</Text>
             </Pressable>
           </View>
         </KeyboardAvoidingView>
@@ -257,7 +205,7 @@ export default function OnboardingStep4() {
     );
   }
 
-  // ── Render: Family Space ──────────────────────────────────────────────────
+  // ── Render: Family mode ───────────────────────────────────────────────────
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#f6f7f8' }}>
@@ -268,7 +216,7 @@ export default function OnboardingStep4() {
         {/* Top bar */}
         <View className="flex-row items-center justify-between px-5 pt-3 pb-1">
           <Pressable
-            onPress={handleFamilyBack}
+            onPress={() => router.back()}
             accessible={true}
             accessibilityRole="button"
             accessibilityLabel="חזרה"
@@ -276,8 +224,11 @@ export default function OnboardingStep4() {
           >
             <MaterialIcons name="arrow-forward" size={24} color={colors.slate} />
           </Pressable>
-          <Text className="text-base font-bold text-right" style={{ color: colors.slate }}>
-            המשפחה שלך ב-InYomi
+          <Text
+            className="text-base font-bold text-right"
+            style={{ color: colors.slate }}
+          >
+            {screenTitle}
           </Text>
           <View className="w-10" />
         </View>
@@ -288,7 +239,7 @@ export default function OnboardingStep4() {
           contentContainerStyle={{ paddingTop: 16, paddingBottom: 200 }}
           keyboardShouldPersistTaps="handled"
         >
-          {/* ── Owner card ──────────────────────────────────────────────── */}
+          {/* ── Owner card ────────────────────────────────────────────────── */}
           <Text className="text-xs font-bold text-gray-400 text-right mb-2 pr-1">
             השם שלך
           </Text>
@@ -346,7 +297,7 @@ export default function OnboardingStep4() {
             />
           </View>
 
-          {/* ── People section ───────────────────────────────────────────── */}
+          {/* ── People section ─────────────────────────────────────────────── */}
           <Text className="text-sm font-bold text-gray-700 text-right mb-1 pr-1">
             בני משפחה נוספים (עד {MAX_PEOPLE})
           </Text>
@@ -427,7 +378,7 @@ export default function OnboardingStep4() {
             )}
           </View>
 
-          {/* ── Pets section ─────────────────────────────────────────────── */}
+          {/* ── Pets section ───────────────────────────────────────────────── */}
           <Text className="text-sm font-bold text-gray-700 text-right mb-1 pr-1">
             חיות מחמד (עד {MAX_PETS})
           </Text>
@@ -506,26 +457,24 @@ export default function OnboardingStep4() {
           </View>
 
           <Text className="text-xs text-gray-400 text-center px-4 mt-1">
-            תוכלי לערוך ולהוסיף אנשים גם בהגדרות בהמשך.
+            השינויים נשמרים כשתלחצ/י על "שמירה" למטה.
           </Text>
         </ScrollView>
 
-        {/* Bottom button */}
+        {/* Bottom save button */}
         <View
           className="px-5 pb-10 pt-4"
           style={{ backgroundColor: 'rgba(246,247,248,0.97)' }}
         >
           <Pressable
-            onPress={handleFamilyFinish}
+            onPress={handleSaveAndClose}
             accessible={true}
             accessibilityRole="button"
-            accessibilityLabel="סיימנו, בואו נתחיל!"
+            accessibilityLabel="שמירה וחזרה להגדרות"
             className="w-full h-16 rounded-2xl items-center justify-center"
             style={[{ backgroundColor: colors.primary }, shadows.primaryCta]}
           >
-            <Text className="text-white font-bold text-lg">
-              סיימנו, בואו נתחיל!
-            </Text>
+            <Text className="text-white font-bold text-lg">שמירה</Text>
           </Pressable>
         </View>
       </KeyboardAvoidingView>

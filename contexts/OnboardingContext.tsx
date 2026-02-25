@@ -1,14 +1,32 @@
 import type React from 'react';
 import { createContext, useContext, useState } from 'react';
 
+export interface FamilyMember {
+  id: string;
+  name: string;
+  color: string;
+  type?: 'person' | 'pet';
+  contactId?: string;
+  phone?: string;
+  email?: string;
+}
+
+export interface FamilyData {
+  owner: { firstName: string; lastName?: string; color: string };
+  familyMembers: FamilyMember[];
+}
+
 // הגדרת סוגי הנתונים שנאסוף מהמסכים שעיצבת
 interface OnboardingData {
   spaceType?: 'personal' | 'couple' | 'family' | 'business'; // שלב 1
   childCount?: number; // שלב מותנה
   challenges?: string[]; // שלב 2
   sources?: string[]; // שלב 3
-  fullName?: string; // שלב 4
-  profileColor?: string; // שלב 4
+  fullName?: string; // שלב 4 (legacy)
+  profileColor?: string; // שלב 4 (legacy)
+  firstName?: string; // שלב 4
+  personalColor?: string; // שלב 4
+  familyData?: FamilyData; // שלב 4 - מרחב משפחתי
 }
 
 interface OnboardingContextType {

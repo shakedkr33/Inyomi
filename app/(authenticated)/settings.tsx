@@ -11,10 +11,12 @@ import {
   LogOut,
   Trash2,
   UserPlus,
+  Users,
 } from 'lucide-react-native';
 import { useState } from 'react';
 import { Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useOnboarding } from '@/contexts/OnboardingContext';
 
 import {
   APP_ENV,
@@ -43,6 +45,11 @@ export default function SettingsScreen() {
   } = useRevenueCat();
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const deleteMyAccount = useMutation(api.users.deleteMyAccount);
+
+  const { data: onboardingData } = useOnboarding();
+  const isPersonalOnly = onboardingData.spaceType === 'personal';
+  const profileRowTitle = isPersonalOnly ? 'ניהול פרופיל אישי' : 'ניהול פרופיל משפחתי';
+  const profileMemberCount = onboardingData.familyData?.familyMembers?.length ?? 0;
 
   // ============================================================================
   // פעולות
@@ -151,6 +158,30 @@ export default function SettingsScreen() {
           <Text className={`text-[#ededed] text-3xl font-bold ${tw.textStart}`}>
             הגדרות
           </Text>
+        </View>
+
+        {/* ניהול פרופיל */}
+        <View className="mx-4 mb-4">
+          <TouchableOpacity
+            onPress={() => router.push('/(authenticated)/family-profile')}
+            accessible={true}
+            accessibilityRole="button"
+            accessibilityLabel={profileRowTitle}
+            className={`${tw.flexRow} items-center gap-3 p-4 rounded-xl bg-zinc-900 border border-zinc-800`}
+          >
+            <ChevronLeft size={20} color="#71717a" />
+            <View className="flex-1">
+              <Text className={`text-white text-base font-semibold ${tw.textStart}`}>
+                {profileRowTitle}
+              </Text>
+              {profileMemberCount > 0 && (
+                <Text className={`text-zinc-400 text-xs mt-0.5 ${tw.textStart}`}>
+                  {profileMemberCount} בני משפחה
+                </Text>
+              )}
+            </View>
+            <Users size={20} color="#a1a1aa" />
+          </TouchableOpacity>
         </View>
 
         {/* סטטוס מנוי */}
