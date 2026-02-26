@@ -30,6 +30,8 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DRAWER_WIDTH = Math.round(SCREEN_WIDTH * 0.75);
 const SPRING = { damping: 26, stiffness: 130 } as const;
 const PRIMARY = '#36a9e2';
+const ICON_BG = '#F8FAFC';
+const ICON_COLOR = '#64748b';
 
 interface SettingsDrawerProps {
   isOpen: boolean;
@@ -340,6 +342,7 @@ export function SettingsDrawer({
                 <Text style={s.profileEmail}>israel@email.com</Text>
                 <Pressable
                   style={s.editProfileBtn}
+                  onPress={() => navigateTo('/(authenticated)/family-profile')}
                   accessible={true}
                   accessibilityRole="button"
                   accessibilityLabel="עריכת פרופיל"
@@ -354,40 +357,27 @@ export function SettingsDrawer({
               <SectionHeader label="התראות" />
               <ToggleRow
                 icon="wb-sunny"
-                iconBg="#FFF4E6"
-                iconColor="#FF922B"
+                iconBg={ICON_BG}
+                iconColor={ICON_COLOR}
                 title="סיכום בוקר"
                 value={morningDigest}
                 onToggle={handleMorning}
               />
               <ToggleRow
                 icon="nights-stay"
-                iconBg="#EDE7F6"
-                iconColor="#7C4DFF"
+                iconBg={ICON_BG}
+                iconColor={ICON_COLOR}
                 title="סיכום ערב"
                 value={eveningDigest}
                 onToggle={handleEvening}
               />
               <ToggleRow
                 icon="psychology"
-                iconBg="#E0F2F1"
-                iconColor="#00897B"
+                iconBg={ICON_BG}
+                iconColor={ICON_COLOR}
                 title="תזכורות חכמות"
                 value={smartReminders}
                 onToggle={handleSmart}
-              />
-
-              <Divider />
-
-              {/* People */}
-              <SectionHeader label="אנשים" />
-              <NavRow
-                icon="group"
-                iconBg="#E3F2FD"
-                iconColor={PRIMARY}
-                title="אנשים"
-                badge="4 מחוברים"
-                onPress={() => {}}
               />
 
               <Divider />
@@ -396,8 +386,8 @@ export function SettingsDrawer({
               <SectionHeader label="נתונים" />
               <NavRow
                 icon="event"
-                iconBg="#E3F2FD"
-                iconColor={PRIMARY}
+                iconBg={ICON_BG}
+                iconColor={ICON_COLOR}
                 title="ייבוא יומן חיצוני"
                 onPress={() =>
                   navigateTo('/(authenticated)/import-calendar')
@@ -405,8 +395,8 @@ export function SettingsDrawer({
               />
               <NavRow
                 icon="celebration"
-                iconBg="#FFF8E1"
-                iconColor="#F59E0B"
+                iconBg={ICON_BG}
+                iconColor={ICON_COLOR}
                 title="ייבוא חגים ישראליים"
                 onPress={() =>
                   navigateTo('/(authenticated)/import-holidays')
@@ -453,7 +443,7 @@ const s = StyleSheet.create({
   },
   backdrop: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: 'rgba(15, 23, 42, 0.35)',
   },
   drawerPanel: {
     width: DRAWER_WIDTH,
