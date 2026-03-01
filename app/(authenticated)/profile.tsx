@@ -132,17 +132,13 @@ export default function ProfileScreen() {
 
         {/* Header */}
         <View style={styles.headerContainer}>
-          {/* Left side — logo icon + InYomi text */}
-          <View style={styles.headerLeft}>
-            <Image
-              source={require('@/assets/images/logo-icon.png')}
-              style={styles.headerIcon}
-              resizeMode="contain"
-              accessibilityLabel="InYomi icon"
-            />
-            {/* TODO: load Inter font via expo-google-fonts if needed */}
-            <Text style={styles.headerBrand}>InYomi</Text>
-          </View>
+          {/* Left side — full logo (icon + InYomi text combined) */}
+          <Image
+            source={require('@/assets/images/logo-inyomi.png')}
+            style={styles.headerLogo}
+            resizeMode="contain"
+            accessibilityLabel="InYomi logo"
+          />
           {/* Right side — page title */}
           <Text style={styles.headerTitle}>פרופיל</Text>
         </View>
@@ -435,24 +431,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 24,
-    paddingTop: 16,
+    paddingLeft: 8,
+    paddingRight: 24,
+    paddingTop: 12,
     paddingBottom: 4,
   },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  headerIcon: {
-    width: 37,
-    height: 37,
+  headerLogo: {
+    width: 220,
+    height: 88,
     backgroundColor: 'transparent',
-  },
-  headerBrand: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#1e293b',
   },
   headerTitle: {
     fontSize: 20,

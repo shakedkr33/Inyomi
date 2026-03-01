@@ -235,18 +235,8 @@ export default function AuthenticatedLayout() {
               ),
             }}
           />
-          <Tabs.Screen
-            name="profile"
-            options={{
-              tabBarButton: (props) => (
-                <RegularTabButton
-                  {...(props as unknown as TabBtnProps)}
-                  iconName="person-outline"
-                  label="פרופיל"
-                />
-              ),
-            }}
-          />
+          {/* Profile is accessible via avatar press / navigation, not from tab bar */}
+          <Tabs.Screen name="profile" options={{ href: null }} />
 
           {/* ── Hidden screens ── */}
           <Tabs.Screen name="settings" options={{ href: null }} />

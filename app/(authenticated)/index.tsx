@@ -7,7 +7,6 @@ import {
   Alert,
   Dimensions,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -42,17 +41,39 @@ function isSameDay(a: Date, b: Date): boolean {
 // ─── Mood data ────────────────────────────────────────────────────────────────
 
 const MOODS = [
-  { emoji: '😍', label: 'מדהים', value: 4 },
-  { emoji: '🙂', label: 'טוב', value: 3 },
-  { emoji: '😐', label: 'סתם', value: 2 },
-  { emoji: '😔', label: 'קצת קשה', value: 1 },
-  { emoji: '😤', label: 'מתסכל', value: 0 },
+  { emoji: '😍', label: 'מדהים',   value: 4, phrase: 'יום מוצלח ומלא בעשייה! 🌟' },
+  { emoji: '😊', label: 'בסדר',    value: 3, phrase: 'יום טוב, כל הכבוד! 👍' },
+  { emoji: '😐', label: 'רגיל',    value: 2, phrase: 'יום רגיל – ולפעמים זה בדיוק מה שצריך.' },
+  { emoji: '😓', label: 'עמוס',    value: 1, phrase: 'יום עמוס! תנוחי טוב הלילה.' },
+  { emoji: '😤', label: 'מתסכל',   value: 0, phrase: 'יום מאתגר. מחר יהיה טוב יותר 💙' },
 ];
+
 const MOOD_ITEM_WIDTH = 80;
-// Triple the array for a pseudo-infinite feel
 const wheelMoods = [...MOODS, ...MOODS, ...MOODS];
-// Scroll offset that places the first item of the *middle* block at center
-const MOOD_INITIAL_X = MOODS.length * MOOD_ITEM_WIDTH; // 5 * 80 = 400
+const MOOD_INITIAL_X = MOODS.length * MOOD_ITEM_WIDTH;
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type Item = {
+  id: string;
+  time: string;
+  title: string;
+  location: string;
+  type: 'event' | 'task';
+  icon: string;
+  iconBg: string;
+  iconColor: string;
+  assigneeColor: string;
+  completed: boolean;
+  allDay?: boolean;
+  pending?: boolean;
+};
+
+type UndatedTask = {
+  id: string;
+  title: string;
+  completed: boolean;
+};
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -63,17 +84,21 @@ export default function HomeScreen() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [selectedMood, setSelectedMood] = useState<number | null>(null);
+  const [calendarMode, setCalendarMode] = useState<'carousel' | 'month'>('carousel');
 
-  // ── Mood popup state (Patch 5a) ────────────────────────────────────────────
+  // ── Mood popup state ───────────────────────────────────────────────────────
   const [hasSeenMoodPopupToday, setHasSeenMoodPopupToday] = useState(false);
   const [lastMoodDate, setLastMoodDate] = useState<string | null>(null);
   const [isMoodModalVisible, setIsMoodModalVisible] = useState(false);
+  // Tracks the in-modal selection before the user confirms
+  const [tempMoodSelection, setTempMoodSelection] = useState<number | null>(null);
+
+  // ── Insight card ───────────────────────────────────────────────────────────
+  const [dismissedInsightDate, setDismissedInsightDate] = useState<string | null>(null);
 
   const dateScrollRef = useRef<ScrollView>(null);
   const moodScrollRef = useRef<ScrollView>(null);
   const moodPopupRef = useRef<ScrollView>(null);
-
-  // Guards that prevent the first programmatic scrollTo from triggering selection
   const moodWheelInitialized = useRef(false);
   const moodPopupInitialized = useRef(false);
 
@@ -84,12 +109,8 @@ export default function HomeScreen() {
   } = useNotifications();
 
   const handleBellPress = (): void => {
-    if (!isNotificationsOpen) {
-      setIsNotificationsOpen(true);
-    }
-    if (!notifLoading) {
-      markAllSeen();
-    }
+    if (!isNotificationsOpen) setIsNotificationsOpen(true);
+    if (!notifLoading) markAllSeen();
   };
 
   // ── Computed values ────────────────────────────────────────────────────────
@@ -99,21 +120,18 @@ export default function HomeScreen() {
     month: 'long',
     year: 'numeric',
   });
+  const todayISO = new Date().toISOString().split('T')[0];
 
   const today = new Date();
   const year = today.getFullYear();
   const month = today.getMonth();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const calendarDays: Date[] = [];
-  for (let d = 1; d <= daysInMonth; d++) {
-    calendarDays.push(new Date(year, month, d));
-  }
-  for (let d = 1; d <= 7; d++) {
-    calendarDays.push(new Date(year, month + 1, d));
-  }
+  for (let d = 1; d <= daysInMonth; d++) calendarDays.push(new Date(year, month, d));
+  for (let d = 1; d <= 7; d++) calendarDays.push(new Date(year, month + 1, d));
 
   // ── Items ──────────────────────────────────────────────────────────────────
-  const [items, setItems] = useState([
+  const [items, setItems] = useState<Item[]>([
     {
       id: '1',
       time: '13:30',
@@ -149,9 +167,43 @@ export default function HomeScreen() {
       iconColor: '#7950F2',
       assigneeColor: '#FFD1DC',
       completed: false,
+      pending: true,
     },
   ]);
 
+  // ── All-day events (mock) ──────────────────────────────────────────────────
+  const allDayEvents = [
+    { id: 'ad1', title: 'חג ראש חודש', iconColor: '#36a9e2' },
+  ];
+
+  // ── Undated tasks ──────────────────────────────────────────────────────────
+  const [undatedTasks, setUndatedTasks] = useState<UndatedTask[]>([
+    { id: 'u1', title: 'לקרוא ספר', completed: false },
+    { id: 'u2', title: 'לצלם תמונות', completed: false },
+    { id: 'u3', title: 'לסדר ארון הבגדים', completed: false },
+  ]);
+
+  const toggleUndatedTask = (id: string) => {
+    setUndatedTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
+    );
+  };
+
+  // ── Empty states ───────────────────────────────────────────────────────────
+  const hasAnyData = items.length > 0 || undatedTasks.length > 0;
+  const hasDayData = items.filter((i) => !i.allDay).length > 0;
+
+  // ── Insight card ───────────────────────────────────────────────────────────
+  const showInsightCard = hasAnyData && dismissedInsightDate !== todayISO;
+  // TODO: להחליף ללוגיקת AI בעתיד
+  const insightText =
+    items.length > 3
+      ? 'יש לך יום עמוס היום, שווה לשקול להזיז משימה אחת למחר.'
+      : 'היום שלך נראה רגוע, אולי זה זמן טוב להשלים משהו קטן מהמשימות הפתוחות.';
+
+  const dismissInsight = () => setDismissedInsightDate(todayISO);
+
+  // ── Task handlers ──────────────────────────────────────────────────────────
   const toggleTask = (id: string) => {
     setItems((prev) =>
       prev.map((item) =>
@@ -160,13 +212,12 @@ export default function HomeScreen() {
     );
   };
 
-  // ── Delete logic (Patch 3) ─────────────────────────────────────────────────
-  const handleDeleteFromSources = (item: (typeof items)[0]) => {
+  const handleDeleteFromSources = (item: Item) => {
     // TODO: wire to calendar / backend deletion
     console.log('Delete from sources:', item.id);
   };
 
-  const confirmDelete = (item: (typeof items)[0]) => {
+  const confirmDelete = (item: Item) => {
     Alert.alert('מחיקה', 'האם אתה בטוח שברצונך למחוק?', [
       { text: 'ביטול', style: 'cancel' },
       {
@@ -180,8 +231,7 @@ export default function HomeScreen() {
     ]);
   };
 
-  // ── Card tap-to-edit (Patch 4) ─────────────────────────────────────────────
-  const handleCardPress = (item: (typeof items)[0]) => {
+  const handleCardPress = (item: Item) => {
     if (item.type === 'task') {
       router.push({
         pathname: '/(authenticated)/task/[id]',
@@ -195,7 +245,8 @@ export default function HomeScreen() {
     }
   };
 
-  // ── Mood helpers (Patch 5a) ────────────────────────────────────────────────
+  // ── Mood helpers ───────────────────────────────────────────────────────────
+  // TODO: להחליף ללוגיקת AI בעתיד (לחבר רגש + תובנה)
   const shouldShowMoodPrompt = useCallback((): boolean => {
     const lastHour = items.reduce((max, item) => {
       const h = parseInt(item.time.split(':')[0], 10);
@@ -207,7 +258,6 @@ export default function HomeScreen() {
 
   // Reset mood state when a new day begins
   useEffect(() => {
-    const todayISO = new Date().toISOString().split('T')[0];
     if (lastMoodDate !== null && lastMoodDate !== todayISO) {
       setHasSeenMoodPopupToday(false);
       setSelectedMood(null);
@@ -218,15 +268,16 @@ export default function HomeScreen() {
   useEffect(() => {
     const check = () => {
       if (shouldShowMoodPrompt() && selectedMood === null && !hasSeenMoodPopupToday) {
+        setTempMoodSelection(null);
         setIsMoodModalVisible(true);
       }
     };
-    check(); // immediate check on mount
+    check();
     const interval = setInterval(check, 60_000);
     return () => clearInterval(interval);
   }, [shouldShowMoodPrompt, selectedMood, hasSeenMoodPopupToday]);
 
-  // Scroll main mood wheel to initial position after mount (Change 2)
+  // Scroll main mood wheel to initial position after mount
   useEffect(() => {
     moodWheelInitialized.current = false;
     setTimeout(() => {
@@ -234,16 +285,16 @@ export default function HomeScreen() {
     }, 150);
   }, []);
 
-  // Scroll popup mood wheel when modal opens; reset guard so first event is skipped (Change 2)
+  // Scroll popup mood wheel when modal opens; reset guard so first event is skipped
   useEffect(() => {
     if (isMoodModalVisible) {
       moodPopupInitialized.current = false;
+      setTempMoodSelection(selectedMood);
       setTimeout(() => {
         moodPopupRef.current?.scrollTo({ x: MOOD_INITIAL_X, animated: false });
       }, 150);
     }
   }, [isMoodModalVisible]);
-
 
   // Scroll date carousel to today on mount
   useEffect(() => {
@@ -264,18 +315,30 @@ export default function HomeScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  // ── Mood selection handler (shared: tap in bottom wheel or modal) ──────────
+  // Confirm selection from modal — requires explicit tap on "אישור"
+  const confirmMoodSelection = () => {
+    if (tempMoodSelection === null) return;
+    if (tempMoodSelection !== selectedMood) playMoodSound();
+    setSelectedMood(tempMoodSelection);
+    setHasSeenMoodPopupToday(true);
+    setLastMoodDate(todayISO);
+    setIsMoodModalVisible(false);
+    // Sync bottom wheel to the confirmed mood
+    const idx = MOODS.findIndex((m) => m.value === tempMoodSelection);
+    const targetX = (MOODS.length + idx) * MOOD_ITEM_WIDTH;
+    setTimeout(() => {
+      moodWheelInitialized.current = false;
+      moodScrollRef.current?.scrollTo({ x: targetX, animated: false });
+    }, 50);
+  };
+
+  // Direct selection from bottom wheel (tap or scroll)
   const handleMoodSelect = (value: number) => {
-    // Play sound only when the value actually changes (Change 7)
-    if (value !== selectedMood) {
-      playMoodSound();
-    }
+    if (value !== selectedMood) playMoodSound();
     setSelectedMood(value);
     setHasSeenMoodPopupToday(true);
-    setLastMoodDate(new Date().toISOString().split('T')[0]);
+    setLastMoodDate(todayISO);
     setIsMoodModalVisible(false);
-
-    // Change 6: sync bottom wheel to the newly selected mood
     const idx = MOODS.findIndex((m) => m.value === value);
     const targetX = (MOODS.length + idx) * MOOD_ITEM_WIDTH;
     setTimeout(() => {
@@ -284,7 +347,7 @@ export default function HomeScreen() {
     }, 50);
   };
 
-  // ── Popup scroll-end: loop-snap only, NO selection (Change 3) ────────────
+  // Popup scroll-end: loop-snap + update tempMoodSelection (NO confirm yet)
   const handlePopupScrollEnd = (e: { nativeEvent: { contentOffset: { x: number } } }) => {
     if (!moodPopupInitialized.current) {
       moodPopupInitialized.current = true;
@@ -292,7 +355,8 @@ export default function HomeScreen() {
     }
     const offsetX = e.nativeEvent.contentOffset.x;
     const rawIndex = Math.round(offsetX / MOOD_ITEM_WIDTH);
-    // Loop-snap to middle block (no mood selection)
+    const normalizedIndex = rawIndex % MOODS.length;
+    setTempMoodSelection(MOODS[normalizedIndex].value);
     if (rawIndex < MOODS.length) {
       moodPopupRef.current?.scrollTo({
         x: (rawIndex + MOODS.length) * MOOD_ITEM_WIDTH,
@@ -306,7 +370,7 @@ export default function HomeScreen() {
     }
   };
 
-  // ── Bottom wheel scroll-end: selection + loop-snap (Change 3 & 8) ─────────
+  // Bottom wheel scroll-end: immediate selection + loop-snap
   const handleBottomScrollEnd = (e: { nativeEvent: { contentOffset: { x: number } } }) => {
     if (!moodWheelInitialized.current) {
       moodWheelInitialized.current = true;
@@ -316,7 +380,6 @@ export default function HomeScreen() {
     const rawIndex = Math.round(offsetX / MOOD_ITEM_WIDTH);
     const normalizedIndex = rawIndex % MOODS.length;
     handleMoodSelect(MOODS[normalizedIndex].value);
-    // Change 8: defer snap-back to avoid blocking the same frame as state update
     setTimeout(() => {
       if (rawIndex < MOODS.length) {
         moodScrollRef.current?.scrollTo({
@@ -334,31 +397,32 @@ export default function HomeScreen() {
 
   const AVATAR_COLORS = ['#FFD1DC', '#E0F2F1', '#FFF9C4', '#E8EAF6', '#FCE4EC'];
 
-  // Padding that centers each mood item when snapped
-  const moodWheelPad = (screenWidth - 48 - MOOD_ITEM_WIDTH) / 2; // 48 = parent paddingHorizontal*2
+  const moodWheelPad = (screenWidth - 48 - MOOD_ITEM_WIDTH) / 2;
   const moodPopupHPad = Math.max(0, (screenWidth * 0.88 - 56 - MOOD_ITEM_WIDTH) / 2);
 
-  // ── Mood wheel render (reused in both bottom section and popup) ────────────
+  // ── Mood wheel (reused in bottom section and popup) ────────────────────────
   const renderMoodWheel = (
     ref: React.RefObject<ScrollView | null>,
     pad: number,
-    onScrollEnd: (e: { nativeEvent: { contentOffset: { x: number } } }) => void
+    onScrollEnd: (e: { nativeEvent: { contentOffset: { x: number } } }) => void,
+    activeMoodValue: number | null = selectedMood,
+    onItemTap?: (value: number) => void
   ) => (
     <ScrollView
       ref={ref}
       horizontal
       showsHorizontalScrollIndicator={false}
       snapToInterval={MOOD_ITEM_WIDTH}
-      decelerationRate="fast"
+      decelerationRate={0.9}
       contentContainerStyle={{ paddingHorizontal: pad }}
       onMomentumScrollEnd={onScrollEnd}
     >
       {wheelMoods.map((mood, i) => {
-        const isActive = selectedMood === mood.value;
+        const isActive = activeMoodValue === mood.value;
         return (
           <Pressable
             key={i}
-            onPress={() => handleMoodSelect(mood.value)}
+            onPress={() => (onItemTap ?? handleMoodSelect)(mood.value)}
             style={styles.moodItem}
             accessible={true}
             accessibilityRole="button"
@@ -378,6 +442,79 @@ export default function HomeScreen() {
     </ScrollView>
   );
 
+  // ── Month calendar grid ─────────────────────────────────────────────────────
+  const HEB_DAYS = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'];
+  const monthName = today.toLocaleDateString('he-IL', { month: 'long', year: 'numeric' });
+  const firstDayOfMonth = new Date(year, month, 1).getDay();
+  const calGridDays: (Date | null)[] = [];
+  for (let i = 0; i < firstDayOfMonth; i++) calGridDays.push(null);
+  for (let d = 1; d <= daysInMonth; d++) calGridDays.push(new Date(year, month, d));
+  while (calGridDays.length % 7 !== 0) calGridDays.push(null);
+
+  const renderMonthCalendar = () => (
+    <View style={styles.monthCalendar}>
+      <Text style={styles.monthName}>{monthName}</Text>
+      <View style={styles.monthGrid}>
+        {HEB_DAYS.map((d) => (
+          <View key={d} style={styles.monthDayHeader}>
+            <Text style={styles.monthDayHeaderText}>{d}</Text>
+          </View>
+        ))}
+        {calGridDays.map((day, i) => {
+          if (!day) return <View key={`e-${i}`} style={styles.monthDayCell} />;
+          const isSel = isSameDay(day, selectedDate);
+          const isTod = isSameDay(day, today);
+          return (
+            <Pressable
+              key={i}
+              style={[
+                styles.monthDayCell,
+                isSel && styles.monthDayCellSelected,
+                !isSel && isTod && styles.monthDayCellToday,
+              ]}
+              onPress={() => setSelectedDate(day)}
+            >
+              <Text
+                style={[
+                  styles.monthDayText,
+                  isSel && styles.monthDayTextSelected,
+                  !isSel && isTod && styles.monthDayTextToday,
+                ]}
+              >
+                {day.getDate()}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+
+  // ── Derived ────────────────────────────────────────────────────────────────
+  const nextEvent = items.find((i) => !i.allDay && !i.completed);
+  const selectedMoodData = MOODS.find((m) => m.value === selectedMood);
+
+  const handleMoodCardPress = () => {
+    // If same day — reopen modal to change mood
+    if (lastMoodDate === todayISO) {
+      setTempMoodSelection(selectedMood);
+      setIsMoodModalVisible(true);
+    }
+    // Past day — silently ignore
+  };
+
+  // ── Helpers to scroll date carousel back to today ──────────────────────────
+  const scrollToToday = () => {
+    const todayIndex = today.getDate() - 1;
+    const PILL_WIDTH = 50;
+    const offset = Math.max(0, todayIndex * PILL_WIDTH - (screenWidth - 32 - 38) / 2 + 21);
+    dateScrollRef.current?.scrollTo({ x: offset, animated: true });
+  };
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER
+  // ══════════════════════════════════════════════════════════════════════════
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#f6f7f8' }}>
 
@@ -388,9 +525,7 @@ export default function HomeScreen() {
           onPress={handleBellPress}
           accessible={true}
           accessibilityRole="button"
-          accessibilityLabel={
-            unseenCount > 0 ? `התראות, ${unseenCount} חדשות` : 'התראות'
-          }
+          accessibilityLabel={unseenCount > 0 ? `התראות, ${unseenCount} חדשות` : 'התראות'}
           style={{ position: 'relative' }}
         >
           <MaterialIcons
@@ -407,115 +542,227 @@ export default function HomeScreen() {
           )}
         </Pressable>
 
-        {/* PATCH 1: text stack first (left), avatar last (far right in LTR) */}
+        {/* Text stack + avatar — right */}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={styles.headerDate}>{todayLabel}</Text>
             <Text style={styles.headerGreeting}>{greeting}, שקד</Text>
           </View>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>ש</Text>
-          </View>
+          <Pressable
+            onPress={() => router.push('/(authenticated)/profile')}
+            accessible={true}
+            accessibilityRole="button"
+            accessibilityLabel="פתח פרופיל"
+          >
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>ש</Text>
+            </View>
+          </Pressable>
         </View>
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
 
-        {/* ── Date Carousel ──────────────────────────────────────────────── */}
-        <View style={styles.carouselRow}>
-          <ScrollView
-            ref={dateScrollRef}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ flex: 1 }}
-            contentContainerStyle={{ paddingVertical: 4 }}
-          >
-            {calendarDays.map((day, i) => {
-              const isSelected = isSameDay(day, selectedDate);
-              const isToday = isSameDay(day, today);
-              const shortName = day.toLocaleDateString('he-IL', { weekday: 'short' });
-              return (
-                <Pressable
-                  key={i}
-                  onPress={() => setSelectedDate(day)}
-                  style={[
-                    styles.dayPill,
-                    isSelected && styles.dayPillSelected,
-                    !isSelected && isToday && styles.dayPillToday,
-                  ]}
-                >
-                  <Text style={[styles.dayPillWeekday, isSelected && styles.dayPillTextSelected]}>
-                    {shortName}
-                  </Text>
-                  <Text style={[styles.dayPillNumber, isSelected && styles.dayPillTextSelected]}>
-                    {day.getDate()}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
+        {/* ── Daily Insight card ─────────────────────────────────────────────── */}
+        {showInsightCard && (
+          <View style={styles.insightCard}>
+            <View style={styles.insightHeader}>
+              <Text style={styles.insightLabel}>תובנה יומית</Text>
+              <Pressable
+                onPress={dismissInsight}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessible={true}
+                accessibilityRole="button"
+                accessibilityLabel="סגור תובנה"
+              >
+                <MaterialIcons name="close" size={18} color="#94a3b8" />
+              </Pressable>
+            </View>
+            {/* TODO: להחליף ללוגיקת AI בעתיד */}
+            <Text style={styles.insightText}>{insightText}</Text>
+          </View>
+        )}
 
+        {/* ── Date section header (toggle + "היום" chip) ────────────────────── */}
+        <View style={styles.dateSectionRow}>
+          {!isSameDay(selectedDate, today) && (
+            <Pressable
+              style={styles.todayChip}
+              onPress={() => {
+                setSelectedDate(today);
+                scrollToToday();
+                setCalendarMode('carousel');
+              }}
+              accessible={true}
+              accessibilityRole="button"
+              accessibilityLabel="חזרה להיום"
+            >
+              <Text style={styles.todayChipText}>היום</Text>
+            </Pressable>
+          )}
           <Pressable
-            onPress={() => router.push('/(authenticated)/calendar')}
+            onPress={() =>
+              setCalendarMode((m) => (m === 'carousel' ? 'month' : 'carousel'))
+            }
+            style={styles.calendarToggleBtn}
             accessible={true}
             accessibilityRole="button"
-            accessibilityLabel="פתח יומן"
-            style={{ marginLeft: 8 }}
+            accessibilityLabel={
+              calendarMode === 'carousel' ? 'פתח לוח שנה חודשי' : 'חזרה לקרוסלה'
+            }
           >
-            <MaterialIcons name="event" size={22} color="#36a9e2" />
+            <MaterialIcons
+              name={calendarMode === 'carousel' ? 'calendar-month' : 'view-week'}
+              size={20}
+              color="#36a9e2"
+            />
           </Pressable>
         </View>
 
-        <Text style={styles.subtitleCount}>
-          יש לך {items.length + 1} פעילויות היום
-        </Text>
+        {/* ── Carousel OR month calendar ─────────────────────────────────────── */}
+        {calendarMode === 'carousel' ? (
+          <View style={styles.carouselRow}>
+            <ScrollView
+              ref={dateScrollRef}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingVertical: 4 }}
+            >
+              {calendarDays.map((day, i) => {
+                const isSelected = isSameDay(day, selectedDate);
+                const isToday = isSameDay(day, today);
+                const shortName = day.toLocaleDateString('he-IL', { weekday: 'short' });
+                return (
+                  <Pressable
+                    key={i}
+                    onPress={() => setSelectedDate(day)}
+                    style={[
+                      styles.dayPill,
+                      isSelected && styles.dayPillSelected,
+                      !isSelected && isToday && styles.dayPillToday,
+                    ]}
+                  >
+                    <Text
+                      style={[styles.dayPillWeekday, isSelected && styles.dayPillTextSelected]}
+                    >
+                      {shortName}
+                    </Text>
+                    <Text
+                      style={[styles.dayPillNumber, isSelected && styles.dayPillTextSelected]}
+                    >
+                      {day.getDate()}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : (
+          <View style={{ paddingHorizontal: 16, marginBottom: 8 }}>
+            {renderMonthCalendar()}
+          </View>
+        )}
 
-        {/* ── Upcoming event card ────────────────────────────────────────── */}
-        <View style={{ paddingHorizontal: 24, marginBottom: 32 }}>
-          <View style={[styles.cardShadow, styles.eventCard]}>
-            <View style={styles.eventAccentBar} />
-            <View style={{ padding: 24, paddingRight: 32 }}>
+        {hasAnyData && (
+          <Text style={styles.subtitleCount}>
+            יש לך {items.filter((i) => !i.allDay).length + 1} פעילויות היום
+          </Text>
+        )}
 
-              {/* PATCH 2a: pill + time on same row */}
-              <View style={styles.eventTopRow}>
-                <View style={styles.eventNextPill}>
-                  <Text style={styles.eventNextPillText}>האירוע הבא</Text>
+        {/* ── Empty state — new user (no data at all) ──────────────────────── */}
+        {!hasAnyData && (
+          <View style={styles.emptyStateContainer}>
+            <View style={styles.emptyStateIconWrap}>
+              <MaterialIcons name="calendar-today" size={36} color="#36a9e2" />
+            </View>
+            <Text style={styles.emptyStateTitle}>
+              עדיין לא הוספת אירועים או משימות
+            </Text>
+            <Text style={styles.emptyStateSubtitle}>
+              התחילי בהוספת אירוע ראשון או ייבוא יומן קיים.
+            </Text>
+            <Pressable
+              style={styles.emptyStatePrimaryBtn}
+              onPress={() => router.push('/(authenticated)/import-calendar')}
+              accessible={true}
+              accessibilityRole="button"
+              accessibilityLabel="ייבוא מיומן גוגל או אפל"
+            >
+              <Text style={styles.emptyStatePrimaryBtnText}>
+                ייבוא מיומן גוגל / אפל
+              </Text>
+            </Pressable>
+            <Pressable
+              accessible={true}
+              accessibilityRole="button"
+              accessibilityLabel="הוספת אירוע ראשון"
+            >
+              <Text style={styles.emptyStateSecondaryBtnText}>הוספת אירוע ראשון</Text>
+            </Pressable>
+            <Text style={styles.emptyStateHint}>
+              אפשר גם ללחוץ על הפלוס במרכז המסך כדי ליצור אירוע, משימה, יום הולדת או
+              קבוצה.
+            </Text>
+          </View>
+        )}
+
+        {/* ── Upcoming event card (only if next event exists) ───────────────── */}
+        {hasAnyData && nextEvent && (
+          <View style={{ paddingHorizontal: 24, marginBottom: 32 }}>
+            <View style={[styles.cardShadow, styles.eventCard]}>
+              <View style={styles.eventAccentBar} />
+              <View style={{ padding: 24, paddingRight: 32 }}>
+                <View style={styles.eventTopRow}>
+                  <View style={styles.eventNextPill}>
+                    <Text style={styles.eventNextPillText}>האירוע הבא</Text>
+                  </View>
+                  <Text style={styles.eventTime}>{nextEvent.time}</Text>
                 </View>
-                <Text style={styles.eventTime}>09:00</Text>
-              </View>
-
-              <Text style={styles.eventTitle}>פגישה בבית הספר</Text>
-
-              {/* PATCH 2b: icon+address group on right, navBtn on left */}
-              <View style={styles.eventAddressRow}>
-                <View style={styles.eventAddressGroup}>
-                  <MaterialIcons name="location-on" size={16} color="#94a3b8" />
-                  <Text style={styles.eventAddress} numberOfLines={1}>
-                    בית ספר יסודי "אלונים"
+                <Text style={styles.eventTitle}>{nextEvent.title}</Text>
+                <View style={styles.eventAddressRow}>
+                  <View style={styles.eventAddressGroup}>
+                    <MaterialIcons name="location-on" size={16} color="#94a3b8" />
+                    <Text style={styles.eventAddress} numberOfLines={1}>
+                      {nextEvent.location}
+                    </Text>
+                  </View>
+                  <Pressable
+                    style={styles.navBtn}
+                    accessible={true}
+                    accessibilityRole="button"
+                    accessibilityLabel="נווט"
+                  >
+                    <MaterialIcons name="near-me" size={16} color="#8d6e63" />
+                    <Text style={styles.navBtnText}>נווט</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.trafficAlert}>
+                  <MaterialIcons name="traffic" size={20} color="#ff6b6b" />
+                  <Text style={styles.trafficText}>
+                    עומס כבד באיילון: מומלץ לצאת ב-08:15
                   </Text>
                 </View>
-                <Pressable
-                  style={styles.navBtn}
-                  accessible={true}
-                  accessibilityRole="button"
-                  accessibilityLabel="נווט"
-                >
-                  <MaterialIcons name="near-me" size={16} color="#8d6e63" />
-                  <Text style={styles.navBtnText}>נווט</Text>
-                </Pressable>
-              </View>
-
-              <View style={styles.trafficAlert}>
-                <MaterialIcons name="traffic" size={20} color="#ff6b6b" />
-                <Text style={styles.trafficText}>
-                  עומס כבד באיילון: מומלץ לצאת ב-08:15
-                </Text>
               </View>
             </View>
           </View>
-        </View>
+        )}
 
-        {/* ── Birthdays ──────────────────────────────────────────────────── */}
+        {/* ── Empty day state (data exists but not today) ──────────────────── */}
+        {hasAnyData && !hasDayData && (
+          <View style={styles.emptyDayContainer}>
+            <MaterialIcons name="calendar-today" size={28} color="#d1d5db" />
+            <Text style={styles.emptyDayTitle}>היום פנוי 🎉</Text>
+            <Text style={styles.emptyDaySubtitle}>
+              אין לך אירועים או משימות בתאריך הזה.
+            </Text>
+            <Pressable accessible={true} accessibilityRole="button" accessibilityLabel="הוספת אירוע">
+              <Text style={styles.emptyDayLink}>+ הוספת אירוע</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* ── Birthdays ──────────────────────────────────────────────────────── */}
         <View style={{ marginBottom: 32 }}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>🎂 ימי הולדת קרובים</Text>
@@ -551,104 +798,208 @@ export default function HomeScreen() {
           </ScrollView>
         </View>
 
-        {/* ── Timeline ───────────────────────────────────────────────────── */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.timelineTitle}>המשך היום</Text>
-        </View>
-        <View style={{ paddingHorizontal: 24, paddingBottom: 8 }}>
-          {/* PATCH 3 + 4: Swipeable + tap-to-edit */}
-          {items.map((item) => (
-            <Swipeable
-              key={item.id}
-              renderRightActions={() => (
-                <Pressable
-                  style={styles.deleteAction}
-                  onPress={() => confirmDelete(item)}
-                  accessible={true}
-                  accessibilityRole="button"
-                  accessibilityLabel="מחק פריט"
-                >
-                  <MaterialIcons name="delete-outline" size={26} color="white" />
-                </Pressable>
-              )}
-            >
-              <View style={{ flexDirection: 'row-reverse', gap: 16, marginBottom: 4 }}>
-                {/* Time column */}
-                <View style={styles.timeColumn}>
-                  <Text style={styles.timeText}>{item.time}</Text>
-                </View>
+        {/* ── Timeline ───────────────────────────────────────────────────────── */}
+        {hasDayData && (
+          <>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.timelineTitle}>המשך היום</Text>
+            </View>
 
-                {/* Card: Pressable wraps content for tap-to-edit */}
-                <View style={{ flex: 1, marginBottom: 12 }}>
-                  <Pressable onPress={() => handleCardPress(item)}>
-                    <View style={styles.timelineCard}>
-                      <View
-                        style={[styles.timelineAccent, { backgroundColor: item.iconColor }]}
-                      />
-                      <View style={{ flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 10, flex: 1 }}>
-                        {item.type === 'task' && (
-                          <Pressable
-                            onPress={(e) => {
-                              e.stopPropagation?.();
-                              toggleTask(item.id);
-                            }}
-                            style={[
-                              styles.taskCheckbox,
-                              item.completed
-                                ? styles.taskCheckboxDone
-                                : styles.taskCheckboxEmpty,
-                            ]}
-                          >
-                            {item.completed && (
-                              <MaterialIcons name="check" size={14} color="white" />
-                            )}
-                          </Pressable>
-                        )}
-                        <View style={{ flex: 1 }}>
-                          <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8 }}>
-                            <Text
-                              style={[
-                                styles.taskTitle,
-                                item.completed && styles.completedText,
-                              ]}
-                            >
-                              {item.title}
-                            </Text>
+            {/* All-day events */}
+            {allDayEvents.length > 0 && (
+              <View style={{ paddingHorizontal: 24, marginBottom: 8 }}>
+                <Text style={styles.allDayLabel}>אירועים לכל היום</Text>
+                {allDayEvents.map((ev) => (
+                  <View key={ev.id} style={styles.allDayCard}>
+                    <View style={[styles.allDayAccent, { backgroundColor: ev.iconColor }]} />
+                    <Text style={styles.allDayTitle}>{ev.title}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Hourly timeline */}
+            <View style={{ paddingHorizontal: 24, paddingBottom: 8 }}>
+              {items
+                .filter((i) => !i.allDay)
+                .map((item) => (
+                  <Swipeable
+                    key={item.id}
+                    renderRightActions={() => (
+                      <Pressable
+                        style={styles.deleteAction}
+                        onPress={() => confirmDelete(item)}
+                        accessible={true}
+                        accessibilityRole="button"
+                        accessibilityLabel="מחק פריט"
+                      >
+                        <MaterialIcons name="delete-outline" size={26} color="white" />
+                      </Pressable>
+                    )}
+                  >
+                    <View style={{ flexDirection: 'row-reverse', gap: 16, marginBottom: 4 }}>
+                      {/* Time column */}
+                      <View style={styles.timeColumn}>
+                        <Text style={styles.timeText}>{item.time}</Text>
+                      </View>
+
+                      {/* Card */}
+                      <View style={{ flex: 1, marginBottom: 12 }}>
+                        <Pressable onPress={() => handleCardPress(item)}>
+                          <View style={styles.timelineCard}>
                             <View
                               style={[
-                                styles.assigneeCircle,
-                                { backgroundColor: item.assigneeColor },
+                                styles.timelineAccent,
+                                { backgroundColor: item.iconColor },
                               ]}
                             />
+                            <View
+                              style={{
+                                flexDirection: 'row-reverse',
+                                alignItems: 'flex-start',
+                                gap: 10,
+                                flex: 1,
+                              }}
+                            >
+                              {item.type === 'task' && (
+                                <Pressable
+                                  onPress={(e) => {
+                                    e.stopPropagation?.();
+                                    toggleTask(item.id);
+                                  }}
+                                  style={[
+                                    styles.taskCheckbox,
+                                    item.completed
+                                      ? styles.taskCheckboxDone
+                                      : styles.taskCheckboxEmpty,
+                                  ]}
+                                >
+                                  {item.completed && (
+                                    <MaterialIcons name="check" size={14} color="white" />
+                                  )}
+                                </Pressable>
+                              )}
+                              <View style={{ flex: 1 }}>
+                                <View
+                                  style={{
+                                    flexDirection: 'row-reverse',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    flexWrap: 'wrap',
+                                  }}
+                                >
+                                  <Text
+                                    style={[
+                                      styles.taskTitle,
+                                      item.completed && styles.completedText,
+                                    ]}
+                                  >
+                                    {item.title}
+                                  </Text>
+                                  {item.pending && (
+                                    <View style={styles.pendingBadge}>
+                                      <Text style={styles.pendingBadgeText}>
+                                        ממתין לאישור
+                                      </Text>
+                                    </View>
+                                  )}
+                                  <View
+                                    style={[
+                                      styles.assigneeCircle,
+                                      { backgroundColor: item.assigneeColor },
+                                    ]}
+                                  />
+                                </View>
+                                <Text style={styles.itemLocation}>{item.location}</Text>
+                              </View>
+                            </View>
                           </View>
-                          <Text style={styles.itemLocation}>{item.location}</Text>
-                        </View>
+                        </Pressable>
                       </View>
                     </View>
+                  </Swipeable>
+                ))}
+            </View>
+          </>
+        )}
+
+        {/* ── Undated tasks ──────────────────────────────────────────────────── */}
+        {undatedTasks.length > 0 && (
+          <View style={{ marginBottom: 32 }}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>משימות ללא תאריך</Text>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingRight: 24, paddingLeft: 8 }}
+            >
+              <View style={{ flexDirection: 'row-reverse', gap: 10 }}>
+                {undatedTasks.map((task) => (
+                  <Pressable
+                    key={task.id}
+                    style={styles.undatedCard}
+                    onPress={() => console.log('TODO: navigate to task edit', task.id)}
+                    accessible={true}
+                    accessibilityRole="button"
+                    accessibilityLabel={task.title}
+                  >
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        toggleUndatedTask(task.id);
+                      }}
+                      style={[
+                        styles.undatedCheckbox,
+                        task.completed && styles.undatedCheckboxDone,
+                      ]}
+                      accessible={true}
+                      accessibilityRole="checkbox"
+                      accessibilityLabel="סמן כהושלמה"
+                    >
+                      {task.completed && (
+                        <MaterialIcons name="check" size={12} color="white" />
+                      )}
+                    </Pressable>
+                    <Text
+                      style={[styles.undatedTitle, task.completed && styles.completedText]}
+                      numberOfLines={2}
+                    >
+                      {task.title}
+                    </Text>
                   </Pressable>
-                </View>
+                ))}
               </View>
-            </Swipeable>
-          ))}
-        </View>
+            </ScrollView>
+          </View>
+        )}
 
-        {/* ── "עבור ליומן" button ────────────────────────────────────────── */}
-        <View style={{ paddingHorizontal: 24, marginTop: 4, marginBottom: 24 }}>
-          <Pressable
-            onPress={() => router.push('/(authenticated)/calendar')}
-            style={styles.calendarBtn}
-            accessible={true}
-            accessibilityRole="button"
-            accessibilityLabel="עבור ליומן"
-          >
-            <Text style={styles.calendarBtnText}>עבור ליומן</Text>
-          </Pressable>
-        </View>
-
-        {/* ── Mood carousel (pseudo-infinite wheel) ──────────────────────── */}
+        {/* ── Mood section ───────────────────────────────────────────────────── */}
         <View style={{ paddingHorizontal: 24, marginTop: 8, marginBottom: 32 }}>
           <Text style={styles.moodTitle}>איך הרגיש היום שלך?</Text>
-          {renderMoodWheel(moodScrollRef, moodWheelPad, handleBottomScrollEnd)}
+
+          {selectedMood !== null && selectedMoodData ? (
+            // Compact card after mood is selected
+            // TODO: להחליף ללוגיקת AI בעתיד (לחבר רגש + תובנה יומית)
+            <Pressable
+              onPress={handleMoodCardPress}
+              style={styles.moodCompactCard}
+              accessible={true}
+              accessibilityRole="button"
+              accessibilityLabel={`הרגש שנבחר: ${selectedMoodData.label}`}
+            >
+              <Text style={styles.moodCompactEmoji}>{selectedMoodData.emoji}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.moodCompactLabel}>{selectedMoodData.label}</Text>
+                <Text style={styles.moodCompactPhrase}>{selectedMoodData.phrase}</Text>
+              </View>
+              {lastMoodDate === todayISO && (
+                <MaterialIcons name="edit" size={16} color="#94a3b8" />
+              )}
+            </Pressable>
+          ) : (
+            renderMoodWheel(moodScrollRef, moodWheelPad, handleBottomScrollEnd)
+          )}
         </View>
       </ScrollView>
 
@@ -673,7 +1024,7 @@ export default function HomeScreen() {
         onClose={() => setIsNotificationsOpen(false)}
       />
 
-      {/* ── Mood Popup Modal (Patch 5b) ────────────────────────────────────── */}
+      {/* ── Mood Modal ─────────────────────────────────────────────────────── */}
       <Modal
         animationType="fade"
         transparent
@@ -683,7 +1034,27 @@ export default function HomeScreen() {
         <View style={styles.moodModalOverlay}>
           <View style={styles.moodModalCard}>
             <Text style={styles.moodModalTitle}>איך הרגיש היום שלך?</Text>
-            {renderMoodWheel(moodPopupRef, moodPopupHPad, handlePopupScrollEnd)}
+            {renderMoodWheel(
+              moodPopupRef,
+              moodPopupHPad,
+              handlePopupScrollEnd,
+              tempMoodSelection,
+              (v) => setTempMoodSelection(v)
+            )}
+            {/* Confirm button — only active after scrolling to a mood */}
+            <Pressable
+              style={[
+                styles.moodConfirmBtn,
+                tempMoodSelection === null && styles.moodConfirmBtnDisabled,
+              ]}
+              onPress={confirmMoodSelection}
+              disabled={tempMoodSelection === null}
+              accessible={true}
+              accessibilityRole="button"
+              accessibilityLabel="אישור בחירת רגש"
+            >
+              <Text style={styles.moodConfirmBtnText}>אישור</Text>
+            </Pressable>
             <Pressable
               style={styles.moodModalClose}
               onPress={() => setIsMoodModalVisible(false)}
@@ -703,7 +1074,7 @@ export default function HomeScreen() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  // Header
+  // ── Header ─────────────────────────────────────────────────────────────────
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -730,12 +1101,74 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 
-  // Date carousel
+  // ── Insight card ────────────────────────────────────────────────────────────
+  insightCard: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    marginHorizontal: 24,
+    marginTop: 12,
+    marginBottom: 4,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  insightHeader: {
+    flexDirection: 'row-reverse',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  insightLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#36a9e2',
+    textAlign: 'right',
+  },
+  insightText: {
+    fontSize: 14,
+    color: '#374151',
+    textAlign: 'right',
+    lineHeight: 20,
+  },
+
+  // ── Date section header ─────────────────────────────────────────────────────
+  dateSectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    gap: 8,
+  },
+  todayChip: {
+    backgroundColor: '#36a9e2',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+  },
+  todayChipText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  calendarToggleBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(54,169,226,0.10)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // ── Date carousel ───────────────────────────────────────────────────────────
   carouselRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 6,
     marginBottom: 4,
   },
   dayPill: {
@@ -765,7 +1198,141 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
 
-  // Event card
+  // ── Month calendar ──────────────────────────────────────────────────────────
+  monthCalendar: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  monthName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111517',
+    textAlign: 'right',
+    marginBottom: 12,
+  },
+  monthGrid: {
+    flexDirection: 'row-reverse',
+    flexWrap: 'wrap',
+  },
+  monthDayHeader: {
+    width: `${100 / 7}%`,
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  monthDayHeaderText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#94a3b8',
+  },
+  monthDayCell: {
+    width: `${100 / 7}%`,
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  monthDayCellSelected: {
+    backgroundColor: '#36a9e2',
+    borderRadius: 999,
+  },
+  monthDayCellToday: {
+    borderWidth: 2,
+    borderColor: '#36a9e2',
+    borderRadius: 999,
+  },
+  monthDayText: {
+    fontSize: 14,
+    color: '#111517',
+    fontWeight: '500',
+  },
+  monthDayTextSelected: { color: '#fff', fontWeight: '700' },
+  monthDayTextToday: { color: '#36a9e2', fontWeight: '700' },
+
+  // ── Empty state — new user ──────────────────────────────────────────────────
+  emptyStateContainer: {
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingVertical: 40,
+  },
+  emptyStateIconWrap: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#e8f5fd',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  emptyStateTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111517',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  emptyStateSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  emptyStatePrimaryBtn: {
+    backgroundColor: '#36a9e2',
+    borderRadius: 50,
+    paddingVertical: 14,
+    paddingHorizontal: 32,
+    marginBottom: 12,
+  },
+  emptyStatePrimaryBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  emptyStateSecondaryBtnText: {
+    color: '#36a9e2',
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 20,
+  },
+  emptyStateHint: {
+    fontSize: 12,
+    color: '#9ca3af',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+
+  // ── Empty day state ──────────────────────────────────────────────────────────
+  emptyDayContainer: {
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 32,
+  },
+  emptyDayTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111517',
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  emptyDaySubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  emptyDayLink: {
+    fontSize: 14,
+    color: '#36a9e2',
+    fontWeight: '600',
+  },
+
+  // ── Event card ──────────────────────────────────────────────────────────────
   cardShadow: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -788,7 +1355,6 @@ const styles = StyleSheet.create({
     width: 6,
     backgroundColor: '#36a9e2',
   },
-  // PATCH 2a: single row for pill + time
   eventTopRow: {
     flexDirection: 'row-reverse',
     alignItems: 'center',
@@ -810,7 +1376,6 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     marginBottom: 8,
   },
-  // PATCH 2b: address row with proper grouping
   eventAddressRow: {
     flexDirection: 'row-reverse',
     alignItems: 'center',
@@ -851,7 +1416,7 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 
-  // Birthdays
+  // ── Birthdays ───────────────────────────────────────────────────────────────
   sectionHeader: {
     flexDirection: 'row-reverse',
     justifyContent: 'space-between',
@@ -898,7 +1463,45 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 
-  // Timeline
+  // ── All-day events ──────────────────────────────────────────────────────────
+  allDayLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6b7280',
+    textAlign: 'right',
+    marginBottom: 6,
+  },
+  allDayCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    marginBottom: 6,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  allDayAccent: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
+  },
+  allDayTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111517',
+    textAlign: 'right',
+    paddingRight: 8,
+  },
+
+  // ── Timeline ────────────────────────────────────────────────────────────────
   timelineTitle: { fontSize: 18, fontWeight: '700', color: '#111517' },
   timeColumn: { width: 48, alignItems: 'center', paddingTop: 14 },
   timeText: { fontSize: 13, fontWeight: '700', color: '#94a3b8' },
@@ -922,7 +1525,6 @@ const styles = StyleSheet.create({
     width: 4,
     borderRadius: 2,
   },
-  // PATCH 3: delete action
   deleteAction: {
     backgroundColor: '#ff4444',
     borderRadius: 16,
@@ -965,21 +1567,58 @@ const styles = StyleSheet.create({
   },
   itemLocation: { color: '#94a3b8', fontSize: 13, textAlign: 'right', marginTop: 2 },
 
-  // Calendar button
-  calendarBtn: {
-    backgroundColor: '#fff',
-    borderRadius: 50,
-    paddingVertical: 12,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    elevation: 2,
+  // ── Pending badge ────────────────────────────────────────────────────────────
+  pendingBadge: {
+    backgroundColor: '#fff3cd',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
-  calendarBtnText: { color: '#36a9e2', fontSize: 15, fontWeight: '700' },
+  pendingBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#b45309',
+  },
 
-  // Mood carousel
+  // ── Undated tasks ────────────────────────────────────────────────────────────
+  undatedCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 12,
+    width: 120,
+    gap: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+    flexDirection: 'row-reverse',
+    alignItems: 'flex-start',
+  },
+  undatedCheckbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: '#d1d5db',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+    flexShrink: 0,
+  },
+  undatedCheckboxDone: {
+    backgroundColor: '#36a9e2',
+    borderColor: '#36a9e2',
+  },
+  undatedTitle: {
+    fontSize: 13,
+    color: '#111517',
+    fontWeight: '500',
+    textAlign: 'right',
+    flex: 1,
+  },
+
+  // ── Mood carousel ───────────────────────────────────────────────────────────
   moodTitle: {
     fontSize: 16,
     fontWeight: '700',
@@ -1000,7 +1639,30 @@ const styles = StyleSheet.create({
   moodLabel: { fontSize: 12, color: '#94a3b8', textAlign: 'center' },
   moodLabelActive: { fontSize: 14, color: '#111517', fontWeight: '700' },
 
-  // Mood popup modal (Patch 5b)
+  // ── Compact mood card (after selection) ─────────────────────────────────────
+  moodCompactCard: {
+    backgroundColor: '#f0f7ff',
+    borderRadius: 16,
+    padding: 16,
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 12,
+  },
+  moodCompactEmoji: { fontSize: 32 },
+  moodCompactLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111517',
+    textAlign: 'right',
+  },
+  moodCompactPhrase: {
+    fontSize: 13,
+    color: '#6b7280',
+    textAlign: 'right',
+    marginTop: 2,
+  },
+
+  // ── Mood popup modal ────────────────────────────────────────────────────────
   moodModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
@@ -1025,8 +1687,23 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     marginBottom: 20,
   },
-  moodModalClose: {
+  moodConfirmBtn: {
     marginTop: 20,
+    backgroundColor: '#36a9e2',
+    borderRadius: 50,
+    paddingVertical: 13,
+    alignItems: 'center',
+  },
+  moodConfirmBtnDisabled: {
+    backgroundColor: '#e5e7eb',
+  },
+  moodConfirmBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  moodModalClose: {
+    marginTop: 12,
     alignSelf: 'center',
     paddingVertical: 8,
     paddingHorizontal: 24,
@@ -1037,7 +1714,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Toast
+  // ── Toast ───────────────────────────────────────────────────────────────────
   toastWrapper: {
     position: 'absolute',
     bottom: 10,
@@ -1067,7 +1744,7 @@ const styles = StyleSheet.create({
   },
   toastText: { color: '#374151', fontSize: 14, lineHeight: 20, textAlign: 'right' },
 
-  // Bell badge
+  // ── Bell badge ──────────────────────────────────────────────────────────────
   bellBadge: {
     position: 'absolute',
     top: 2,
