@@ -29,7 +29,7 @@ type TabBtnProps = {
 
 function RegularTabButton({ iconName, label, onPress, onLongPress, accessibilityState }: TabBtnProps) {
   const focused = accessibilityState?.selected === true;
-  const color = focused ? '#36a9e2' : '#6b7280';
+  const color = focused ? '#36a9e2' : '#94a3b8';
   return (
     <Pressable
       onPress={onPress}
@@ -186,7 +186,7 @@ export default function AuthenticatedLayout() {
           screenOptions={{
             headerShown: false,
             tabBarActiveTintColor: '#36a9e2',
-            tabBarInactiveTintColor: '#6b7280',
+            tabBarInactiveTintColor: '#94a3b8',
             tabBarStyle: {
               backgroundColor: '#ffffff',
               borderTopColor: '#f0f0f0',
@@ -286,7 +286,7 @@ const styles = StyleSheet.create({
   tabLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#6b7280',
+    color: '#94a3b8',
     marginTop: 2,
   },
   tabLabelActive: { color: '#36a9e2' },

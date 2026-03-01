@@ -1,6 +1,8 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
+import { MoodIcon } from '@/components/mood/MoodIcon';
+import type { MoodValue } from '@/components/mood/MoodIcon';
 import { Swipeable } from 'react-native-gesture-handler';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -40,12 +42,12 @@ function isSameDay(a: Date, b: Date): boolean {
 
 // ─── Mood data ────────────────────────────────────────────────────────────────
 
-const MOODS = [
-  { emoji: '😍', label: 'מדהים',   value: 4, phrase: 'יום מוצלח ומלא בעשייה! 🌟' },
-  { emoji: '😊', label: 'בסדר',    value: 3, phrase: 'יום טוב, כל הכבוד! 👍' },
-  { emoji: '😐', label: 'רגיל',    value: 2, phrase: 'יום רגיל – ולפעמים זה בדיוק מה שצריך.' },
-  { emoji: '😓', label: 'עמוס',    value: 1, phrase: 'יום עמוס! תנוחי טוב הלילה.' },
-  { emoji: '😤', label: 'מתסכל',   value: 0, phrase: 'יום מאתגר. מחר יהיה טוב יותר 💙' },
+const MOODS: { value: MoodValue; label: string; shortText: string }[] = [
+  { value: 4, label: 'מדהים',   shortText: 'יום מוצלח ומלא בעשייה! ⭐' },
+  { value: 3, label: 'בסדר',    shortText: 'יום טוב וסביר 👍' },
+  { value: 2, label: 'רגיל',    shortText: 'יום שגרתי כרגיל.' },
+  { value: 1, label: 'עמוס',    shortText: 'יום עמוס – כל הכבוד שעברת אותו.' },
+  { value: 0, label: 'מתסכל',   shortText: 'יום קשה. מחר יהיה טוב יותר 💙' },
 ];
 
 const MOOD_ITEM_WIDTH = 80;
@@ -428,11 +430,11 @@ export default function HomeScreen() {
             accessibilityRole="button"
             accessibilityLabel={mood.label}
           >
-            <View style={[styles.moodEmojiWrap, isActive && styles.moodEmojiWrapActive]}>
-              <Text style={{ fontSize: isActive ? 36 : 26, opacity: isActive ? 1 : 0.45 }}>
-                {mood.emoji}
-              </Text>
-            </View>
+            <MoodIcon
+              value={mood.value}
+              size={isActive ? 56 : 48}
+              active={isActive}
+            />
             <Text style={[styles.moodLabel, isActive && styles.moodLabelActive]}>
               {mood.label}
             </Text>
@@ -988,10 +990,10 @@ export default function HomeScreen() {
               accessibilityRole="button"
               accessibilityLabel={`הרגש שנבחר: ${selectedMoodData.label}`}
             >
-              <Text style={styles.moodCompactEmoji}>{selectedMoodData.emoji}</Text>
+              <MoodIcon value={selectedMoodData.value} size={40} active={true} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.moodCompactLabel}>{selectedMoodData.label}</Text>
-                <Text style={styles.moodCompactPhrase}>{selectedMoodData.phrase}</Text>
+                <Text style={styles.moodCompactPhrase}>{selectedMoodData.shortText}</Text>
               </View>
               {lastMoodDate === todayISO && (
                 <MaterialIcons name="edit" size={16} color="#94a3b8" />
@@ -1626,16 +1628,15 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     marginBottom: 16,
   },
-  moodItem: { width: MOOD_ITEM_WIDTH, alignItems: 'center', paddingVertical: 8 },
-  moodEmojiWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+  moodItem: {
+    width: MOOD_ITEM_WIDTH,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
+    paddingVertical: 8,
+    // Reserve height for largest size (56) so non-active items don't jump layout
+    minHeight: 80,
+    justifyContent: 'flex-end',
+    gap: 4,
   },
-  moodEmojiWrapActive: { borderWidth: 2, borderColor: '#36a9e2' },
   moodLabel: { fontSize: 12, color: '#94a3b8', textAlign: 'center' },
   moodLabelActive: { fontSize: 14, color: '#111517', fontWeight: '700' },
 
@@ -1648,7 +1649,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
-  moodCompactEmoji: { fontSize: 32 },
   moodCompactLabel: {
     fontSize: 15,
     fontWeight: '700',
