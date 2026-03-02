@@ -81,6 +81,9 @@ export default defineSchema({
     onlineUrl: v.optional(v.string()),     // Zoom / Meet link
     groupId: v.optional(v.id('spaces')),  // קהילה ששיתפה את האירוע
     sharedWithUserIds: v.optional(v.array(v.id('users'))), // משתמשים מוזמנים
+    // אופציונלי: אם האירוע שייך לקהילה
+    // TODO: לסנן/לקבץ לפי קהילה במסכים מאוחר יותר
+    communityId: v.optional(v.id('communities')),
   })
     .index('by_space_and_time', ['spaceId', 'startTime'])
     .index('by_creator', ['createdBy'])
@@ -204,23 +207,30 @@ export default defineSchema({
   }).index('by_user', ['userId']),
 
   // ═══════════════════════════════════════════════════════
-  // טבלת קהילות
+  // מייצגת קהילה חיצונית – גן / כיתה / שכונה
   // ═══════════════════════════════════════════════════════
   communities: defineTable({
-    name: v.string(),
-    description: v.optional(v.string()),
     ownerId: v.id('users'),
-    type: v.union(
-      v.literal('family'),
-      v.literal('gan'),
-      v.literal('class'),
-      v.literal('neighborhood'),
-      v.literal('other')
-    ),
-    status: v.union(v.literal('active'), v.literal('archived')),
-    inviteCode: v.optional(v.string()),
+    spaceId: v.id('spaces'),
+    name: v.string(),
+    description: v.string(),
+    avatarColor: v.string(),
+    inviteCode: v.string(),
     createdAt: v.number(),
   })
     .index('by_owner', ['ownerId'])
-    .index('by_invite_code', ['inviteCode']),
+    .index('by_inviteCode', ['inviteCode']),
+
+  // ═══════════════════════════════════════════════════════
+  // חברות של משתמשים בקהילות
+  // ═══════════════════════════════════════════════════════
+  communityMembers: defineTable({
+    communityId: v.id('communities'),
+    userId: v.id('users'),
+    spaceId: v.id('spaces'),
+    role: v.string(),
+    createdAt: v.number(),
+  })
+    .index('by_community', ['communityId'])
+    .index('by_user', ['userId']),
 });
