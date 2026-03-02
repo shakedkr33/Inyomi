@@ -239,11 +239,12 @@ export default function AuthenticatedLayout() {
               ),
             }}
           />
+          {/* TODO: לוודא שגם backend/סכמות משתמשות באותו מונח אם יתאים בעתיד */}
           <Tabs.Screen
             name="groups"
             options={{
               tabBarButton: (props) => (
-                <RegularTabButton {...(props as unknown as TabBtnProps)} iconName="group" label="קבוצות" />
+                <RegularTabButton {...(props as unknown as TabBtnProps)} iconName="group" label="קהילות" />
               ),
             }}
           />

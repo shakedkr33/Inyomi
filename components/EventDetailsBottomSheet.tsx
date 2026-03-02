@@ -13,6 +13,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { height: screenHeight } = Dimensions.get('window');
 
+const SHEET_HEIGHT = screenHeight * 0.52;
+
 // ─── EventItem type ───────────────────────────────────────────────────────────
 
 export interface EventItem {
@@ -36,6 +38,7 @@ interface EventDetailsBottomSheetProps {
   event: EventItem | null;
   visible: boolean;
   onClose: () => void;
+  onNavigate: (location: string) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -44,6 +47,7 @@ export function EventDetailsBottomSheet({
   event,
   visible,
   onClose,
+  onNavigate,
 }: EventDetailsBottomSheetProps) {
   const router = useRouter();
 
@@ -94,7 +98,7 @@ export function EventDetailsBottomSheet({
           )}
 
           {/* Title */}
-          <Text style={styles.title}>{event.title}</Text>
+          <Text style={styles.sheetTitle}>{event.title}</Text>
 
           {/* Time row */}
           <View style={styles.infoRow}>
@@ -102,13 +106,34 @@ export function EventDetailsBottomSheet({
             <Text style={styles.infoText}>{timeLabel}</Text>
           </View>
 
-          {/* Location row */}
-          {hasLocation && (
-            <View style={styles.infoRow}>
-              <MaterialIcons name="location-on" size={18} color="#94a3b8" />
-              <Text style={styles.infoText}>{event.location}</Text>
+          {/* Location row — inline with nav button */}
+          {hasLocation ? (
+            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8, flex: 1 }}>
+                <MaterialIcons name="location-on" size={18} color="#94a3b8" />
+                <Text style={styles.infoText} numberOfLines={1}>{event.location}</Text>
+              </View>
+              <Pressable
+                onPress={() => event.location && onNavigate(event.location)}
+                style={{
+                  backgroundColor: '#36a9e2',
+                  borderRadius: 16,
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  marginLeft: 8,
+                }}
+                accessible={true}
+                accessibilityRole="button"
+                accessibilityLabel={`נווט אל ${event.location}`}
+              >
+                <MaterialIcons name="near-me" size={14} color="#fff" />
+                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>נווט</Text>
+              </Pressable>
             </View>
-          )}
+          ) : null}
 
           {/* Group name — TODO: לחבר לנתוני קבוצה אמיתיים מ-Convex */}
           {event.groupName ? (
@@ -122,22 +147,9 @@ export function EventDetailsBottomSheet({
 
           {/* Description */}
           {event.description ? (
-            <Text style={styles.description}>{event.description}</Text>
+            <Text style={styles.descText}>{event.description}</Text>
           ) : null}
         </ScrollView>
-
-        {/* Navigate button — floated above bottom buttons, only when location exists */}
-        {hasLocation && (
-          <Pressable
-            style={styles.navFloatBtn}
-            accessible={true}
-            accessibilityRole="button"
-            accessibilityLabel={`נווט אל ${event.location}`}
-          >
-            <MaterialIcons name="near-me" size={18} color="#fff" />
-            <Text style={styles.navFloatBtnText}>נווט</Text>
-          </Pressable>
-        )}
 
         {/* Fixed bottom buttons */}
         <View style={styles.bottomButtons}>
@@ -179,7 +191,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: screenHeight * 0.67,
+    height: SHEET_HEIGHT,
     backgroundColor: '#fff',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
@@ -217,12 +229,12 @@ const styles = StyleSheet.create({
   },
 
   // Title
-  title: {
-    fontSize: 22,
+  sheetTitle: {
+    fontSize: 24,
     fontWeight: '800',
     color: '#111517',
     textAlign: 'right',
-    marginBottom: 20,
+    marginBottom: 16,
   },
 
   // Info rows
@@ -233,44 +245,20 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   infoText: {
-    fontSize: 15,
+    fontSize: 16,
     color: '#374151',
     textAlign: 'right',
     flex: 1,
   },
 
   // Description
-  description: {
-    fontSize: 14,
+  descText: {
+    fontSize: 15,
     color: '#6b7280',
     textAlign: 'right',
-    lineHeight: 20,
+    lineHeight: 22,
     marginBottom: 10,
     marginTop: 4,
-  },
-
-  // Floating navigate button (bottom-left of sheet)
-  navFloatBtn: {
-    position: 'absolute',
-    bottom: 140,
-    left: 24,
-    flexDirection: 'row',
-    gap: 6,
-    backgroundColor: '#36a9e2',
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    alignItems: 'center',
-    shadowColor: '#36a9e2',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  navFloatBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 14,
   },
 
   // Bottom buttons
