@@ -136,6 +136,16 @@ export const listMyCommunities = query({
 });
 
 // ─────────────────────────────────────────────────────────────
+// שליפת קהילה לפי ID (ללא בדיקת חברות — לשימוש ב-calendar filter)
+// ─────────────────────────────────────────────────────────────
+export const getById = query({
+  args: { communityId: v.id('communities') },
+  handler: async (ctx, { communityId }) => {
+    return await ctx.db.get(communityId);
+  },
+});
+
+// ─────────────────────────────────────────────────────────────
 // חיפוש קהילה לפי קוד הזמנה (למסך ה-join)
 // ─────────────────────────────────────────────────────────────
 export const getCommunityByInviteCode = query({

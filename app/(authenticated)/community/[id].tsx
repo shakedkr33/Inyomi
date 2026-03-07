@@ -178,24 +178,24 @@ function RsvpBottomSheet({ eventId, currentStatus, onSelect, onClose }: RsvpShee
 
 // ─── Action Sheet (+ button) ──────────────────────────────────────────────────
 
-interface AddActionSheetProps {
+// ─── Add Popover Menu ─────────────────────────────────────────────────────────
+
+interface AddPopoverMenuProps {
   visible: boolean;
+  position: { x: number; y: number };
   communityId: string;
   onClose: () => void;
 }
 
-function AddActionSheet({ visible, communityId, onClose }: AddActionSheetProps) {
+function AddPopoverMenu({ visible, position, communityId, onClose }: AddPopoverMenuProps) {
   const router = useRouter();
-
   if (!visible) return null;
-
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.sheetBackdrop} onPress={onClose} />
-      <View style={styles.addSheet}>
-        <View style={styles.sheetHandle} />
-        <TouchableOpacity
-          style={styles.addSheetOption}
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
+      <Pressable style={styles.popoverBackdrop} onPress={onClose} />
+      <View style={[styles.popover, { top: position.y, left: position.x }]}>
+        <Pressable
+          style={[styles.popoverItem, styles.popoverBorder]}
           onPress={() => {
             onClose();
             router.push(
@@ -204,30 +204,26 @@ function AddActionSheet({ visible, communityId, onClose }: AddActionSheetProps) 
           }}
           accessible
           accessibilityRole="button"
-          accessibilityLabel="יצירת אירוע חדש"
+          accessibilityLabel="אירוע חדש"
         >
-          <View style={[styles.addSheetIcon, { backgroundColor: '#f59e0b' }]}>
-            <Ionicons name="calendar-outline" size={22} color="#fff" />
-          </View>
-          <Text style={styles.addSheetLabel}>אירוע חדש</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.addSheetOption}
+          <Text style={styles.popoverLabel}>אירוע חדש</Text>
+          <Ionicons name="calendar-outline" size={18} color="#374151" />
+        </Pressable>
+        <Pressable
+          style={styles.popoverItem}
           onPress={() => {
             onClose();
             router.push(
-              `/(authenticated)/task/new?communityId=${communityId}` as Parameters<typeof router.push>[0]
+              `/(authenticated)/community-reminder/new?communityId=${communityId}` as Parameters<typeof router.push>[0]
             );
           }}
           accessible
           accessibilityRole="button"
-          accessibilityLabel="יצירת תזכורת חדשה"
+          accessibilityLabel="תזכורת חדשה"
         >
-          <View style={[styles.addSheetIcon, { backgroundColor: '#10b981' }]}>
-            <Ionicons name="checkmark-circle-outline" size={22} color="#fff" />
-          </View>
-          <Text style={styles.addSheetLabel}>תזכורת חדשה</Text>
-        </TouchableOpacity>
+          <Text style={styles.popoverLabel}>תזכורת חדשה</Text>
+          <Ionicons name="checkmark-circle-outline" size={18} color="#374151" />
+        </Pressable>
       </View>
     </Modal>
   );
@@ -429,7 +425,7 @@ function OverflowMenu({ visible, position, items, onClose }: OverflowMenuProps) 
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
       <Pressable style={styles.popoverBackdrop} onPress={onClose} />
-      <View style={[styles.popover, { top: position.y, right: position.x }]}>
+      <View style={[styles.popover, { top: position.y, left: position.x }]}>
         {items.map((m, idx) => (
           <Pressable
             key={m.label}
@@ -880,16 +876,27 @@ export default function CommunityDetailScreen() {
   const deleteCommunity = useMutation(api.communities.deleteCommunity);
   const toggleNotifications = useMutation(api.communities.toggleNotifications);
 
+  // ── Back navigation with fallback
+  const handleBack = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/(authenticated)/communities' as Parameters<typeof router.replace>[0]);
+    }
+  }, [router]);
+
   // ── Local state
   const [activeTab, setActiveTab] = useState<Tab>('הכל');
   const [selectedMonth, setSelectedMonth] = useState(() => new Date());
   const [menuOpen, setMenuOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState({ x: 16, y: 80 });
-  const [addSheetOpen, setAddSheetOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState({ x: 8, y: 80 });
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [addMenuPos, setAddMenuPos] = useState({ x: 8, y: 80 });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [rsvpSheet, setRsvpSheet] = useState<Id<'events'> | null>(null);
   const menuBtnRef = useRef<View>(null);
+  const addBtnRef = useRef<View>(null);
 
   // ── RSVP map
   const rsvpMap = useMemo<Record<string, RsvpStatus>>(() => {
@@ -970,14 +977,29 @@ export default function CommunityDetailScreen() {
     }
   }, [community]);
 
+  // Overflow menu opens from the LEFT — position uses left: px
   const handleMenuPress = useCallback(() => {
     if (!menuBtnRef.current) {
+      setMenuPos({ x: 8, y: 80 });
       setMenuOpen(true);
       return;
     }
-    menuBtnRef.current.measure((_fx, _fy, _w, _h, _px, py) => {
-      setMenuPos({ x: 16, y: py + _h + 4 });
+    menuBtnRef.current.measure((_fx, _fy, _w, h, px, py) => {
+      setMenuPos({ x: Math.max(0, px), y: py + h + 4 });
       setMenuOpen(true);
+    });
+  }, []);
+
+  // Add popover anchored to exact button position using measureInWindow
+  const handleAddPress = useCallback(() => {
+    if (!addBtnRef.current) {
+      setAddMenuPos({ x: 8, y: 80 });
+      setAddMenuOpen(true);
+      return;
+    }
+    addBtnRef.current.measureInWindow((x, y, _w, h) => {
+      setAddMenuPos({ x, y: y + h + 4 });
+      setAddMenuOpen(true);
     });
   }, []);
 
@@ -1067,7 +1089,7 @@ export default function CommunityDetailScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* ── Header */}
       <View style={styles.header}>
-        {/* שמאל: ⋯ + "+" */}
+        {/* שמאל: ⋯ בלבד */}
         <View style={styles.headerLeft}>
           <View ref={menuBtnRef}>
             <TouchableOpacity
@@ -1080,19 +1102,21 @@ export default function CommunityDetailScreen() {
               <Ionicons name="ellipsis-vertical" size={20} color="#374151" />
             </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            onPress={() => setAddSheetOpen(true)}
-            style={[styles.headerIconBtn, styles.headerAddBtn]}
-            accessible
-            accessibilityRole="button"
-            accessibilityLabel="הוסף אירוע או תזכורת"
-          >
-            <Ionicons name="add" size={22} color="#fff" />
-          </TouchableOpacity>
         </View>
 
-        {/* ימין: כפתור חזרה + שם + תיאור */}
+        {/* ימין: › + שם + "+" */}
         <View style={styles.headerRight}>
+          <View ref={addBtnRef}>
+            <TouchableOpacity
+              onPress={handleAddPress}
+              style={[styles.headerIconBtn, styles.headerAddBtn]}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="הוסף אירוע או תזכורת"
+            >
+              <Ionicons name="add" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
           <View style={styles.headerTextBlock}>
             <Text style={styles.headerTitle} numberOfLines={2}>
               {community.name}
@@ -1100,7 +1124,7 @@ export default function CommunityDetailScreen() {
             <Text style={styles.headerSubtitle}>{memberLabel}</Text>
           </View>
           <TouchableOpacity
-            onPress={() => router.back()}
+            onPress={handleBack}
             style={styles.headerIconBtn}
             accessible
             accessibilityRole="button"
@@ -1165,10 +1189,11 @@ export default function CommunityDetailScreen() {
       {activeTab === 'פעילות' && <TabActivity />}
 
       {/* ── Modals */}
-      <AddActionSheet
-        visible={addSheetOpen}
+      <AddPopoverMenu
+        visible={addMenuOpen}
+        position={addMenuPos}
         communityId={communityId}
-        onClose={() => setAddSheetOpen(false)}
+        onClose={() => setAddMenuOpen(false)}
       />
 
       <RsvpBottomSheet

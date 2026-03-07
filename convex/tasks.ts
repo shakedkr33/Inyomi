@@ -73,9 +73,10 @@ export const create = mutation({
     title: v.string(),
     description: v.optional(v.string()),
     dueDate: v.optional(v.number()), // undefined = ללא תאריך
-    spaceId: v.id('spaces'),
+    spaceId: v.optional(v.id('spaces')),
     assignedTo: v.optional(v.id('users')),
     category: v.optional(v.string()),
+    communityId: v.optional(v.id('communities')),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();

@@ -1,6 +1,9 @@
+import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useQuery } from 'convex/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -413,6 +416,18 @@ function generateCalendarGrid(year: number, month: number): CalendarDay[][] {
 // ===== Main Component =====
 export default function CalendarScreen(): React.JSX.Element {
   const router = useRouter();
+  const { communityId } = useLocalSearchParams<{ communityId?: string }>();
+
+  const communityEvents = useQuery(
+    api.events.listByCommunity,
+    communityId ? { communityId: communityId as Id<'communities'> } : 'skip'
+  );
+
+  const communityData = useQuery(
+    api.communities.getById,
+    communityId ? { communityId: communityId as Id<'communities'> } : 'skip'
+  );
+
   const [viewMode, setViewMode] = useState<'timeline' | 'monthly'>('timeline');
   const [slideAnim] = useState(new Animated.Value(0));
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -638,9 +653,88 @@ export default function CalendarScreen(): React.JSX.Element {
     setSelectedDay(now.getDate());
   }, []);
 
+  // ── Auto-switch to timeline view when community filter is active
+  useEffect(() => {
+    if (communityId) {
+      setViewMode('timeline');
+    }
+  }, [communityId]);
+
+  // ── Build timeline data: use real events when filtering by community
+  const timelineData = useMemo(() => {
+    if (!communityId || !communityEvents) return MOCK_TIMELINE_DATA;
+
+    const grouped: Record<string, {
+      dayLabel: string;
+      dayNumber: string;
+      isToday: boolean;
+      events: typeof MOCK_TIMELINE_DATA[0]['events'];
+      sortKey: number;
+    }> = {};
+
+    const todayD = new Date();
+    for (const event of communityEvents) {
+      const d = new Date(event.startTime);
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      const isToday =
+        d.getFullYear() === todayD.getFullYear() &&
+        d.getMonth() === todayD.getMonth() &&
+        d.getDate() === todayD.getDate();
+
+      if (!grouped[key]) {
+        grouped[key] = {
+          dayLabel: d.toLocaleDateString('he-IL', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+          }),
+          dayNumber: String(d.getDate()),
+          isToday,
+          events: [],
+          sortKey: event.startTime,
+        };
+      }
+      grouped[key].events.push({
+        id: event._id,
+        category: 'קהילה',
+        categoryColor: '#36a9e2',
+        title: event.title,
+        time: new Date(event.startTime).toLocaleTimeString('he-IL', {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+        location: event.location ?? '',
+        icon: 'event',
+        cancelled: false,
+      });
+    }
+
+    // Sort ascending by actual timestamp (upcoming first)
+    return Object.values(grouped).sort((a, b) => a.sortKey - b.sortKey);
+  }, [communityId, communityEvents]);
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
+        {/* Community filter banner */}
+        {communityId ? (
+          <View style={styles.communityBanner}>
+            <Pressable
+              onPress={() => router.setParams({ communityId: undefined })}
+              style={styles.communityBannerClose}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="בטל סינון קהילה"
+            >
+              <MaterialIcons name="close" size={16} color="#fff" />
+            </Pressable>
+            <Text style={styles.communityBannerText}>
+              {communityData?.name ? `מסונן לפי: ${communityData.name}` : 'מסונן לפי קהילה'}
+            </Text>
+            <MaterialIcons name="filter-list" size={16} color="#fff" />
+          </View>
+        ) : null}
+
         {/* Header */}
         <View style={styles.header}>
           {/* Top Row: Profile + Title + Bell */}
@@ -781,7 +875,7 @@ export default function CalendarScreen(): React.JSX.Element {
             style={styles.content}
             showsVerticalScrollIndicator={false}
           >
-            <TimelineView data={MOCK_TIMELINE_DATA} />
+            <TimelineView data={timelineData} />
           </ScrollView>
         ) : (
           <View style={styles.content}>
@@ -1232,6 +1326,17 @@ function TimelineView({
 }: {
   data: typeof MOCK_TIMELINE_DATA;
 }): React.JSX.Element {
+  if (data.length === 0) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 48, gap: 16, paddingTop: 80 }}>
+        <MaterialIcons name="event-busy" size={48} color="#d1d5db" />
+        <Text style={{ fontSize: 16, color: '#9ca3af', textAlign: 'center' }}>
+          אין אירועים לקהילה זו
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.timelineContainer}>
       {data.map((dayGroup) => (
@@ -1377,6 +1482,27 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: BG_COLOR,
+  },
+
+  /* Community filter banner */
+  communityBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 6,
+    backgroundColor: '#36a9e2',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  communityBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#fff',
+    fontWeight: '600',
+    textAlign: 'right',
+  },
+  communityBannerClose: {
+    padding: 4,
   },
 
   /* Header */

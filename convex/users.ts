@@ -1,3 +1,4 @@
+import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 
@@ -147,28 +148,23 @@ export const remove = mutation({
 });
 
 // שליפת ה-Space הראשי של המשתמש הנוכחי
-// מחזיר Id<'spaces'> | null — לא מחזיר null בשקט: null פירושו "אין מרחב פעיל"
+// מחזיר Id<'spaces'> | null — null פירושו "אין מרחב פעיל"
 export const getMySpace = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
-
-    const user = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', identity.email ?? ''))
-      .unique();
-    if (!user) return null;
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
 
     // 1. נסה members table — מוצא membership ומחזיר spaceId
     const membership = await ctx.db
       .query('members')
-      .withIndex('by_user', (q) => q.eq('userId', user._id))
+      .withIndex('by_user', (q) => q.eq('userId', userId))
       .first();
-    if (membership) return membership.spaceId;
+    if (membership?.spaceId) return membership.spaceId;
 
     // 2. fallback: user.defaultSpaceId (נאכלס ב-onboarding)
-    if ((user as unknown as { defaultSpaceId?: string }).defaultSpaceId) {
+    const user = await ctx.db.get(userId);
+    if ((user as unknown as { defaultSpaceId?: string })?.defaultSpaceId) {
       return (user as unknown as { defaultSpaceId: string }).defaultSpaceId;
     }
 

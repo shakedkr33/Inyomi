@@ -76,6 +76,8 @@ export const create = mutation({
     onlineUrl: v.optional(v.string()),
     groupId: v.optional(v.id('spaces')),
     sharedWithUserIds: v.optional(v.array(v.id('users'))),
+    communityId: v.optional(v.id('communities')),
+    requiresRsvp: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();

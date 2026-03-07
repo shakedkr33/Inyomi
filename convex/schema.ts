@@ -97,7 +97,7 @@ export default defineSchema({
     description: v.optional(v.string()),
     dueDate: v.optional(v.number()), // null = ללא תאריך (undated task)
     completed: v.boolean(),          // החליף את status
-    spaceId: v.id('spaces'),
+    spaceId: v.optional(v.id('spaces')),
     assignedTo: v.optional(v.id('users')),
     category: v.optional(v.string()),
     isAiGenerated: v.boolean(),
