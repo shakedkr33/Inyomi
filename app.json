@@ -32,7 +32,11 @@
     "web": {
       "favicon": "./assets/images/favicon.png"
     },
-    "plugins": [],
+    "plugins": [
+      "expo-audio",
+      "expo-font",
+      "expo-router"
+    ],
     "owner": "shakedkr",
     "extra": {
       "eas": {

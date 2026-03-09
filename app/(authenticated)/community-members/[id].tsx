@@ -106,7 +106,15 @@ export default function CommunityMembersScreen() {
           {data?.community.name ?? 'ניהול חברים'}
         </Text>
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => {
+            if (router.canGoBack()) {
+              router.back();
+            } else {
+              router.replace(
+                `/(authenticated)/community/${id}` as Parameters<typeof router.replace>[0]
+              );
+            }
+          }}
           style={styles.backBtn}
           accessible
           accessibilityRole="button"

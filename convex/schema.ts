@@ -104,6 +104,7 @@ export default defineSchema({
     createdBy: v.id('users'),
     createdAt: v.number(),
     communityId: v.optional(v.id('communities')), // קהילה שאליה שייכת המשימה
+    completedAt: v.optional(v.number()),           // חותמת זמן השלמה (לצורך היסטוריה)
   })
     .index('by_space_completed', ['spaceId', 'completed'])
     .index('by_assigned', ['assignedTo'])

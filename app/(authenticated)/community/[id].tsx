@@ -1,6 +1,7 @@
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery } from 'convex/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -55,6 +56,7 @@ interface TaskDoc {
   title: string;
   dueDate?: number;
   completed: boolean;
+  completedAt?: number;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -86,6 +88,14 @@ function formatEventDate(ts: number, allDay?: boolean): string {
   return d.toLocaleDateString('he-IL', {
     day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
   });
+}
+
+function formatEventDateTime(ts: number, allDay?: boolean): string {
+  const d = new Date(ts);
+  const day = d.toLocaleDateString('he-IL', { day: 'numeric', month: 'long' });
+  if (allDay) return day;
+  const time = d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  return `${day} • ${time}`;
 }
 
 function formatDueDate(ts: number): string {
@@ -235,54 +245,57 @@ interface EventCardProps {
   event: EventDoc;
   rsvpStatus: RsvpStatus;
   onRsvpPress: (eventId: Id<'events'>) => void;
-  past?: boolean;
 }
 
-function EventCard({ event, rsvpStatus, onRsvpPress, past }: EventCardProps) {
+function EventCard({ event, rsvpStatus, onRsvpPress }: EventCardProps) {
   const color = getEventColor(event._id);
-  const showRsvpBadge = event.requiresRsvp || rsvpStatus !== 'none';
 
+  // Badge — only shown when requiresRsvp is true
+  // TODO: also hide badge for events created by current user once createdBy field is available in EventDoc
   let badgeLabel = '';
   let badgeColor = '';
-  if (rsvpStatus === 'yes') { badgeLabel = 'אצור ביומן ✓'; badgeColor = '#22c55e'; }
-  else if (rsvpStatus === 'maybe') { badgeLabel = 'אולי ▾'; badgeColor = '#eab308'; }
-  else if (event.requiresRsvp) { badgeLabel = 'ממתין לאישור ▾'; badgeColor = '#eab308'; }
+  if (event.requiresRsvp) {
+    if (rsvpStatus === 'yes') { badgeLabel = 'נוסף ליומן ✓'; badgeColor = '#22c55e'; }
+    else if (rsvpStatus === 'maybe') { badgeLabel = 'אולי'; badgeColor = '#eab308'; }
+    else { badgeLabel = 'ממתין לאישור'; badgeColor = '#eab308'; }
+  }
+
+  const dateStr = formatEventDateTime(event.startTime, event.allDay);
 
   return (
     <Pressable
-      style={[styles.eventCard, past && styles.eventCardPast]}
-      onPress={() => !past && onRsvpPress(event._id)}
+      style={styles.eventCard}
+      onPress={() => onRsvpPress(event._id)}
       accessible
       accessibilityRole="button"
       accessibilityLabel={event.title}
     >
-      <View style={[styles.eventCardHeader, { backgroundColor: color }]}>
-        <View style={styles.eventCardOverlay} />
-        {past && (
-          <View style={[styles.eventBadge, { backgroundColor: '#94a3b8' }]}>
-            <Text style={styles.eventBadgeText}>עבר</Text>
-          </View>
-        )}
-        {!past && showRsvpBadge && badgeLabel !== '' && (
-          <TouchableOpacity
-            style={[styles.eventBadge, { backgroundColor: badgeColor }]}
-            onPress={() => onRsvpPress(event._id)}
-          >
-            <Text style={styles.eventBadgeText}>{badgeLabel}</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-      <View style={styles.eventCardBody}>
-        <Text style={styles.eventCardTitle} numberOfLines={2}>
-          {event.title}
-        </Text>
-        <Text style={styles.eventCardDate}>
-          {formatEventDate(event.startTime, event.allDay)}
-        </Text>
+      {/* Solid color base */}
+      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: color }]} />
+
+      {/* Gradient overlay — transparent top to dark bottom */}
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.82)']}
+        locations={[0.4, 1]}
+        style={StyleSheet.absoluteFillObject}
+      />
+
+      {/* Badge — absolute top-right */}
+      {badgeLabel !== '' && (
+        <View style={[styles.eventCardBadge, { backgroundColor: badgeColor }]}>
+          <Text style={styles.eventCardBadgeText}>{badgeLabel}</Text>
+        </View>
+      )}
+
+      {/* Bottom content */}
+      <View style={styles.eventCardBottom}>
+        <Text style={styles.eventCardTitle} numberOfLines={2}>{event.title}</Text>
+        <Text style={styles.eventCardMeta}>{dateStr}</Text>
         {event.location ? (
-          <Text style={styles.eventCardLocation} numberOfLines={1}>
-            📍 {event.location}
-          </Text>
+          <Text style={styles.eventCardMeta} numberOfLines={1}>{event.location}</Text>
+        ) : null}
+        {rsvpStatus === 'yes' ? (
+          <Text style={styles.eventCardConfirmed}>אישרת הגעה ✓</Text>
         ) : null}
       </View>
     </Pressable>
@@ -478,6 +491,60 @@ function SearchModal({ visible, value, onChange, onClose }: SearchModalProps) {
   );
 }
 
+// ─── ReminderRowAll (כדאי לזכור section in הכל tab) ──────────────────────────
+
+interface ReminderRowAllProps {
+  task: TaskDoc;
+  onToggle: (id: Id<'tasks'>) => void;
+  onHide?: (id: string) => void;
+}
+
+function ReminderRowAll({ task, onToggle, onHide }: ReminderRowAllProps) {
+  return (
+    <Pressable
+      style={styles.reminderRow}
+      onPress={() => onToggle(task._id)}
+      accessible
+      accessibilityRole="checkbox"
+      accessibilityLabel={task.title}
+      accessibilityState={{ checked: task.completed }}
+    >
+      {/* Checkbox — square, right side (first element in RTL row) */}
+      <View style={[styles.reminderCheckbox, task.completed && styles.reminderCheckboxDone]}>
+        {task.completed && <Ionicons name="checkmark" size={13} color="#fff" />}
+      </View>
+
+      {/* Title */}
+      <Text
+        style={[styles.reminderTitle, task.completed && styles.reminderTitleDone]}
+        numberOfLines={2}
+      >
+        {task.title}
+      </Text>
+
+      {/* Left side: X button (when completed + onHide provided), completedAt date, or dueDate */}
+      {task.completed && onHide ? (
+        <TouchableOpacity
+          onPress={() => onHide(task._id)}
+          style={styles.reminderHideBtn}
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel="הסתר"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="close" size={16} color="#9ca3af" />
+        </TouchableOpacity>
+      ) : task.completed && task.completedAt !== undefined ? (
+        <Text style={styles.reminderDue}>
+          {`טופל ב-${new Date(task.completedAt).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' })}`}
+        </Text>
+      ) : task.dueDate !== undefined ? (
+        <Text style={styles.reminderDue}>{formatDueDate(task.dueDate)}</Text>
+      ) : null}
+    </Pressable>
+  );
+}
+
 // ─── Tab: הכל ────────────────────────────────────────────────────────────────
 
 interface TabAllProps {
@@ -487,6 +554,13 @@ interface TabAllProps {
   onToggleTask: (id: Id<'tasks'>) => void;
   onSeeMoreEvents: () => void;
   onSeeMoreReminders: () => void;
+  // Persisted state lifted to parent so it survives tab switches
+  hiddenReminderIds: Set<string>;
+  setHiddenReminderIds: React.Dispatch<React.SetStateAction<Set<string>>>;
+  localCompletedIds: Set<string>;
+  setLocalCompletedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
+  localTaskCache: Map<string, TaskDoc>;
+  setLocalTaskCache: React.Dispatch<React.SetStateAction<Map<string, TaskDoc>>>;
 }
 
 function TabAll({
@@ -496,6 +570,12 @@ function TabAll({
   onToggleTask,
   onSeeMoreEvents,
   onSeeMoreReminders,
+  hiddenReminderIds,
+  setHiddenReminderIds,
+  localCompletedIds,
+  setLocalCompletedIds,
+  localTaskCache,
+  setLocalTaskCache,
 }: TabAllProps) {
   // Stable timestamps — computed once on mount, never change
   const windowStart = useMemo(() => Date.now(), []);
@@ -507,7 +587,7 @@ function TabAll({
     [communityId, windowStart, windowEnd]
   );
   const remindersArgs = useMemo(
-    () => ({ communityId, cursor: null as null, numItems: 4 }),
+    () => ({ communityId, cursor: null as null, numItems: 8 }),
     [communityId]
   );
 
@@ -516,14 +596,72 @@ function TabAll({
 
   const events = (eventsPage?.page ?? []) as EventDoc[];
   const reminders = (remindersPage?.page ?? []) as TaskDoc[];
-  const extraEvents = eventsPage?.isDone === false ? 1 : 0;
   const extraReminders = remindersPage?.isDone === false ? 1 : 0;
-
-  const visibleEvents = events.slice(0, 4);
-  const visibleReminders = reminders.slice(0, 4);
 
   const isLoadingEvents = eventsPage === undefined;
   const isLoadingReminders = remindersPage === undefined;
+
+  // hiddenReminderIds, localCompletedIds, localTaskCache come from parent props
+  // so they survive tab switches
+
+  const handleToggleInSection = useCallback((id: Id<'tasks'>) => {
+    const task = reminders.find((t) => t._id === id);
+    if (task && !task.completed) {
+      setLocalCompletedIds((prev) => new Set([...prev, id as string]));
+      setLocalTaskCache((prev) => new Map(prev).set(id as string, task));
+    } else if (task?.completed) {
+      setLocalCompletedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id as string);
+        return next;
+      });
+    }
+    onToggleTask(id);
+  }, [reminders, onToggleTask]);
+
+  const handleHideReminder = useCallback((id: string) => {
+    setHiddenReminderIds((prev) => new Set([...prev, id]));
+    setLocalCompletedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
+
+  // Section 1: events the user already RSVPed to
+  // TODO: also show events created by current user once createdBy field is available in EventDoc
+  const myEvents = events.filter((ev) => (rsvpMap[ev._id] ?? 'none') !== 'none');
+
+  // Section 3: events the user hasn't responded to yet
+  // TODO: also exclude events created by current user once createdBy field is available in EventDoc
+  const pendingEvents = events.filter((ev) => (rsvpMap[ev._id] ?? 'none') === 'none');
+
+  // Section 2: merge query results with locally-completed tasks that disappeared from the query
+  const allRemindersForSection = useMemo(() => {
+    const queryIds = new Set(reminders.map((t) => t._id as string));
+    // Mark locally-completed items still in the query
+    const fromQuery = reminders.map((t) =>
+      localCompletedIds.has(t._id as string) ? { ...t, completed: true } : t
+    );
+    // Items that disappeared from the query (backend updated) but are cached locally
+    const fromCache = [...localCompletedIds]
+      .filter((id) => !queryIds.has(id))
+      .flatMap((id) => {
+        const cached = localTaskCache.get(id);
+        return cached ? [{ ...cached, completed: true }] : [];
+      });
+    return [...fromQuery, ...fromCache];
+  }, [reminders, localCompletedIds, localTaskCache]);
+
+  const visibleReminders = allRemindersForSection
+    .filter((t) => !hiddenReminderIds.has(t._id))
+    .slice(0, 4);
+  const totalRemindersForSection = allRemindersForSection.filter((t) => !hiddenReminderIds.has(t._id)).length;
+  const seeMoreCount = Math.max(0, totalRemindersForSection - 4);
+  const hasMoreReminders = seeMoreCount > 0 || extraReminders > 0;
+  const seeMoreLabel = seeMoreCount > 0
+    ? `ראה עוד (${seeMoreCount})`
+    : extraReminders > 0 ? 'ראה עוד' : undefined;
 
   return (
     <ScrollView
@@ -531,74 +669,97 @@ function TabAll({
       contentContainerStyle={styles.tabContent}
       showsVerticalScrollIndicator={false}
     >
-      {/* ── האירועים שלי */}
+      {/* ── Section 1: האירועים שלי */}
       <View>
         <SectionHeader
           title="האירועים שלי"
-          subtitle="אירועים קרובים ב-60 הימים הבאים"
+          subtitle="אירועים שכבר הצטרפת אליהם או יצרת"
         />
         {isLoadingEvents ? (
           <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
-        ) : events.length === 0 ? (
+        ) : myEvents.length === 0 ? (
           <View style={styles.emptySmall}>
-            <Text style={styles.emptySmallText}>אין אירועים קרובים לקהילה זו</Text>
+            <Text style={styles.emptySmallText}>עדיין לא הצטרפת לאירועים בקהילה זו</Text>
           </View>
         ) : (
-          <>
-            <View style={styles.eventsGrid}>
-              {visibleEvents.map((ev) => (
-                <EventCard
-                  key={ev._id}
-                  event={ev}
-                  rsvpStatus={rsvpMap[ev._id] ?? 'none'}
-                  onRsvpPress={onRsvpPress}
-                />
-              ))}
-            </View>
-            {(events.length > 4 || extraEvents > 0) && (
-              <TouchableOpacity
-                style={styles.seeMoreBtn}
-                onPress={onSeeMoreEvents}
-                accessible
-                accessibilityRole="button"
-              >
-                <Text style={styles.seeMoreText}>
-                  + ראה עוד ({Math.max(events.length - 4, extraEvents)})
-                </Text>
-              </TouchableOpacity>
-            )}
-          </>
-        )}
-      </View>
-
-      {/* ── כדאי לזכור */}
-      <View>
-        <SectionHeader
-          title="כדאי לזכור"
-          actionLabel={extraReminders > 0 || reminders.length > 4 ? 'ראה עוד' : undefined}
-          onAction={onSeeMoreReminders}
-        />
-        {isLoadingReminders ? (
-          <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
-        ) : reminders.length === 0 ? (
-          <View style={styles.emptySmall}>
-            <Text style={styles.emptySmallText}>אין תזכורות פתוחות לקהילה זו</Text>
-          </View>
-        ) : (
-          <View style={styles.taskList}>
-            {visibleReminders.map((t) => (
-              <TaskRow key={t._id} task={t} onToggle={onToggleTask} />
+          <View style={styles.eventsGrid}>
+            {myEvents.map((ev) => (
+              <EventCard
+                key={ev._id}
+                event={ev}
+                rsvpStatus={rsvpMap[ev._id] ?? 'none'}
+                onRsvpPress={onRsvpPress}
+              />
             ))}
           </View>
         )}
       </View>
 
-      {/* ── פעילות (TODO) */}
+      {/* ── Section 2: כדאי לזכור */}
+      <View>
+        <SectionHeader
+          title="כדאי לזכור"
+          actionLabel={seeMoreLabel}
+          onAction={onSeeMoreReminders}
+        />
+        {isLoadingReminders ? (
+          <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
+        ) : visibleReminders.length === 0 ? (
+          <View style={styles.emptySmall}>
+            <Text style={styles.emptySmallText}>אין תזכורות פתוחות לקהילה זו</Text>
+          </View>
+        ) : (
+          <View style={{ gap: 8 }}>
+            {visibleReminders.map((t) => (
+              <ReminderRowAll
+                key={t._id}
+                task={t}
+                onToggle={handleToggleInSection}
+                onHide={handleHideReminder}
+              />
+            ))}
+          </View>
+        )}
+      </View>
+
+      {/* ── Section 3: אירועים נוספים */}
+      <View>
+        <SectionHeader
+          title="אירועים נוספים"
+          subtitle="אירועים בקהילה שעדיין לא הגבת אליהם"
+        />
+        {isLoadingEvents ? (
+          <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
+        ) : pendingEvents.length === 0 ? (
+          <View style={[styles.emptySmall, { alignItems: 'center', gap: 8 }]}>
+            <Ionicons name="calendar-outline" size={36} color="#d1d5db" />
+            <Text style={[styles.emptySmallText, { textAlign: 'center' }]}>
+              אין אירועים נוספים להצגה
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.eventsGrid}>
+            {pendingEvents.map((ev) => (
+              <EventCard
+                key={ev._id}
+                event={ev}
+                rsvpStatus={rsvpMap[ev._id] ?? 'none'}
+                onRsvpPress={onRsvpPress}
+              />
+            ))}
+          </View>
+        )}
+      </View>
+
+      {/* ── Section 4: פעילות בקהילה */}
       <View>
         <SectionHeader title="פעילות בקהילה" />
-        <View style={styles.emptySmall}>
+        <View style={styles.activityPlaceholder}>
+          <Ionicons name="pulse-outline" size={36} color="#d1d5db" />
+          <Text style={[styles.emptySmallText, { textAlign: 'center' }]}>
+            פעילות אחרונה תופיע כאן בקרוב
+          </Text>
           {/* TODO: create activityFeed query in convex/communities.ts */}
-          <Text style={styles.emptySmallText}>פעילות אחרונה תופיע כאן בקרוב</Text>
         </View>
       </View>
     </ScrollView>
@@ -779,11 +940,19 @@ function TabReminders({ communityId, onToggle }: TabRemindersProps) {
   const [cursor, setCursor] = useState<string | null>(null);
   const [accumulated, setAccumulated] = useState<TaskDoc[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+
+  const since30Days = useMemo(() => Date.now() - 30 * 24 * 60 * 60 * 1000, []);
 
   const page = useQuery(api.tasks.listCommunityRemindersPaged, {
     communityId,
     cursor,
     numItems: 20,
+  });
+
+  const completedPage = useQuery(api.tasks.listCompletedCommunityReminders, {
+    communityId,
+    since: since30Days,
   });
 
   useEffect(() => {
@@ -797,19 +966,15 @@ function TabReminders({ communityId, onToggle }: TabRemindersProps) {
     }
   }, [page, cursor]);
 
-  const renderItem = useCallback(
-    ({ item }: { item: TaskDoc }) => <TaskRow task={item} onToggle={onToggle} />,
-    [onToggle]
-  );
-
-  const keyExtractor = useCallback((item: TaskDoc) => item._id, []);
-
   const handleLoadMore = useCallback(() => {
     if (page?.isDone === false && page.continueCursor && !loadingMore) {
       setLoadingMore(true);
       setCursor(page.continueCursor);
     }
   }, [page, loadingMore]);
+
+  const completedTasks = (completedPage ?? []) as TaskDoc[];
+  const historyCount = completedTasks.length;
 
   if (page === undefined) {
     return (
@@ -819,31 +984,73 @@ function TabReminders({ communityId, onToggle }: TabRemindersProps) {
     );
   }
 
-  if (accumulated.length === 0) {
-    return (
-      <View style={styles.emptyFull}>
-        <Ionicons name="checkmark-circle-outline" size={48} color="#d1d5db" />
-        <Text style={styles.emptyText}>אין תזכורות פתוחות לקהילה זו</Text>
-      </View>
-    );
-  }
-
   return (
-    <FlatList<TaskDoc>
-      data={accumulated}
-      keyExtractor={keyExtractor}
-      renderItem={renderItem}
-      contentContainerStyle={[styles.taskList, { marginHorizontal: 16, marginTop: 16, paddingBottom: 100 }]}
-      ItemSeparatorComponent={() => <View style={styles.taskSeparator} />}
-      onEndReached={handleLoadMore}
-      onEndReachedThreshold={0.3}
-      ListFooterComponent={
-        loadingMore ? (
-          <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
-        ) : null
-      }
+    <ScrollView
+      style={styles.tabScroll}
+      contentContainerStyle={{ paddingBottom: 100 }}
       showsVerticalScrollIndicator={false}
-    />
+    >
+      {/* ── Section 1: תזכורות פתוחות */}
+      <View style={{ marginHorizontal: 16, marginTop: 16 }}>
+        <SectionHeader title="תזכורות פתוחות" />
+        {accumulated.length === 0 ? (
+          <View style={[styles.emptySmall, { alignItems: 'center', gap: 8 }]}>
+            <Ionicons name="checkmark-circle-outline" size={36} color="#d1d5db" />
+            <Text style={[styles.emptySmallText, { textAlign: 'center' }]}>
+              כל התזכורות טופלו 🎉
+            </Text>
+          </View>
+        ) : (
+          <View style={{ gap: 8 }}>
+            {accumulated.map((t) => (
+              <ReminderRowAll key={t._id} task={t} onToggle={onToggle} />
+            ))}
+            {loadingMore ? (
+              <ActivityIndicator color={PRIMARY} style={{ marginVertical: 8 }} />
+            ) : page?.isDone === false ? (
+              <TouchableOpacity
+                onPress={handleLoadMore}
+                style={{ paddingVertical: 12, alignItems: 'center' }}
+                accessible
+                accessibilityRole="button"
+                accessibilityLabel="טען עוד"
+              >
+                <Text style={{ color: PRIMARY, fontSize: 14, fontWeight: '600' }}>טען עוד</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        )}
+      </View>
+
+      {/* ── Section 2: תזכורות אחרונות (30 days history) */}
+      {historyCount > 0 ? (
+        <View style={{ marginHorizontal: 16, marginTop: 24 }}>
+          <View style={styles.sectionHeader}>
+            <TouchableOpacity
+              onPress={() => setShowHistory((v) => !v)}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel={showHistory ? 'הסתר היסטוריה' : `הצג היסטוריה ${historyCount}`}
+            >
+              <Text style={styles.sectionAction}>
+                {showHistory ? 'הסתר' : `הצג היסטוריה (${historyCount})`}
+              </Text>
+            </TouchableOpacity>
+            <View style={styles.sectionRight}>
+              <Text style={styles.sectionTitle}>תזכורות אחרונות</Text>
+              <Text style={styles.sectionSubtitle}>תזכורות שטופלו נשמרות כאן עד 30 יום</Text>
+            </View>
+          </View>
+          {showHistory ? (
+            <View style={{ gap: 8 }}>
+              {completedTasks.map((t) => (
+                <ReminderRowAll key={t._id} task={t} onToggle={onToggle} />
+              ))}
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+    </ScrollView>
   );
 }
 
@@ -876,11 +1083,6 @@ export default function CommunityDetailScreen() {
   const deleteCommunity = useMutation(api.communities.deleteCommunity);
   const toggleNotifications = useMutation(api.communities.toggleNotifications);
 
-  // ── Back navigation — always land on communities list
-  const handleBack = useCallback(() => {
-    router.replace('/(authenticated)/communities' as Parameters<typeof router.replace>[0]);
-  }, [router]);
-
   // ── Local state
   const [activeTab, setActiveTab] = useState<Tab>('הכל');
   const [selectedMonth, setSelectedMonth] = useState(() => new Date());
@@ -893,6 +1095,20 @@ export default function CommunityDetailScreen() {
   const [rsvpSheet, setRsvpSheet] = useState<Id<'events'> | null>(null);
   const menuBtnRef = useRef<View>(null);
   const addBtnRef = useRef<View>(null);
+
+  // ── Persisted TabAll state — lifted here so it survives tab switches
+  const [hiddenReminderIds, setHiddenReminderIds] = useState<Set<string>>(new Set());
+  const [localCompletedIds, setLocalCompletedIds] = useState<Set<string>>(new Set());
+  const [localTaskCache, setLocalTaskCache] = useState<Map<string, TaskDoc>>(new Map());
+
+  // ── Back navigation — inner tabs go back to הכל, הכל goes to communities list
+  const handleBack = useCallback(() => {
+    if (activeTab !== 'הכל') {
+      setActiveTab('הכל');
+      return;
+    }
+    router.replace('/(authenticated)/communities' as Parameters<typeof router.replace>[0]);
+  }, [router, activeTab]);
 
   // ── RSVP map
   const rsvpMap = useMemo<Record<string, RsvpStatus>>(() => {
@@ -960,17 +1176,21 @@ export default function CommunityDetailScreen() {
   const handleSeeMoreEvents = useCallback(() => setActiveTab('אירועים'), []);
   const handleSeeMoreReminders = useCallback(() => setActiveTab('תזכורות'), []);
 
-  const handleShare = useCallback(async () => {
+  const handleShare = useCallback(() => {
     const code = community?.inviteCode;
     const name = community?.name ?? 'קהילה';
     const message = code
       ? `הצטרפו לקהילה "${name}":\ninyomi://community-join/${code}`
       : `הצטרפו לקהילה "${name}" באפליקציית InYomi`;
-    try {
-      await Share.share({ message });
-    } catch {
-      Alert.alert('שגיאה', 'לא ניתן לשתף כרגע');
-    }
+    // Delay to ensure the ⋯ menu modal has fully dismissed before the system Share sheet opens
+    setTimeout(async () => {
+      try {
+        await Share.share({ message });
+      } catch (e) {
+        console.error('Share failed:', e);
+        Alert.alert('שגיאה', 'לא ניתן לשתף כרגע');
+      }
+    }, 300);
   }, [community]);
 
   // Overflow menu opens from the LEFT — position uses left: px
@@ -1167,6 +1387,12 @@ export default function CommunityDetailScreen() {
           onToggleTask={handleToggleTask}
           onSeeMoreEvents={handleSeeMoreEvents}
           onSeeMoreReminders={handleSeeMoreReminders}
+          hiddenReminderIds={hiddenReminderIds}
+          setHiddenReminderIds={setHiddenReminderIds}
+          localCompletedIds={localCompletedIds}
+          setLocalCompletedIds={setLocalCompletedIds}
+          localTaskCache={localTaskCache}
+          setLocalTaskCache={setLocalTaskCache}
         />
       )}
       {activeTab === 'אירועים' && (
@@ -1268,11 +1494,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     gap: 8,
     justifyContent: 'flex-end',
+    alignItems: 'center',
   },
   tabChip: {
     height: 34,
-    paddingHorizontal: 14,
-    borderRadius: 20,
+    paddingHorizontal: 16,
+    borderRadius: 999,
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#e5e7eb',
@@ -1280,8 +1507,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   tabChipActive: { backgroundColor: PRIMARY, borderColor: PRIMARY },
-  tabChipText: { fontSize: 14, color: '#374151', fontWeight: '500' },
-  tabChipTextActive: { color: '#fff' },
+  tabChipText: { fontSize: 14, color: '#6b7280', fontWeight: '500' },
+  tabChipTextActive: { color: '#fff', fontWeight: '600' },
 
   // ── Scroll / flex
   tabScroll: { flex: 1 },
@@ -1297,33 +1524,46 @@ const styles = StyleSheet.create({
   },
   sectionRight: { flex: 1, alignItems: 'flex-end' },
   sectionLeft: { alignItems: 'flex-start', minWidth: 60 },
-  sectionTitle: { fontSize: 17, fontWeight: '700', color: '#111827', textAlign: 'right' },
+  sectionTitle: { fontSize: 20, fontWeight: '700', color: '#111827', textAlign: 'right' },
   sectionSubtitle: { fontSize: 12, color: '#9ca3af', textAlign: 'right', marginTop: 2 },
   sectionAction: { fontSize: 13, color: PRIMARY, fontWeight: '600' },
 
   // ── Events grid
   eventsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
 
-  // ── Event Card
+  // ── Event Card (הכל tab — full height redesign)
   eventCard: {
     width: '47%',
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    height: 220,
+    borderRadius: 20,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 3,
   },
-  eventCardPast: { opacity: 0.45 },
-  eventCardHeader: { height: 90, justifyContent: 'flex-end', padding: 8 },
-  eventCardOverlay: {
+  eventCardBadge: {
     position: 'absolute',
-    bottom: 0, left: 0, right: 0,
-    height: 55,
-    backgroundColor: 'rgba(0,0,0,0.32)',
+    top: 8,
+    right: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
   },
+  eventCardBadgeText: { fontSize: 10, fontWeight: '700', color: '#fff' },
+  eventCardBottom: {
+    position: 'absolute',
+    bottom: 12,
+    left: 12,
+    right: 12,
+    gap: 3,
+  },
+  eventCardTitle: { fontSize: 13, fontWeight: '700', color: '#fff', textAlign: 'right' },
+  eventCardMeta: { fontSize: 10, color: '#fff', opacity: 0.9, textAlign: 'right' },
+  eventCardConfirmed: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#86efac',
+    textAlign: 'right',
+    marginTop: 4,
+  },
+  // Keep eventBadge for EventRow (אירועים tab) — unchanged
   eventBadge: {
     alignSelf: 'flex-start',
     paddingHorizontal: 7,
@@ -1331,10 +1571,6 @@ const styles = StyleSheet.create({
     borderRadius: 7,
   },
   eventBadgeText: { fontSize: 10, color: '#fff', fontWeight: '700' },
-  eventCardBody: { padding: 10, gap: 3, alignItems: 'flex-end' },
-  eventCardTitle: { fontSize: 13, fontWeight: '700', color: '#111827', textAlign: 'right' },
-  eventCardDate: { fontSize: 11, color: '#6b7280', textAlign: 'right' },
-  eventCardLocation: { fontSize: 10, color: '#9ca3af', textAlign: 'right' },
 
   // ── Event Row (events tab)
   eventRow: {
@@ -1535,6 +1771,50 @@ const styles = StyleSheet.create({
   },
   popoverLabel: { fontSize: 15, color: '#374151', textAlign: 'right', flex: 1 },
   popoverDanger: { color: '#ef4444' },
+
+  // ── Reminder rows (כדאי לזכור section in הכל tab)
+  reminderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    gap: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  reminderCheckbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: PRIMARY,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  reminderCheckboxDone: { backgroundColor: PRIMARY },
+  reminderTitle: { flex: 1, fontSize: 15, color: '#111827', textAlign: 'right' },
+  reminderTitleDone: { textDecorationLine: 'line-through', color: '#9ca3af' },
+  reminderDue: { fontSize: 11, color: '#9ca3af', minWidth: 36, textAlign: 'left' },
+  reminderHideBtn: { padding: 4, flexShrink: 0 },
+
+  // ── Activity placeholder (Section 4 in הכל tab)
+  activityPlaceholder: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    gap: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
 
   // ── Search modal
   searchBackdrop: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },

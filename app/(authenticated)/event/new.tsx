@@ -89,7 +89,7 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
         ? new Date(selectedDate).setHours(23, 59, 59, 999)
         : buildTimestamp(selectedDate, endTimeDate);
 
-      await createEvent({
+      const eventArgs = {
         title: title.trim(),
         description: description.trim() || undefined,
         startTime: startTs,
@@ -100,7 +100,9 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
         spaceId: spaceId ?? undefined,
         communityId: communityId as Id<'communities'>,
         requiresRsvp: rsvpRequired,
-      });
+      };
+      console.log('Creating event with args:', eventArgs);
+      await createEvent(eventArgs);
       router.replace(`/(authenticated)/community/${communityId}` as Parameters<typeof router.replace>[0]);
     } catch (e) {
       console.error('createCommunityEvent error:', e);

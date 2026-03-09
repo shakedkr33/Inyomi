@@ -3,6 +3,29 @@ import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 
 // ─────────────────────────────────────────────────────────────
+// שליפת תזכורות שהושלמו לאחרונה לקהילה (עד 30 יום)
+// ─────────────────────────────────────────────────────────────
+export const listCompletedCommunityReminders = query({
+  args: {
+    communityId: v.id('communities'),
+    since: v.number(),
+  },
+  handler: async (ctx, { communityId, since }) => {
+    return await ctx.db
+      .query('tasks')
+      .withIndex('by_community', (q) => q.eq('communityId', communityId))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field('completed'), true),
+          q.gte(q.field('completedAt'), since)
+        )
+      )
+      .order('desc')
+      .collect();
+  },
+});
+
+// ─────────────────────────────────────────────────────────────
 // שליפת תזכורות קהילה עם cursor pagination (לביצועים)
 // ─────────────────────────────────────────────────────────────
 export const listCommunityRemindersPaged = query({
@@ -106,7 +129,11 @@ export const toggleCompleted = mutation({
     const task = await ctx.db.get(id);
     if (!task) throw new Error('משימה לא נמצאה');
 
-    await ctx.db.patch(id, { completed: !task.completed });
+    const nowCompleted = !task.completed;
+    await ctx.db.patch(id, {
+      completed: nowCompleted,
+      completedAt: nowCompleted ? Date.now() : undefined,
+    });
   },
 });
 
