@@ -49,6 +49,7 @@ interface EventDoc {
   description?: string;
   communityId?: Id<'communities'>;
   requiresRsvp?: boolean;
+  createdBy?: Id<'users'>;
 }
 
 interface TaskDoc {
@@ -245,16 +246,17 @@ interface EventCardProps {
   event: EventDoc;
   rsvpStatus: RsvpStatus;
   onRsvpPress: (eventId: Id<'events'>) => void;
+  currentUserId?: Id<'users'>;
 }
 
-function EventCard({ event, rsvpStatus, onRsvpPress }: EventCardProps) {
+function EventCard({ event, rsvpStatus, onRsvpPress, currentUserId }: EventCardProps) {
   const color = getEventColor(event._id);
+  const isCreator = currentUserId !== undefined && event.createdBy === currentUserId;
 
-  // Badge — only shown when requiresRsvp is true
-  // TODO: also hide badge for events created by current user once createdBy field is available in EventDoc
+  // Badge — only shown when requiresRsvp is true and user is not the creator
   let badgeLabel = '';
   let badgeColor = '';
-  if (event.requiresRsvp) {
+  if (event.requiresRsvp && !isCreator) {
     if (rsvpStatus === 'yes') { badgeLabel = 'נוסף ליומן ✓'; badgeColor = '#22c55e'; }
     else if (rsvpStatus === 'maybe') { badgeLabel = 'אולי'; badgeColor = '#eab308'; }
     else { badgeLabel = 'ממתין לאישור'; badgeColor = '#eab308'; }
@@ -265,7 +267,7 @@ function EventCard({ event, rsvpStatus, onRsvpPress }: EventCardProps) {
   return (
     <Pressable
       style={styles.eventCard}
-      onPress={() => onRsvpPress(event._id)}
+      onPress={() => { if (!isCreator) onRsvpPress(event._id); }}
       accessible
       accessibilityRole="button"
       accessibilityLabel={event.title}
@@ -561,6 +563,9 @@ interface TabAllProps {
   setLocalCompletedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
   localTaskCache: Map<string, TaskDoc>;
   setLocalTaskCache: React.Dispatch<React.SetStateAction<Map<string, TaskDoc>>>;
+  isRemindersOpen: boolean;
+  setIsRemindersOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  currentUserId?: Id<'users'>;
 }
 
 function TabAll({
@@ -568,14 +573,15 @@ function TabAll({
   rsvpMap,
   onRsvpPress,
   onToggleTask,
-  onSeeMoreEvents,
-  onSeeMoreReminders,
   hiddenReminderIds,
   setHiddenReminderIds,
   localCompletedIds,
   setLocalCompletedIds,
   localTaskCache,
   setLocalTaskCache,
+  isRemindersOpen,
+  setIsRemindersOpen,
+  currentUserId,
 }: TabAllProps) {
   // Stable timestamps — computed once on mount, never change
   const windowStart = useMemo(() => Date.now(), []);
@@ -596,7 +602,6 @@ function TabAll({
 
   const events = (eventsPage?.page ?? []) as EventDoc[];
   const reminders = (remindersPage?.page ?? []) as TaskDoc[];
-  const extraReminders = remindersPage?.isDone === false ? 1 : 0;
 
   const isLoadingEvents = eventsPage === undefined;
   const isLoadingReminders = remindersPage === undefined;
@@ -604,20 +609,104 @@ function TabAll({
   // hiddenReminderIds, localCompletedIds, localTaskCache come from parent props
   // so they survive tab switches
 
+  // Pending move state: items in the 600ms visual transition (open → completed)
+  const [pendingMoveIds, setPendingMoveIds] = useState<Set<string>>(new Set());
+  const [pendingSnapshots, setPendingSnapshots] = useState<Map<string, TaskDoc>>(new Map());
+
+  // Section 1: events the user already RSVPed to OR created by current user
+  const myEvents = events.filter(
+    (ev) => (rsvpMap[ev._id] ?? 'none') !== 'none' || ev.createdBy === currentUserId
+  );
+
+  // Section 3: events the user hasn't responded to AND not created by current user
+  const pendingEvents = events.filter(
+    (ev) => (rsvpMap[ev._id] ?? 'none') === 'none' && ev.createdBy !== currentUserId
+  );
+
+  // Section 2: merge query results with locally-completed tasks + pending-transition tasks
+  const allRemindersForSection = useMemo(() => {
+    const queryIds = new Set(reminders.map((t) => t._id as string));
+    // Mark locally-completed items still in the query
+    const fromQuery = reminders.map((t) =>
+      localCompletedIds.has(t._id as string) ? { ...t, completed: true } : t
+    );
+    // Items that disappeared from the query (backend updated) but are cached locally
+    const fromLocalCache = [...localCompletedIds]
+      .filter((id) => !queryIds.has(id))
+      .flatMap((id) => {
+        const cached = localTaskCache.get(id);
+        return cached ? [{ ...cached, completed: true }] : [];
+      });
+    // Items in pending transition that disappeared from query before 600ms elapsed
+    const fromPendingCache = [...pendingMoveIds]
+      .filter((id) => !queryIds.has(id) && !localCompletedIds.has(id))
+      .flatMap((id) => {
+        const snap = pendingSnapshots.get(id);
+        return snap ? [{ ...snap, completed: false }] : [];
+      });
+    return [...fromQuery, ...fromLocalCache, ...fromPendingCache];
+  }, [reminders, localCompletedIds, localTaskCache, pendingMoveIds, pendingSnapshots]);
+
+  const visibleForSection = allRemindersForSection.filter((t) => !hiddenReminderIds.has(t._id as string));
+  const openReminderItems = visibleForSection.filter((t) => !t.completed && !pendingMoveIds.has(t._id as string));
+  const pendingMoveItems = visibleForSection.filter((t) => pendingMoveIds.has(t._id as string));
+  const completedReminderItems = visibleForSection.filter((t) => t.completed && !pendingMoveIds.has(t._id as string));
+  const openCount = openReminderItems.length + pendingMoveItems.length;
+  const completedCount = completedReminderItems.length;
+  const remindersSummaryText = completedCount > 0
+    ? `${openCount} פתוחות · ${completedCount} הושלמו`
+    : `${openCount} פתוחות`;
+
   const handleToggleInSection = useCallback((id: Id<'tasks'>) => {
-    const task = reminders.find((t) => t._id === id);
-    if (task && !task.completed) {
-      setLocalCompletedIds((prev) => new Set([...prev, id as string]));
-      setLocalTaskCache((prev) => new Map(prev).set(id as string, task));
-    } else if (task?.completed) {
+    const task = allRemindersForSection.find((t) => t._id === id);
+    const isEffectivelyCompleted = task?.completed ?? false;
+    const isPending = pendingMoveIds.has(id as string);
+
+    if (!isEffectivelyCompleted && !isPending) {
+      // Open → completing: 600ms visual delay before moving to completed group
+      const taskSnapshot = task;
+      if (taskSnapshot) {
+        setPendingSnapshots((prev) => new Map(prev).set(id as string, taskSnapshot));
+      }
+      setPendingMoveIds((prev) => new Set([...prev, id as string]));
+      setTimeout(() => {
+        setPendingMoveIds((prev) => {
+          const s = new Set(prev);
+          s.delete(id as string);
+          return s;
+        });
+        setPendingSnapshots((prev) => {
+          const m = new Map(prev);
+          m.delete(id as string);
+          return m;
+        });
+        if (taskSnapshot) {
+          setLocalCompletedIds((prev) => new Set([...prev, id as string]));
+          setLocalTaskCache((prev) => new Map(prev).set(id as string, taskSnapshot));
+        }
+      }, 600);
+    } else if (isEffectivelyCompleted || isPending) {
+      // Completed/pending → open
+      if (isPending) {
+        setPendingMoveIds((prev) => {
+          const s = new Set(prev);
+          s.delete(id as string);
+          return s;
+        });
+        setPendingSnapshots((prev) => {
+          const m = new Map(prev);
+          m.delete(id as string);
+          return m;
+        });
+      }
       setLocalCompletedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id as string);
-        return next;
+        const s = new Set(prev);
+        s.delete(id as string);
+        return s;
       });
     }
     onToggleTask(id);
-  }, [reminders, onToggleTask]);
+  }, [allRemindersForSection, pendingMoveIds, onToggleTask, setLocalCompletedIds, setLocalTaskCache]);
 
   const handleHideReminder = useCallback((id: string) => {
     setHiddenReminderIds((prev) => new Set([...prev, id]));
@@ -626,42 +715,7 @@ function TabAll({
       next.delete(id);
       return next;
     });
-  }, []);
-
-  // Section 1: events the user already RSVPed to
-  // TODO: also show events created by current user once createdBy field is available in EventDoc
-  const myEvents = events.filter((ev) => (rsvpMap[ev._id] ?? 'none') !== 'none');
-
-  // Section 3: events the user hasn't responded to yet
-  // TODO: also exclude events created by current user once createdBy field is available in EventDoc
-  const pendingEvents = events.filter((ev) => (rsvpMap[ev._id] ?? 'none') === 'none');
-
-  // Section 2: merge query results with locally-completed tasks that disappeared from the query
-  const allRemindersForSection = useMemo(() => {
-    const queryIds = new Set(reminders.map((t) => t._id as string));
-    // Mark locally-completed items still in the query
-    const fromQuery = reminders.map((t) =>
-      localCompletedIds.has(t._id as string) ? { ...t, completed: true } : t
-    );
-    // Items that disappeared from the query (backend updated) but are cached locally
-    const fromCache = [...localCompletedIds]
-      .filter((id) => !queryIds.has(id))
-      .flatMap((id) => {
-        const cached = localTaskCache.get(id);
-        return cached ? [{ ...cached, completed: true }] : [];
-      });
-    return [...fromQuery, ...fromCache];
-  }, [reminders, localCompletedIds, localTaskCache]);
-
-  const visibleReminders = allRemindersForSection
-    .filter((t) => !hiddenReminderIds.has(t._id))
-    .slice(0, 4);
-  const totalRemindersForSection = allRemindersForSection.filter((t) => !hiddenReminderIds.has(t._id)).length;
-  const seeMoreCount = Math.max(0, totalRemindersForSection - 4);
-  const hasMoreReminders = seeMoreCount > 0 || extraReminders > 0;
-  const seeMoreLabel = seeMoreCount > 0
-    ? `ראה עוד (${seeMoreCount})`
-    : extraReminders > 0 ? 'ראה עוד' : undefined;
+  }, [setHiddenReminderIds, setLocalCompletedIds]);
 
   return (
     <ScrollView
@@ -689,36 +743,85 @@ function TabAll({
                 event={ev}
                 rsvpStatus={rsvpMap[ev._id] ?? 'none'}
                 onRsvpPress={onRsvpPress}
+                currentUserId={currentUserId}
               />
             ))}
           </View>
         )}
       </View>
 
-      {/* ── Section 2: כדאי לזכור */}
+      {/* ── Section 2: כדאי לזכור (accordion) */}
       <View>
-        <SectionHeader
-          title="כדאי לזכור"
-          actionLabel={seeMoreLabel}
-          onAction={onSeeMoreReminders}
-        />
-        {isLoadingReminders ? (
-          <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
-        ) : visibleReminders.length === 0 ? (
-          <View style={styles.emptySmall}>
-            <Text style={styles.emptySmallText}>אין תזכורות פתוחות לקהילה זו</Text>
+        {/* Header — always visible */}
+        <Pressable
+          onPress={() => setIsRemindersOpen((v) => !v)}
+          style={styles.accordionHeader}
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={`כדאי לזכור, ${remindersSummaryText}`}
+          accessibilityState={{ expanded: isRemindersOpen }}
+        >
+          {/* Left: chevron + summary badge */}
+          <View style={styles.accordionLeft}>
+            <Ionicons
+              name={isRemindersOpen ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color="#6b7280"
+            />
+            {!isLoadingReminders && (
+              <View style={styles.reminderSummaryBadge}>
+                <Text style={styles.reminderSummaryText}>{remindersSummaryText}</Text>
+              </View>
+            )}
           </View>
-        ) : (
-          <View style={{ gap: 8 }}>
-            {visibleReminders.map((t) => (
-              <ReminderRowAll
-                key={t._id}
-                task={t}
-                onToggle={handleToggleInSection}
-                onHide={handleHideReminder}
-              />
-            ))}
-          </View>
+          {/* Right: title */}
+          <Text style={styles.accordionTitle}>כדאי לזכור</Text>
+        </Pressable>
+
+        {/* Body — visible only when open */}
+        {isRemindersOpen && (
+          isLoadingReminders ? (
+            <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
+          ) : (
+            <View style={{ gap: 8, marginTop: 4 }}>
+              {/* Group 1: open (not completed) */}
+              {openReminderItems.map((t) => (
+                <ReminderRowAll
+                  key={t._id}
+                  task={t}
+                  onToggle={handleToggleInSection}
+                />
+              ))}
+              {/* Group 1: pending items (transitioning to completed — visually shown as completed) */}
+              {pendingMoveItems.map((t) => (
+                <ReminderRowAll
+                  key={t._id}
+                  task={{ ...t, completed: true }}
+                  onToggle={handleToggleInSection}
+                />
+              ))}
+              {/* Group 2: completed */}
+              {completedReminderItems.length > 0 && (
+                <>
+                  <Text style={styles.completedGroupTitle}>הושלמו</Text>
+                  {completedReminderItems.map((t) => (
+                    <ReminderRowAll
+                      key={t._id}
+                      task={t}
+                      onToggle={handleToggleInSection}
+                      onHide={handleHideReminder}
+                    />
+                  ))}
+                </>
+              )}
+              {/* Empty state */}
+              {openReminderItems.length === 0 && pendingMoveItems.length === 0 && completedReminderItems.length === 0 && (
+                <View style={styles.emptySmall}>
+                  <Text style={styles.emptySmallText}>אין תזכורות לקהילה זו</Text>
+                </View>
+              )}
+            </View>
+          )
         )}
       </View>
 
@@ -745,6 +848,7 @@ function TabAll({
                 event={ev}
                 rsvpStatus={rsvpMap[ev._id] ?? 'none'}
                 onRsvpPress={onRsvpPress}
+                currentUserId={currentUserId}
               />
             ))}
           </View>
@@ -1069,13 +1173,14 @@ function TabActivity() {
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function CommunityDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, tab } = useLocalSearchParams<{ id: string; tab?: string }>();
   const router = useRouter();
   const communityId = id as Id<'communities'>;
 
   // ── Queries
   const community = useQuery(api.communities.getCommunity, { communityId });
   const myRsvps = useQuery(api.eventRsvps.listByUser);
+  const currentUserId = useQuery(api.users.getMyId) ?? undefined;
 
   // ── Mutations
   const upsertRsvp = useMutation(api.eventRsvps.upsertRsvp);
@@ -1084,7 +1189,11 @@ export default function CommunityDetailScreen() {
   const toggleNotifications = useMutation(api.communities.toggleNotifications);
 
   // ── Local state
-  const [activeTab, setActiveTab] = useState<Tab>('הכל');
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    if (tab && (TABS as readonly string[]).includes(tab)) return tab as Tab;
+    return 'הכל';
+  });
+  const [isRemindersOpen, setIsRemindersOpen] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(() => new Date());
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 8, y: 80 });
@@ -1244,7 +1353,7 @@ export default function CommunityDetailScreen() {
         iconName: 'people-outline',
         onPress: () =>
           router.push(
-            `/(authenticated)/community-members/${communityId}` as Parameters<typeof router.push>[0]
+            `/(authenticated)/community-members/${communityId}?returnTab=${activeTab}` as Parameters<typeof router.push>[0]
           ),
       },
       {
@@ -1266,7 +1375,7 @@ export default function CommunityDetailScreen() {
         onPress: handleDeleteCommunity,
       },
     ],
-    [community, communityId, router, handleToggleNotifications, handleDeleteCommunity, handleShare]
+    [community, communityId, router, activeTab, handleToggleNotifications, handleDeleteCommunity, handleShare]
   );
 
   // ── Loading / not found
@@ -1393,6 +1502,9 @@ export default function CommunityDetailScreen() {
           setLocalCompletedIds={setLocalCompletedIds}
           localTaskCache={localTaskCache}
           setLocalTaskCache={setLocalTaskCache}
+          isRemindersOpen={isRemindersOpen}
+          setIsRemindersOpen={setIsRemindersOpen}
+          currentUserId={currentUserId}
         />
       )}
       {activeTab === 'אירועים' && (
@@ -1814,6 +1926,43 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 4,
     elevation: 1,
+  },
+
+  // ── Accordion (כדאי לזכור)
+  accordionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 0,
+  },
+  accordionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    textAlign: 'right',
+  },
+  accordionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  reminderSummaryBadge: {
+    backgroundColor: '#f3f4f6',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+  },
+  reminderSummaryText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: '600',
+  },
+  completedGroupTitle: {
+    fontSize: 12,
+    color: '#9ca3af',
+    textAlign: 'right',
+    marginTop: 8,
+    fontWeight: '500',
   },
 
   // ── Search modal

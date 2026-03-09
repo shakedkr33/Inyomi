@@ -78,7 +78,7 @@ function MemberRow({ member }: { member: MemberInfo }) {
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function CommunityMembersScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, returnTab } = useLocalSearchParams<{ id: string; returnTab?: string }>();
   const router = useRouter();
 
   const data = useQuery(api.communities.getCommunityMembers, {
@@ -107,13 +107,9 @@ export default function CommunityMembersScreen() {
         </Text>
         <TouchableOpacity
           onPress={() => {
-            if (router.canGoBack()) {
-              router.back();
-            } else {
-              router.replace(
-                `/(authenticated)/community/${id}` as Parameters<typeof router.replace>[0]
-              );
-            }
+            router.replace(
+              `/(authenticated)/community/${id}?tab=${returnTab ?? 'הכל'}` as Parameters<typeof router.replace>[0]
+            );
           }}
           style={styles.backBtn}
           accessible

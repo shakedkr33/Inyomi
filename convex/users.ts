@@ -7,18 +7,9 @@ import { mutation, query } from './_generated/server';
 export const getCurrentUser = query({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      return null;
-    }
-
-    // חיפוש המשתמש ב-Database לפי כתובת האימייל מה-Identity
-    const user = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', identity.email ?? ''))
-      .unique();
-
-    return user;
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    return await ctx.db.get(userId);
   },
 });
 
@@ -215,5 +206,12 @@ export const deleteMyAccount = mutation({
       message: `נמחקו ${deletedCount} רשומות עבור משתמש ${userId}`,
       deletedCount,
     };
+  },
+});
+
+export const getMyId = query({
+  args: {},
+  handler: async (ctx) => {
+    return await getAuthUserId(ctx);
   },
 });
