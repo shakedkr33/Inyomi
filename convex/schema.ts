@@ -159,6 +159,21 @@ export default defineSchema({
     .index('by_space', ['spaceId']),
 
   // ═══════════════════════════════════════════════════════
+  // משימות אירוע (checklist קולבורטיבי באירוע)
+  // ═══════════════════════════════════════════════════════
+  eventTasks: defineTable({
+    eventId: v.id('events'),
+    title: v.string(),
+    completed: v.boolean(),
+    completedAt: v.optional(v.number()),
+    order: v.optional(v.number()),
+    assignedToUserId: v.optional(v.id('users')),
+    assignedToManual: v.optional(v.string()),
+  })
+    .index('by_event', ['eventId'])
+    .index('by_event_order', ['eventId', 'order']),
+
+  // ═══════════════════════════════════════════════════════
   // טבלת RSVP לאירועים
   // ═══════════════════════════════════════════════════════
   eventRsvps: defineTable({

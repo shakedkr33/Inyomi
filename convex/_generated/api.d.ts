@@ -13,6 +13,7 @@ import type * as birthdays from "../birthdays.js";
 import type * as communities from "../communities.js";
 import type * as dailyMoods from "../dailyMoods.js";
 import type * as eventRsvps from "../eventRsvps.js";
+import type * as eventTasks from "../eventTasks.js";
 import type * as events from "../events.js";
 import type * as http from "../http.js";
 import type * as onboarding from "../onboarding.js";
@@ -31,6 +32,7 @@ declare const fullApi: ApiFromModules<{
   communities: typeof communities;
   dailyMoods: typeof dailyMoods;
   eventRsvps: typeof eventRsvps;
+  eventTasks: typeof eventTasks;
   events: typeof events;
   http: typeof http;
   onboarding: typeof onboarding;

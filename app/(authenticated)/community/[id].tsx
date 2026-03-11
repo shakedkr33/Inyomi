@@ -2036,12 +2036,13 @@ const styles = StyleSheet.create({
     maxHeight: 50,
   },
   tabsRow: {
-    flexDirection: 'row',
+    flexGrow: 1,
+    flexDirection: 'row-reverse',
+    justifyContent: 'flex-start',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 8,
     gap: 8,
-    justifyContent: 'flex-end',
-    alignItems: 'center',
   },
   tabChip: {
     height: 34,

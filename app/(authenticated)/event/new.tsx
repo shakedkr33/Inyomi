@@ -67,7 +67,10 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
   const [showEndPicker, setShowEndPicker] = useState(false);
 
   const createEvent = useMutation(api.events.create);
+  const createEventTasks = useMutation(api.eventTasks.createBatch);
   const spaceId = useQuery(api.users.getMySpace);
+
+  const [tasks, setTasks] = useState<{ id: string; title: string }[]>([]);
 
   const handleSave = useCallback(async () => {
     if (!title.trim()) {
@@ -103,8 +106,16 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
         communityId: communityId as Id<'communities'>,
         requiresRsvp: rsvpRequired,
       };
-      console.log('Creating event with args:', eventArgs);
-      await createEvent(eventArgs);
+      const eventId = await createEvent(eventArgs);
+      const tasksToCreate = tasks
+        .map((t) => t.title.trim())
+        .filter((t) => t.length > 0);
+      if (tasksToCreate.length > 0) {
+        await createEventTasks({
+          eventId,
+          tasks: tasksToCreate.map((title) => ({ title })),
+        });
+      }
       router.replace(
         `/(authenticated)/community/${communityId}` as Parameters<
           typeof router.replace
@@ -129,7 +140,9 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
     communityId,
     spaceId,
     createEvent,
+    createEventTasks,
     router,
+    tasks,
   ]);
 
   // selectedDate is always set (initialized to today), so no null check needed
@@ -489,6 +502,59 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
             />
           </View>
 
+          {/* משימות */}
+          <View style={s.card}>
+            <Text style={s.fieldLabel}>משימות (רשימת צ'ק)</Text>
+            <View style={s.tasksList}>
+              {tasks.map((t) => (
+                <View key={t.id} style={s.taskRow}>
+                  <TouchableOpacity
+                    onPress={() =>
+                      setTasks((prev) => prev.filter((x) => x.id !== t.id))
+                    }
+                    style={s.taskRemoveBtn}
+                    accessible
+                    accessibilityRole="button"
+                    accessibilityLabel="הסר משימה"
+                  >
+                    <Ionicons name="close-circle" size={20} color="#9ca3af" />
+                  </TouchableOpacity>
+                  <TextInput
+                    style={[s.input, s.taskInput]}
+                    value={t.title}
+                    onChangeText={(text) =>
+                      setTasks((prev) =>
+                        prev.map((x) =>
+                          x.id === t.id ? { ...x, title: text } : x
+                        )
+                      )
+                    }
+                    placeholder="כותרת משימה..."
+                    placeholderTextColor="#9ca3af"
+                    textAlign="right"
+                    accessible
+                    accessibilityLabel="כותרת משימה"
+                  />
+                </View>
+              ))}
+            </View>
+            <TouchableOpacity
+              onPress={() =>
+                setTasks((prev) => [
+                  ...prev,
+                  { id: `tmp-${Date.now()}`, title: '' },
+                ])
+              }
+              style={s.addTaskBtn}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="הוסף משימה"
+            >
+              <Ionicons name="add-circle-outline" size={18} color={PRIMARY} />
+              <Text style={s.addTaskText}>הוסף משימה</Text>
+            </TouchableOpacity>
+          </View>
+
           {/* RSVP */}
           <View style={s.card}>
             <View style={s.rowBetween}>
@@ -661,6 +727,22 @@ const s = StyleSheet.create({
     marginBottom: 6,
   },
 
+  tasksList: { gap: 8 },
+  taskRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 8,
+  },
+  taskRemoveBtn: { padding: 4 },
+  taskInput: { flex: 1, marginTop: 0 },
+  addTaskBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    alignSelf: 'flex-end',
+  },
+  addTaskText: { fontSize: 14, color: PRIMARY, fontWeight: '600' },
   chipRow: { flexDirection: 'row-reverse', gap: 8, marginBottom: 4 },
   chip: {
     paddingHorizontal: 14,

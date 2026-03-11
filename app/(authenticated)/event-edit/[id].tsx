@@ -43,8 +43,16 @@ export default function EditEventScreen(): React.JSX.Element {
   const eventId = id as Id<'events'>;
 
   const event = useQuery(api.events.getById, { eventId });
+  const eventTasks = useQuery(api.eventTasks.listByEvent, { eventId });
   const updateEvent = useMutation(api.events.update);
+  const createEventTasks = useMutation(api.eventTasks.createBatch);
+  const updateEventTask = useMutation(api.eventTasks.update);
+  const removeEventTask = useMutation(api.eventTasks.remove);
   const currentUserId = useQuery(api.users.getMyId);
+
+  const [tasks, setTasks] = useState<
+    { id: string; title: string; isNew: boolean }[]
+  >([]);
 
   // ── Form state
   const [title, setTitle] = useState('');
@@ -95,6 +103,22 @@ export default function EditEventScreen(): React.JSX.Element {
     }
   }, [event, eventId]);
 
+  // ── Reset tasks when event changes; prefill when eventTasks load
+  useEffect(() => {
+    setTasks([]);
+  }, [eventId]);
+
+  useEffect(() => {
+    if (eventTasks === undefined) return;
+    setTasks(
+      (eventTasks ?? []).map((t) => ({
+        id: t._id,
+        title: t.title,
+        isNew: false,
+      }))
+    );
+  }, [eventTasks]);
+
   const handleSave = useCallback(async () => {
     if (!title.trim()) {
       setTitleError(true);
@@ -123,6 +147,39 @@ export default function EditEventScreen(): React.JSX.Element {
           locationType === 'link' ? location.trim() || undefined : undefined,
         requiresRsvp: rsvpRequired,
       });
+
+      const existingIds = new Set(
+        (eventTasks ?? []).map((t) => t._id as string)
+      );
+      const currentIds = new Set(
+        tasks.filter((t) => !t.isNew).map((t) => t.id as string)
+      );
+
+      const newTasksToCreate = tasks
+        .filter((t) => t.isNew && t.title.trim())
+        .map((t) => ({ title: t.title.trim() }));
+      if (newTasksToCreate.length > 0) {
+        await createEventTasks({ eventId, tasks: newTasksToCreate });
+      }
+
+      for (const t of tasks) {
+        if (!t.isNew && existingIds.has(t.id)) {
+          const orig = eventTasks?.find((x) => x._id === t.id);
+          if (orig && orig.title !== t.title.trim()) {
+            await updateEventTask({
+              id: t.id as Id<'eventTasks'>,
+              title: t.title.trim(),
+            });
+          }
+        }
+      }
+
+      for (const id of existingIds) {
+        if (!currentIds.has(id)) {
+          await removeEventTask({ id: id as Id<'eventTasks'> });
+        }
+      }
+
       router.replace({
         pathname: '/(authenticated)/event/[id]',
         params: { id: eventId },
@@ -145,6 +202,11 @@ export default function EditEventScreen(): React.JSX.Element {
     rsvpRequired,
     eventId,
     updateEvent,
+    createEventTasks,
+    updateEventTask,
+    removeEventTask,
+    eventTasks,
+    tasks,
     router,
   ]);
 
@@ -591,6 +653,59 @@ export default function EditEventScreen(): React.JSX.Element {
             />
           </View>
 
+          {/* משימות */}
+          <View style={s.card}>
+            <Text style={s.fieldLabel}>משימות (רשימת צ'ק)</Text>
+            <View style={s.tasksList}>
+              {tasks.map((t) => (
+                <View key={t.id} style={s.taskRow}>
+                  <TouchableOpacity
+                    onPress={() =>
+                      setTasks((prev) => prev.filter((x) => x.id !== t.id))
+                    }
+                    style={s.taskRemoveBtn}
+                    accessible
+                    accessibilityRole="button"
+                    accessibilityLabel="הסר משימה"
+                  >
+                    <Ionicons name="close-circle" size={20} color="#9ca3af" />
+                  </TouchableOpacity>
+                  <TextInput
+                    style={[s.input, s.taskInput]}
+                    value={t.title}
+                    onChangeText={(text) =>
+                      setTasks((prev) =>
+                        prev.map((x) =>
+                          x.id === t.id ? { ...x, title: text } : x
+                        )
+                      )
+                    }
+                    placeholder="כותרת משימה..."
+                    placeholderTextColor="#9ca3af"
+                    textAlign="right"
+                    accessible
+                    accessibilityLabel="כותרת משימה"
+                  />
+                </View>
+              ))}
+            </View>
+            <TouchableOpacity
+              onPress={() =>
+                setTasks((prev) => [
+                  ...prev,
+                  { id: `tmp-${Date.now()}`, title: '', isNew: true },
+                ])
+              }
+              style={s.addTaskBtn}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="הוסף משימה"
+            >
+              <Ionicons name="add-circle-outline" size={18} color={PRIMARY} />
+              <Text style={s.addTaskText}>הוסף משימה</Text>
+            </TouchableOpacity>
+          </View>
+
           {/* RSVP */}
           <View style={s.card}>
             <View style={s.rowBetween}>
@@ -772,6 +887,22 @@ const s = StyleSheet.create({
     marginBottom: 6,
   },
 
+  tasksList: { gap: 8 },
+  taskRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 8,
+  },
+  taskRemoveBtn: { padding: 4 },
+  taskInput: { flex: 1, marginTop: 0 },
+  addTaskBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+    alignSelf: 'flex-end',
+  },
+  addTaskText: { fontSize: 14, color: PRIMARY, fontWeight: '600' },
   chipRow: { flexDirection: 'row-reverse', gap: 8, marginBottom: 4 },
   chip: {
     paddingHorizontal: 14,
