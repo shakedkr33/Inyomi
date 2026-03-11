@@ -1,16 +1,13 @@
 import { MaterialIcons } from '@expo/vector-icons';
-import { useMutation } from 'convex/react';
-import * as Clipboard from 'expo-clipboard';
-import { useRouter } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useMutation, useQuery } from 'convex/react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Keyboard,
-  Modal,
   Pressable,
   ScrollView,
-  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -19,6 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -35,106 +33,43 @@ const AVAILABLE_TAGS = [
 ] as const;
 type Tag = (typeof AVAILABLE_TAGS)[number];
 
-// ─── Success Sheet ────────────────────────────────────────────────────────────
-
-interface SuccessSheetProps {
-  visible: boolean;
-  name: string;
-  inviteCode: string;
-  onDone: () => void;
-}
-
-function SuccessSheet({
-  visible,
-  name,
-  inviteCode,
-  onDone,
-}: SuccessSheetProps) {
-  const inviteUrl = `https://inyomi.app/join/${inviteCode}`;
-  // TODO: לחבר ל-Universal Links כשהאפליקציה בפרודקשן
-
-  const handleShare = async () => {
-    await Share.share({
-      message: `הצטרפו לקהילה "${name}" באפליקציית InYomi: ${inviteUrl}`,
-    });
-  };
-
-  const handleCopy = async () => {
-    await Clipboard.setStringAsync(inviteUrl);
-    Alert.alert('הועתק!', 'הקישור הועתק ללוח');
-  };
-
-  return (
-    <Modal visible={visible} transparent animationType="slide">
-      <View style={successStyles.overlay}>
-        <View style={successStyles.sheet}>
-          <View style={successStyles.handle} />
-
-          <Text style={successStyles.emoji}>🎉</Text>
-          <Text style={successStyles.title}>הקהילה נוצרה!</Text>
-          <Text style={successStyles.subtitle}>
-            שתפו את הקישור עם חברים ומכרים
-          </Text>
-
-          {/* inviteCode משמש פנימית בלבד – לא מוצג למשתמש */}
-
-          <Pressable
-            style={[successStyles.btn, { backgroundColor: PRIMARY }]}
-            onPress={handleShare}
-            accessible
-            accessibilityRole="button"
-            accessibilityLabel="שיתוף קישור הזמנה"
-          >
-            <MaterialIcons name="share" size={20} color="#fff" />
-            <Text style={successStyles.btnText}>שיתוף קישור</Text>
-          </Pressable>
-
-          <Pressable
-            style={[successStyles.btn, successStyles.btnOutline]}
-            onPress={handleCopy}
-            accessible
-            accessibilityRole="button"
-            accessibilityLabel="העתקת קישור הזמנה"
-          >
-            <MaterialIcons name="content-copy" size={20} color={PRIMARY} />
-            <Text style={[successStyles.btnText, { color: PRIMARY }]}>
-              העתקת קישור
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={successStyles.doneBtn}
-            onPress={onDone}
-            accessible
-            accessibilityRole="button"
-            accessibilityLabel="המשך"
-          >
-            <Text style={successStyles.doneBtnText}>המשך</Text>
-          </Pressable>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
-export default function CreateCommunityScreen() {
+export default function EditCommunityScreen() {
+  const { id, returnTo } = useLocalSearchParams<{
+    id: string;
+    returnTo?: string;
+  }>();
   const router = useRouter();
-  const createCommunity = useMutation(api.communities.createCommunity);
+  const communityId = id as Id<'communities'>;
+
+  const community = useQuery(api.communities.getCommunity, { communityId });
+  const updateCommunity = useMutation(api.communities.updateCommunity);
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [selectedTags, setSelectedTags] = useState<Tag[]>([]);
   const [nameError, setNameError] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const [successData, setSuccessData] = useState<{
-    name: string;
-    inviteCode: string;
-  } | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const nameRef = useRef<TextInput>(null);
+
+  // Reset form when communityId changes (screen reuse between navigations)
+  useEffect(() => {
+    setName('');
+    setDescription('');
+    setSelectedTags([]);
+    setNameError('');
+  }, [communityId]);
+
+  // Populate form when community loads, only if it matches current communityId
+  useEffect(() => {
+    if (community && community._id === communityId) {
+      setName(community.name ?? '');
+      setDescription(community.description ?? '');
+      setSelectedTags((community.tags ?? []) as Tag[]);
+    }
+  }, [community, communityId]);
 
   const toggleTag = (tag: Tag) => {
     setSelectedTags((prev) =>
@@ -142,7 +77,7 @@ export default function CreateCommunityScreen() {
     );
   };
 
-  const handleCreate = async () => {
+  const handleSave = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
       setNameError('שם הקהילה הוא שדה חובה');
@@ -151,37 +86,105 @@ export default function CreateCommunityScreen() {
     }
     setNameError('');
     Keyboard.dismiss();
-    setLoading(true);
+    setSaving(true);
 
     try {
-      const community = await createCommunity({
+      await updateCommunity({
+        communityId,
         name: trimmed,
         description: description.trim() || undefined,
         tags: selectedTags.length > 0 ? [...selectedTags] : undefined,
       });
-
-      if (!community) throw new Error('שגיאה ביצירת הקהילה');
-
-      setSuccessData({
-        name: community.name,
-        inviteCode: community.inviteCode,
-      });
+      if (returnTo === 'list') {
+        router.replace(
+          '/(authenticated)/communities' as Parameters<typeof router.replace>[0]
+        );
+      } else {
+        router.replace({
+          pathname: '/(authenticated)/community/[id]',
+          params: { id: communityId },
+        });
+      }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'שגיאה ביצירת הקהילה';
+      const msg = err instanceof Error ? err.message : 'שגיאה בעדכון הקהילה';
       Alert.alert('שגיאה', msg);
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
-  const canSubmit = name.trim().length > 0 && !loading;
+  const canSave = name.trim().length > 0 && !saving;
+
+  // Loading or not found
+  if (community === undefined) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <View style={styles.loadingCenter}>
+          <ActivityIndicator size="large" color={PRIMARY} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const handleCancel = () => {
+    if (returnTo === 'list') {
+      router.replace(
+        '/(authenticated)/communities' as Parameters<typeof router.replace>[0]
+      );
+    } else {
+      router.replace({
+        pathname: '/(authenticated)/community/[id]',
+        params: { id: communityId },
+      });
+    }
+  };
+
+  if (community === null) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <View style={styles.loadingCenter}>
+          <Text style={styles.notFoundText}>קהילה לא נמצאה</Text>
+          <Pressable
+            onPress={handleCancel}
+            style={styles.backBtn}
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel="חזור"
+          >
+            <Text style={styles.backBtnText}>חזור</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Unauthorized — myRole is not owner or admin
+  const canEdit = community.myRole === 'owner' || community.myRole === 'admin';
+  if (!canEdit) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+        <View style={styles.loadingCenter}>
+          <Text style={styles.notFoundText}>אין לך הרשאה לערוך את הקהילה</Text>
+          <Pressable
+            onPress={handleCancel}
+            style={styles.backBtn}
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel="חזור"
+          >
+            <Text style={styles.backBtnText}>חזור</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       {/* Header */}
       <View style={styles.header}>
         <Pressable
-          onPress={() => router.back()}
+          onPress={handleCancel}
           style={styles.closeBtn}
           accessible
           accessibilityRole="button"
@@ -189,8 +192,7 @@ export default function CreateCommunityScreen() {
         >
           <MaterialIcons name="close" size={24} color="#374151" />
         </Pressable>
-        <Text style={styles.headerTitle}>יצירת קהילה חדשה</Text>
-        {/* spacer to balance close button */}
+        <Text style={styles.headerTitle}>עריכת קהילה</Text>
         <View style={{ width: 40 }} />
       </View>
 
@@ -274,37 +276,24 @@ export default function CreateCommunityScreen() {
         </View>
       </ScrollView>
 
-      {/* כפתור יצירה */}
+      {/* כפתור שמירה */}
       <View style={styles.footer}>
         <Pressable
-          style={[styles.createBtn, !canSubmit && styles.createBtnDisabled]}
-          onPress={handleCreate}
-          disabled={!canSubmit}
+          style={[styles.saveBtn, !canSave && styles.saveBtnDisabled]}
+          onPress={handleSave}
+          disabled={!canSave}
           accessible
           accessibilityRole="button"
-          accessibilityLabel="צור קהילה"
-          accessibilityState={{ disabled: !canSubmit }}
+          accessibilityLabel="שמור שינויים"
+          accessibilityState={{ disabled: !canSave }}
         >
-          {loading ? (
+          {saving ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.createBtnText}>צור קהילה</Text>
+            <Text style={styles.saveBtnText}>שמור שינויים</Text>
           )}
         </Pressable>
       </View>
-
-      {/* Success modal */}
-      {successData && (
-        <SuccessSheet
-          visible
-          name={successData.name}
-          inviteCode={successData.inviteCode}
-          onDone={() => {
-            setSuccessData(null);
-            router.replace('/(authenticated)/communities');
-          }}
-        />
-      )}
     </SafeAreaView>
   );
 }
@@ -315,6 +304,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',
+  },
+  loadingCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 24,
   },
   header: {
     flexDirection: 'row-reverse',
@@ -378,6 +374,11 @@ const styles = StyleSheet.create({
     color: '#ef4444',
     textAlign: 'right',
   },
+  notFoundText: {
+    fontSize: 16,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
   charCount: {
     fontSize: 12,
     color: '#9ca3af',
@@ -412,105 +413,32 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#f1f5f9',
   },
-  createBtn: {
+  saveBtn: {
     backgroundColor: PRIMARY,
     borderRadius: 14,
     paddingVertical: 15,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  createBtnDisabled: {
+  saveBtnDisabled: {
     backgroundColor: '#93c5fd',
     opacity: 0.6,
   },
-  createBtnText: {
+  saveBtnText: {
     color: '#fff',
     fontSize: 17,
     fontWeight: '700',
   },
-});
-
-const successStyles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  sheet: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 24,
-    paddingBottom: 40,
-    alignItems: 'center',
-    gap: 12,
-  },
-  handle: {
-    width: 40,
-    height: 4,
-    backgroundColor: '#e5e7eb',
-    borderRadius: 2,
-    marginBottom: 8,
-  },
-  emoji: {
-    fontSize: 48,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#111827',
-  },
-  subtitle: {
-    fontSize: 15,
-    color: '#6b7280',
-    textAlign: 'center',
-  },
-  codeBox: {
-    backgroundColor: '#f0f9ff',
-    borderRadius: 12,
-    paddingVertical: 12,
+  backBtn: {
+    backgroundColor: PRIMARY,
     paddingHorizontal: 24,
-    alignItems: 'center',
-    gap: 4,
-    width: '100%',
-    marginVertical: 4,
-  },
-  codeLabel: {
-    fontSize: 13,
-    color: '#6b7280',
-    fontWeight: '500',
-  },
-  code: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: PRIMARY,
-    letterSpacing: 4,
-  },
-  btn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
+    paddingVertical: 12,
     borderRadius: 12,
-    paddingVertical: 13,
-    width: '100%',
+    marginTop: 8,
   },
-  btnOutline: {
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: PRIMARY,
-  },
-  btnText: {
-    fontSize: 16,
-    fontWeight: '700',
+  backBtnText: {
     color: '#fff',
-  },
-  doneBtn: {
-    marginTop: 4,
-    paddingVertical: 8,
-  },
-  doneBtnText: {
+    fontWeight: '700',
     fontSize: 15,
-    color: '#9ca3af',
   },
 });

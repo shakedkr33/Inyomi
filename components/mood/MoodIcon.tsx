@@ -12,10 +12,7 @@ interface MoodIconProps {
 
 // ─── Color tokens per mood ────────────────────────────────────────────────────
 
-const MOOD_TOKENS: Record<
-  MoodValue,
-  { bg: string; stroke: string }
-> = {
+const MOOD_TOKENS: Record<MoodValue, { bg: string; stroke: string }> = {
   4: { bg: '#FEF3C7', stroke: '#F59E0B' }, // מדהים – amber
   3: { bg: '#DCFCE7', stroke: '#22C55E' }, // בסדר  – green
   2: { bg: '#E5E7EB', stroke: '#6B7280' }, // רגיל  – slate
@@ -25,7 +22,15 @@ const MOOD_TOKENS: Record<
 
 // ─── Face SVG renderer ────────────────────────────────────────────────────────
 
-function FacePaths({ value, stroke, sw }: { value: MoodValue; stroke: string; sw: number }) {
+function FacePaths({
+  value,
+  stroke,
+  sw,
+}: {
+  value: MoodValue;
+  stroke: string;
+  sw: number;
+}) {
   // All faces drawn on a 48×48 viewBox, center (24,24)
   // Eye centres: left (16,19), right (32,19)
   // Mouth region: y ≈ 28–34

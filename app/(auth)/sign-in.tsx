@@ -213,9 +213,7 @@ export default function SignInScreen() {
             className="py-2"
           >
             <Text className="text-[#36a9e2] text-sm text-center font-semibold">
-              {isSignUp
-                ? 'יש לך חשבון? התחבר'
-                : 'אין לך חשבון? הרשמה'}
+              {isSignUp ? 'יש לך חשבון? התחבר' : 'אין לך חשבון? הרשמה'}
             </Text>
           </TouchableOpacity>
 

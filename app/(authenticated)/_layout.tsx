@@ -27,7 +27,13 @@ type TabBtnProps = {
   accessibilityState?: { selected?: boolean };
 };
 
-function RegularTabButton({ iconName, label, onPress, onLongPress, accessibilityState }: TabBtnProps) {
+function RegularTabButton({
+  iconName,
+  label,
+  onPress,
+  onLongPress,
+  accessibilityState,
+}: TabBtnProps) {
   const focused = accessibilityState?.selected === true;
   const color = focused ? '#36a9e2' : '#94a3b8';
   return (
@@ -41,7 +47,9 @@ function RegularTabButton({ iconName, label, onPress, onLongPress, accessibility
     >
       <View style={focused ? styles.activeTabPill : styles.inactiveTabItem}>
         <MaterialIcons name={iconName as never} size={22} color={color} />
-        <Text style={[styles.tabLabel, focused && styles.tabLabelActive]}>{label}</Text>
+        <Text style={[styles.tabLabel, focused && styles.tabLabelActive]}>
+          {label}
+        </Text>
       </View>
     </Pressable>
   );
@@ -203,7 +211,11 @@ export default function AuthenticatedLayout() {
             name="index"
             options={{
               tabBarButton: (props) => (
-                <RegularTabButton {...(props as unknown as TabBtnProps)} iconName="home" label="בית" />
+                <RegularTabButton
+                  {...(props as unknown as TabBtnProps)}
+                  iconName="home"
+                  label="בית"
+                />
               ),
             }}
           />
@@ -267,6 +279,8 @@ export default function AuthenticatedLayout() {
           <Tabs.Screen name="import-holidays" options={{ href: null }} />
           <Tabs.Screen name="family-profile" options={{ href: null }} />
           <Tabs.Screen name="community-create" options={{ href: null }} />
+          <Tabs.Screen name="community-edit/[id]" options={{ href: null }} />
+          <Tabs.Screen name="event-edit/[id]" options={{ href: null }} />
           <Tabs.Screen name="community-join/[code]" options={{ href: null }} />
           <Tabs.Screen name="community-members/[id]" options={{ href: null }} />
           <Tabs.Screen name="community/[id]" options={{ href: null }} />

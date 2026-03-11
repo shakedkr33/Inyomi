@@ -22,8 +22,10 @@ async function generateUniqueInviteCode(ctx: MutationCtx): Promise<string> {
     if (!existing) return code;
   }
   // Fallback: timestamp suffix
-  return Math.random().toString(36).slice(2, 6).toUpperCase() +
-    Date.now().toString(36).toUpperCase().slice(-4);
+  return (
+    Math.random().toString(36).slice(2, 6).toUpperCase() +
+    Date.now().toString(36).toUpperCase().slice(-4)
+  );
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -262,13 +264,15 @@ export const updateCommunity = mutation({
     tags: v.optional(v.array(v.string())),
     color: v.optional(v.string()),
   },
-  handler: async (ctx, { communityId, ...fields }) => {
+  handler: async (ctx, { communityId, name, description, tags, color }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error('לא מחובר למערכת');
     const user = await ctx.db.get(userId);
     if (!user) throw new Error('משתמש לא נמצא');
 
-    // TODO: add full permissions check via spaceId
+    const community = await ctx.db.get(communityId);
+    if (!community) throw new Error('קהילה לא נמצאה');
+
     const membership = await ctx.db
       .query('communityMembers')
       .withIndex('by_community_user', (q) =>
@@ -276,14 +280,28 @@ export const updateCommunity = mutation({
       )
       .unique();
 
-    if (!membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
+    if (
+      !membership ||
+      (membership.role !== 'owner' && membership.role !== 'admin')
+    ) {
       throw new Error('אין הרשאה לעדכן את הקהילה');
     }
 
-    const patch = Object.fromEntries(
-      Object.entries(fields).filter(([, val]) => val !== undefined)
-    );
-    await ctx.db.patch(communityId, patch);
+    const trimmedName = name !== undefined ? name.trim() : undefined;
+    if (trimmedName !== undefined && trimmedName === '') {
+      throw new Error('שם הקהילה לא יכול להיות ריק');
+    }
+
+    const patch: Record<string, unknown> = {};
+    if (trimmedName !== undefined) patch.name = trimmedName;
+    if (description !== undefined)
+      patch.description = description.trim() || undefined;
+    if (tags !== undefined) patch.tags = tags;
+    if (color !== undefined) patch.color = color;
+
+    if (Object.keys(patch).length > 0) {
+      await ctx.db.patch(communityId, patch);
+    }
   },
 });
 

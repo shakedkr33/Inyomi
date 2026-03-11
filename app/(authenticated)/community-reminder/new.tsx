@@ -1,9 +1,7 @@
-import { api } from '@/convex/_generated/api';
-import type { Id } from '@/convex/_generated/dataModel';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery } from 'convex/react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
@@ -21,6 +19,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -63,7 +63,8 @@ export default function CommunityReminderNewScreen() {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [notifyOption, setNotifyOption] = useState<NotifyOption>('none');
   const [customReminderAmount, setCustomReminderAmount] = useState('30');
-  const [customReminderUnit, setCustomReminderUnit] = useState<ReminderUnit>('minutes');
+  const [customReminderUnit, setCustomReminderUnit] =
+    useState<ReminderUnit>('minutes');
   const [showCustomReminderModal, setShowCustomReminderModal] = useState(false);
   const [customReminderConfirmed, setCustomReminderConfirmed] = useState(false);
   const [titleError, setTitleError] = useState(false);
@@ -77,8 +78,11 @@ export default function CommunityReminderNewScreen() {
   const getNotifyLabel = (opt: NotifyOption): string => {
     if (opt === 'custom' && customReminderConfirmed) {
       const unitLabel =
-        customReminderUnit === 'minutes' ? 'דקות' :
-        customReminderUnit === 'hours' ? 'שעות' : 'ימים';
+        customReminderUnit === 'minutes'
+          ? 'דקות'
+          : customReminderUnit === 'hours'
+            ? 'שעות'
+            : 'ימים';
       return `${customReminderAmount} ${unitLabel} לפני`;
     }
     const labels: Record<NotifyOption, string> = {
@@ -133,10 +137,16 @@ export default function CommunityReminderNewScreen() {
         description: description.trim() || undefined,
         dueDate: resolveDueDate(),
         spaceId: spaceId ?? undefined,
-        communityId: communityId ? communityId as Id<'communities'> : undefined,
+        communityId: communityId
+          ? (communityId as Id<'communities'>)
+          : undefined,
       });
       if (communityId) {
-        router.replace(`/(authenticated)/community/${communityId}` as Parameters<typeof router.replace>[0]);
+        router.replace(
+          `/(authenticated)/community/${communityId}` as Parameters<
+            typeof router.replace
+          >[0]
+        );
       } else {
         router.back();
       }
@@ -146,14 +156,29 @@ export default function CommunityReminderNewScreen() {
     } finally {
       setSaving(false);
     }
-  }, [title, description, spaceId, communityId, dateOption, customDate, timeEnabled, selectedTime, createReminder, router]);
+  }, [
+    title,
+    description,
+    spaceId,
+    communityId,
+    dateOption,
+    customDate,
+    timeEnabled,
+    selectedTime,
+    createReminder,
+    router,
+  ]);
 
   // ── Section X: save disabled only while loading (undefined) or title is empty
   const isSaveDisabled = !title.trim() || saving || spaceId === undefined;
 
   const handleClose = () => {
     if (communityId) {
-      router.replace(`/(authenticated)/community/${communityId}` as Parameters<typeof router.replace>[0]);
+      router.replace(
+        `/(authenticated)/community/${communityId}` as Parameters<
+          typeof router.replace
+        >[0]
+      );
     } else {
       router.back();
     }
@@ -170,7 +195,9 @@ export default function CommunityReminderNewScreen() {
           <Text style={styles.headerTitle}>תזכורת חדשה</Text>
           <View style={{ width: 36 }} />
         </View>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <View
+          style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
+        >
           <ActivityIndicator size="large" color={PRIMARY} />
         </View>
       </SafeAreaView>
@@ -188,7 +215,14 @@ export default function CommunityReminderNewScreen() {
           <Text style={styles.headerTitle}>תזכורת חדשה</Text>
           <View style={{ width: 36 }} />
         </View>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+        <View
+          style={{
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 32,
+          }}
+        >
           <Ionicons name="warning-outline" size={48} color="#9ca3af" />
           <Text style={styles.errorStateTitle}>לא נמצא מרחב פעיל</Text>
           <TouchableOpacity
@@ -208,7 +242,10 @@ export default function CommunityReminderNewScreen() {
   // ── Date chip label for "other"
   const otherChipLabel =
     dateOption === 'other'
-      ? customDate.toLocaleDateString('he-IL', { day: 'numeric', month: 'short' })
+      ? customDate.toLocaleDateString('he-IL', {
+          day: 'numeric',
+          month: 'short',
+        })
       : 'אחר';
 
   return (
@@ -245,7 +282,10 @@ export default function CommunityReminderNewScreen() {
             <TextInput
               style={[styles.input, titleError && styles.inputError]}
               value={title}
-              onChangeText={(t) => { setTitle(t); if (t.trim()) setTitleError(false); }}
+              onChangeText={(t) => {
+                setTitle(t);
+                if (t.trim()) setTitleError(false);
+              }}
               placeholder="הקלידי את הנושא..."
               placeholderTextColor="#9ca3af"
               textAlign="right"
@@ -282,12 +322,14 @@ export default function CommunityReminderNewScreen() {
           <View style={styles.card}>
             <FieldLabel text="תאריך" />
             <View style={styles.chipRow}>
-              {([
-                ['today', 'היום'],
-                ['tomorrow', 'מחר'],
-                ['none', 'ללא תאריך'],
-                ['other', otherChipLabel],
-              ] as [DateOption, string][]).map(([val, label]) => (
+              {(
+                [
+                  ['today', 'היום'],
+                  ['tomorrow', 'מחר'],
+                  ['none', 'ללא תאריך'],
+                  ['other', otherChipLabel],
+                ] as [DateOption, string][]
+              ).map(([val, label]) => (
                 <TouchableOpacity
                   key={val}
                   style={[styles.chip, dateOption === val && styles.chipActive]}
@@ -303,7 +345,12 @@ export default function CommunityReminderNewScreen() {
                   accessibilityState={{ selected: dateOption === val }}
                   accessibilityLabel={label}
                 >
-                  <Text style={[styles.chipText, dateOption === val && styles.chipTextActive]}>
+                  <Text
+                    style={[
+                      styles.chipText,
+                      dateOption === val && styles.chipTextActive,
+                    ]}
+                  >
                     {label}
                   </Text>
                 </TouchableOpacity>
@@ -313,28 +360,49 @@ export default function CommunityReminderNewScreen() {
             {/* Date row + pickers — visible only when "other" is selected */}
             {dateOption === 'other' ? (
               <>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}>
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 8,
+                    marginTop: 10,
+                  }}
+                >
                   {/* Calendar icon — opens inline monthly grid */}
                   <TouchableOpacity
-                    onPress={() => { setCalendarPickerOpen(!calendarPickerOpen); setDatePickerOpen(false); }}
+                    onPress={() => {
+                      setCalendarPickerOpen(!calendarPickerOpen);
+                      setDatePickerOpen(false);
+                    }}
                     style={styles.calendarIconBtn}
                     accessible
                     accessibilityRole="button"
                     accessibilityLabel="בחר מלוח שנה"
                   >
-                    <Ionicons name="calendar-outline" size={20} color="#36a9e2" />
+                    <Ionicons
+                      name="calendar-outline"
+                      size={20}
+                      color="#36a9e2"
+                    />
                   </TouchableOpacity>
 
                   {/* Date value button — opens spinner */}
                   <TouchableOpacity
                     style={[styles.input, styles.dateValueBtn]}
-                    onPress={() => { setDatePickerOpen(!datePickerOpen); setCalendarPickerOpen(false); }}
+                    onPress={() => {
+                      setDatePickerOpen(!datePickerOpen);
+                      setCalendarPickerOpen(false);
+                    }}
                     accessible
                     accessibilityRole="button"
                     accessibilityLabel={customDate.toLocaleDateString('he-IL')}
                   >
                     <Text style={{ fontSize: 15, color: '#111827' }}>
-                      {customDate.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                      {customDate.toLocaleDateString('he-IL', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                      })}
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -351,7 +419,10 @@ export default function CommunityReminderNewScreen() {
                       textColor="#111827"
                       style={{ width: '100%', height: 180 }}
                       onChange={(_, date) => {
-                        if (date) { setCustomDate(date); setDateOption('other'); }
+                        if (date) {
+                          setCustomDate(date);
+                          setDateOption('other');
+                        }
                       }}
                     />
                     <TouchableOpacity
@@ -370,7 +441,14 @@ export default function CommunityReminderNewScreen() {
 
                 {/* Inline monthly calendar picker */}
                 {calendarPickerOpen ? (
-                  <View style={{ backgroundColor: '#f3f4f6', borderRadius: 12, marginTop: 8, overflow: 'hidden' }}>
+                  <View
+                    style={{
+                      backgroundColor: '#f3f4f6',
+                      borderRadius: 12,
+                      marginTop: 8,
+                      overflow: 'hidden',
+                    }}
+                  >
                     <DateTimePicker
                       value={customDate}
                       mode="date"
@@ -417,11 +495,19 @@ export default function CommunityReminderNewScreen() {
                     accessibilityLabel={`שעה: ${selectedTime.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`}
                   >
                     <Text style={styles.timePickerText}>
-                      {selectedTime.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}
+                      {selectedTime.toLocaleTimeString('he-IL', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
                     </Text>
                   </TouchableOpacity>
                   {showTimePicker && (
-                    <View style={[styles.pickerWrapper, { width: '100%', minHeight: 200 }]}>
+                    <View
+                      style={[
+                        styles.pickerWrapper,
+                        { width: '100%', minHeight: 200 },
+                      ]}
+                    >
                       <DateTimePicker
                         value={selectedTime}
                         mode="time"
@@ -458,10 +544,20 @@ export default function CommunityReminderNewScreen() {
             <View style={styles.card}>
               <FieldLabel text="התראה מוקדמת" />
               <View style={styles.chipRow}>
-                {(['none', 'day_before', 'two_hours_before', 'custom'] as NotifyOption[]).map((val) => (
+                {(
+                  [
+                    'none',
+                    'day_before',
+                    'two_hours_before',
+                    'custom',
+                  ] as NotifyOption[]
+                ).map((val) => (
                   <TouchableOpacity
                     key={val}
-                    style={[styles.chip, notifyOption === val && styles.chipActive]}
+                    style={[
+                      styles.chip,
+                      notifyOption === val && styles.chipActive,
+                    ]}
                     onPress={() => {
                       setNotifyOption(val);
                       if (val === 'custom') setShowCustomReminderModal(true);
@@ -471,7 +567,12 @@ export default function CommunityReminderNewScreen() {
                     accessibilityState={{ selected: notifyOption === val }}
                     accessibilityLabel={getNotifyLabel(val)}
                   >
-                    <Text style={[styles.chipText, notifyOption === val && styles.chipTextActive]}>
+                    <Text
+                      style={[
+                        styles.chipText,
+                        notifyOption === val && styles.chipTextActive,
+                      ]}
+                    >
                       {getNotifyLabel(val)}
                     </Text>
                   </TouchableOpacity>
@@ -485,7 +586,9 @@ export default function CommunityReminderNewScreen() {
             <FieldLabel text="צרף תמונה/קובץ" />
             <Pressable
               style={styles.attachBtn}
-              onPress={() => Alert.alert('בקרוב', 'צירוף קבצים יהיה זמין בגרסה הבאה.')}
+              onPress={() =>
+                Alert.alert('בקרוב', 'צירוף קבצים יהיה זמין בגרסה הבאה.')
+              }
               accessible
               accessibilityRole="button"
               accessibilityLabel="בחר תמונה או קובץ"
@@ -506,7 +609,12 @@ export default function CommunityReminderNewScreen() {
             accessibilityRole="button"
             accessibilityLabel="שמור תזכורת"
           >
-            <Text style={[styles.saveBtnText, isSaveDisabled && styles.saveBtnTextDisabled]}>
+            <Text
+              style={[
+                styles.saveBtnText,
+                isSaveDisabled && styles.saveBtnTextDisabled,
+              ]}
+            >
               {saving ? 'שומר...' : 'שמור תזכורת'}
             </Text>
           </TouchableOpacity>
@@ -530,18 +638,33 @@ export default function CommunityReminderNewScreen() {
             <Text style={styles.customReminderBefore}>לפני</Text>
             <View style={styles.customReminderUnits}>
               {(['minutes', 'hours', 'days'] as ReminderUnit[]).map((unit) => {
-                const label = unit === 'minutes' ? 'דקות' : unit === 'hours' ? 'שעות' : 'ימים';
+                const label =
+                  unit === 'minutes'
+                    ? 'דקות'
+                    : unit === 'hours'
+                      ? 'שעות'
+                      : 'ימים';
                 return (
                   <TouchableOpacity
                     key={unit}
-                    style={[styles.chip, customReminderUnit === unit && styles.chipActive]}
+                    style={[
+                      styles.chip,
+                      customReminderUnit === unit && styles.chipActive,
+                    ]}
                     onPress={() => setCustomReminderUnit(unit)}
                     accessible
                     accessibilityRole="button"
-                    accessibilityState={{ selected: customReminderUnit === unit }}
+                    accessibilityState={{
+                      selected: customReminderUnit === unit,
+                    }}
                     accessibilityLabel={label}
                   >
-                    <Text style={[styles.chipText, customReminderUnit === unit && styles.chipTextActive]}>
+                    <Text
+                      style={[
+                        styles.chipText,
+                        customReminderUnit === unit && styles.chipTextActive,
+                      ]}
+                    >
                       {label}
                     </Text>
                   </TouchableOpacity>
@@ -551,7 +674,9 @@ export default function CommunityReminderNewScreen() {
             <TextInput
               style={[styles.input, styles.customReminderInput]}
               value={customReminderAmount}
-              onChangeText={(t) => setCustomReminderAmount(t.replace(/[^0-9]/g, ''))}
+              onChangeText={(t) =>
+                setCustomReminderAmount(t.replace(/[^0-9]/g, ''))
+              }
               keyboardType="number-pad"
               maxLength={3}
               textAlign="center"
@@ -628,7 +753,12 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   required: { color: '#ef4444' },
-  errorText: { fontSize: 12, color: '#ef4444', textAlign: 'right', marginTop: 4 },
+  errorText: {
+    fontSize: 12,
+    color: '#ef4444',
+    textAlign: 'right',
+    marginTop: 4,
+  },
 
   input: {
     borderWidth: 1,

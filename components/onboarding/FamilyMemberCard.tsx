@@ -41,7 +41,9 @@ export function FamilyMemberDisplayCard({
 
       {/* Name + avatar — right side (RTL start) */}
       <View className="flex-row items-center gap-3">
-        <Text className="font-bold text-[15px] text-gray-900">{member.name}</Text>
+        <Text className="font-bold text-[15px] text-gray-900">
+          {member.name}
+        </Text>
         <View
           style={{ backgroundColor: member.color }}
           className="w-10 h-10 rounded-full items-center justify-center"

@@ -29,7 +29,10 @@ export const listByCommunityPaged = query({
     return await ctx.db
       .query('events')
       .withIndex('by_community_date', (q) =>
-        q.eq('communityId', communityId).gte('startTime', from).lte('startTime', to)
+        q
+          .eq('communityId', communityId)
+          .gte('startTime', from)
+          .lte('startTime', to)
       )
       .paginate({ cursor, numItems: numItems ?? 20 });
   },
@@ -56,7 +59,7 @@ export const listByDateRange = query({
   args: {
     spaceId: v.id('spaces'),
     from: v.number(), // Unix timestamp (ms) – תחילת טווח
-    to: v.number(),   // Unix timestamp (ms) – סוף טווח
+    to: v.number(), // Unix timestamp (ms) – סוף טווח
   },
   handler: async (ctx, { spaceId, from, to }) => {
     // TODO: לחבר לאימות – לוודא שהמשתמש הנוכחי שייך ל-spaceId
@@ -120,18 +123,72 @@ export const update = mutation({
     onlineUrl: v.optional(v.string()),
     groupId: v.optional(v.id('spaces')),
     sharedWithUserIds: v.optional(v.array(v.id('users'))),
+    requiresRsvp: v.optional(v.boolean()),
   },
   handler: async (ctx, { id, ...fields }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('לא מחובר למערכת');
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('לא מחובר למערכת');
 
-    // TODO: לוודא שהמשתמש הנוכחי הוא יוצר האירוע או בעל הרשאות עריכה
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error('אירוע לא נמצא');
+    if (existing.createdBy !== userId)
+      throw new Error('אין הרשאה לערוך את האירוע');
 
     await ctx.db.patch(id, fields);
   },
 });
+
+// ─────────────────────────────────────────────────────────────
+// ביטול אירוע (מאומת — רק יוצר האירוע, לא מוחק)
+// ─────────────────────────────────────────────────────────────
+export const cancelEvent = mutation({
+  args: {
+    eventId: v.id('events'),
+    cancelReason: v.optional(v.string()),
+  },
+  handler: async (ctx, { eventId, cancelReason }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('לא מחובר');
+    const event = await ctx.db.get(eventId);
+    if (!event) throw new Error('אירוע לא נמצא');
+    if (event.createdBy !== userId) throw new Error('אין הרשאה');
+
+    await ctx.db.patch(eventId, {
+      status: 'cancelled',
+      cancelledAt: Date.now(),
+      cancelReason,
+    });
+
+    // TODO push notification:
+    // notify all participants that the event was cancelled
+    // include event.title and cancelReason if provided
+  },
+});
+
+// ─────────────────────────────────────────────────────────────
+// מחיקת אירועים שבוטלו לאחר 14 ימים
+// ─────────────────────────────────────────────────────────────
+export const deleteCancelledEventsPastGracePeriod = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    const old = await ctx.db
+      .query('events')
+      .filter((q) =>
+        q.and(
+          q.eq(q.field('status'), 'cancelled'),
+          q.lt(q.field('cancelledAt'), cutoff)
+        )
+      )
+      .collect();
+    for (const ev of old) {
+      await ctx.db.delete(ev._id);
+    }
+    return { deleted: old.length };
+  },
+});
+// TODO cleanup job: call deleteCancelledEventsPastGracePeriod on a schedule.
+// Do NOT call this mutation from the UI in this step.
 
 // ─────────────────────────────────────────────────────────────
 // מחיקת אירוע (מאומת — רק יוצר האירוע)

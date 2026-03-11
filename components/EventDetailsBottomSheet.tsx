@@ -20,7 +20,7 @@ const SHEET_HEIGHT = screenHeight * 0.52;
 export interface EventItem {
   id: string;
   time: string;
-  endTime?: string;       // e.g. "14:30"
+  endTime?: string; // e.g. "14:30"
   title: string;
   location?: string;
   type: 'event' | 'task';
@@ -67,7 +67,9 @@ export function EventDetailsBottomSheet({
       ? `${event.time}–${event.endTime}`
       : event.time;
 
-  const hasLocation = Boolean(event.location && event.location.trim().length > 0);
+  const hasLocation = Boolean(
+    event.location && event.location.trim().length > 0
+  );
 
   return (
     <Modal
@@ -108,10 +110,26 @@ export function EventDetailsBottomSheet({
 
           {/* Location row — inline with nav button */}
           {hasLocation ? (
-            <View style={{ flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-              <View style={{ flexDirection: 'row-reverse', alignItems: 'center', gap: 8, flex: 1 }}>
+            <View
+              style={{
+                flexDirection: 'row-reverse',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 10,
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: 'row-reverse',
+                  alignItems: 'center',
+                  gap: 8,
+                  flex: 1,
+                }}
+              >
                 <MaterialIcons name="location-on" size={18} color="#94a3b8" />
-                <Text style={styles.infoText} numberOfLines={1}>{event.location}</Text>
+                <Text style={styles.infoText} numberOfLines={1}>
+                  {event.location}
+                </Text>
               </View>
               <Pressable
                 onPress={() => event.location && onNavigate(event.location)}
@@ -130,7 +148,11 @@ export function EventDetailsBottomSheet({
                 accessibilityLabel={`נווט אל ${event.location}`}
               >
                 <MaterialIcons name="near-me" size={14} color="#fff" />
-                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>נווט</Text>
+                <Text
+                  style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}
+                >
+                  נווט
+                </Text>
               </Pressable>
             </View>
           ) : null}
@@ -139,7 +161,9 @@ export function EventDetailsBottomSheet({
           {event.groupName ? (
             <View style={styles.infoRow}>
               <MaterialIcons name="group" size={16} color="#94a3b8" />
-              <Text style={[styles.infoText, { color: '#64748b', fontSize: 14 }]}>
+              <Text
+                style={[styles.infoText, { color: '#64748b', fontSize: 14 }]}
+              >
                 {event.groupName}
               </Text>
             </View>

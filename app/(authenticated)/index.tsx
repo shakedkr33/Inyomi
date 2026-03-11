@@ -1,21 +1,8 @@
-import type { EventItem } from '@/components/EventDetailsBottomSheet';
-import {
-  EventDetailsBottomSheet,
-} from '@/components/EventDetailsBottomSheet';
-import type { MoodValue } from '@/components/mood/MoodIcon';
-import { MoodIcon } from '@/components/mood/MoodIcon';
-import { TaskCheckbox } from '@/components/TaskCheckbox';
-import { useNotifications } from '@/contexts/NotificationsContext';
-import { useBirthdaySheets } from '@/lib/components/birthday/BirthdaySheetsProvider';
-import { NotificationsDrawer } from '@/lib/components/notifications/NotificationsDrawer';
-import { getCountdownLabel } from '@/lib/utils/birthday';
-import { api } from '@/convex/_generated/api';
-import type { Id } from '@/convex/_generated/dataModel';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useMutation, useQuery } from 'convex/react';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
-import { useMutation, useQuery } from 'convex/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -31,6 +18,17 @@ import {
 } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import type { EventItem } from '@/components/EventDetailsBottomSheet';
+import { EventDetailsBottomSheet } from '@/components/EventDetailsBottomSheet';
+import type { MoodValue } from '@/components/mood/MoodIcon';
+import { MoodIcon } from '@/components/mood/MoodIcon';
+import { TaskCheckbox } from '@/components/TaskCheckbox';
+import { useNotifications } from '@/contexts/NotificationsContext';
+import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
+import { useBirthdaySheets } from '@/lib/components/birthday/BirthdaySheetsProvider';
+import { NotificationsDrawer } from '@/lib/components/notifications/NotificationsDrawer';
+import { getCountdownLabel } from '@/lib/utils/birthday';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -54,11 +52,11 @@ function isSameDay(a: Date, b: Date): boolean {
 // ─── Mood data ────────────────────────────────────────────────────────────────
 
 const MOODS: { value: MoodValue; label: string; shortText: string }[] = [
-  { value: 4, label: 'מדהים',   shortText: 'יום מוצלח ומלא בעשייה! ⭐' },
-  { value: 3, label: 'בסדר',    shortText: 'יום טוב וסביר 👍' },
-  { value: 2, label: 'רגיל',    shortText: 'יום שגרתי כרגיל.' },
-  { value: 1, label: 'עמוס',    shortText: 'יום עמוס – כל הכבוד שעברת אותו.' },
-  { value: 0, label: 'מתסכל',   shortText: 'יום קשה. מחר יהיה טוב יותר 💙' },
+  { value: 4, label: 'מדהים', shortText: 'יום מוצלח ומלא בעשייה! ⭐' },
+  { value: 3, label: 'בסדר', shortText: 'יום טוב וסביר 👍' },
+  { value: 2, label: 'רגיל', shortText: 'יום שגרתי כרגיל.' },
+  { value: 1, label: 'עמוס', shortText: 'יום עמוס – כל הכבוד שעברת אותו.' },
+  { value: 0, label: 'מתסכל', shortText: 'יום קשה. מחר יהיה טוב יותר 💙' },
 ];
 
 const MOOD_ITEM_WIDTH = 80;
@@ -111,18 +109,24 @@ export default function HomeScreen() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [selectedMood, setSelectedMood] = useState<number | null>(null);
-  const [calendarMode, setCalendarMode] = useState<'carousel' | 'month'>('carousel');
-const [devClearBirthdays, setDevClearBirthdays] = useState(false);
+  const [calendarMode, setCalendarMode] = useState<'carousel' | 'month'>(
+    'carousel'
+  );
+  const [devClearBirthdays, setDevClearBirthdays] = useState(false);
 
   // ── Mood popup state ───────────────────────────────────────────────────────
   const [hasSeenMoodPopupToday, setHasSeenMoodPopupToday] = useState(false);
   const [lastMoodDate, setLastMoodDate] = useState<string | null>(null);
   const [isMoodModalVisible, setIsMoodModalVisible] = useState(false);
   // Tracks the in-modal selection before the user confirms
-  const [tempMoodSelection, setTempMoodSelection] = useState<number | null>(null);
+  const [tempMoodSelection, setTempMoodSelection] = useState<number | null>(
+    null
+  );
 
   // ── Insight card ───────────────────────────────────────────────────────────
-  const [dismissedInsightDate, setDismissedInsightDate] = useState<string | null>(null);
+  const [dismissedInsightDate, setDismissedInsightDate] = useState<
+    string | null
+  >(null);
 
   // ── Event detail sheet ─────────────────────────────────────────────────────
   const [selectedEvent, setSelectedEvent] = useState<EventItem | null>(null);
@@ -131,7 +135,9 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
   // ── Navigation app picker ──────────────────────────────────────────────────
   const [navPickerVisible, setNavPickerVisible] = useState(false);
   const [navLocation, setNavLocation] = useState<string | null>(null);
-  const [lastNavApp, setLastNavApp] = useState<'waze' | 'google' | 'apple' | null>(null);
+  const [lastNavApp, setLastNavApp] = useState<
+    'waze' | 'google' | 'apple' | null
+  >(null);
 
   // ── RSVP (replaces pendingResponses + expandedPendingId) ──────────────────
   const [openRsvpForId, setOpenRsvpForId] = useState<string | null>(null);
@@ -140,7 +146,9 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
   const [showAllUndated, setShowAllUndated] = useState(false);
 
   // ── Mood wheel live index ──────────────────────────────────────────────────
-  const [currentMoodIndex, setCurrentMoodIndex] = useState<number>(MOODS.length); // default: middle of wheelMoods
+  const [currentMoodIndex, setCurrentMoodIndex] = useState<number>(
+    MOODS.length
+  ); // default: middle of wheelMoods
 
   const openEventSheet = (item: Item) => {
     setSelectedEvent(item as EventItem);
@@ -182,7 +190,8 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
   const month = today.getMonth();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const calendarDays: Date[] = [];
-  for (let d = 1; d <= daysInMonth; d++) calendarDays.push(new Date(year, month, d));
+  for (let d = 1; d <= daysInMonth; d++)
+    calendarDays.push(new Date(year, month, d));
   for (let d = 1; d <= 7; d++) calendarDays.push(new Date(year, month + 1, d));
 
   // ── Items ──────────────────────────────────────────────────────────────────
@@ -231,8 +240,18 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
 
   // ── All-day events (mock) ──────────────────────────────────────────────────
   // TODO: לחבר לנתוני קבוצה אמיתיים מ-Convex כשהסכמה מוכנה
-  const allDayEvents: Array<{ id: string; title: string; iconColor: string; groupName?: string }> = [
-    { id: 'ad1', title: 'חג ראש חודש', iconColor: '#36a9e2', groupName: 'משפחה' },
+  const allDayEvents: Array<{
+    id: string;
+    title: string;
+    iconColor: string;
+    groupName?: string;
+  }> = [
+    {
+      id: 'ad1',
+      title: 'חג ראש חודש',
+      iconColor: '#36a9e2',
+      groupName: 'משפחה',
+    },
   ];
 
   // ── Convex: dated tasks ────────────────────────────────────────────────────
@@ -242,23 +261,33 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
     spaceId ? { spaceId } : 'skip'
   );
 
-  const todayTasks: Item[] = useMemo(() => (convexTasks ?? [])
-    .filter((t) => t.dueDate != null && isSameDay(new Date(t.dueDate), selectedDate))
-    .map((t) => ({
-      id: t._id,
-      time: t.dueDate
-        ? new Date(t.dueDate).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
-        : '',
-      title: t.title,
-      location: '',
-      type: 'task' as const,
-      icon: 'check-box',
-      iconBg: '#E7F5FF',
-      iconColor: '#228BE6',
-      assigneeColor: '#E7F5FF',
-      completed: t.completed,
-      // TODO: להוסיף category, assignedTo, notes כשהסכמה תורחב
-    })), [convexTasks, selectedDate]);
+  const todayTasks: Item[] = useMemo(
+    () =>
+      (convexTasks ?? [])
+        .filter(
+          (t) =>
+            t.dueDate != null && isSameDay(new Date(t.dueDate), selectedDate)
+        )
+        .map((t) => ({
+          id: t._id,
+          time: t.dueDate
+            ? new Date(t.dueDate).toLocaleTimeString('he-IL', {
+                hour: '2-digit',
+                minute: '2-digit',
+              })
+            : '',
+          title: t.title,
+          location: '',
+          type: 'task' as const,
+          icon: 'check-box',
+          iconBg: '#E7F5FF',
+          iconColor: '#228BE6',
+          assigneeColor: '#E7F5FF',
+          completed: t.completed,
+          // TODO: להוסיף category, assignedTo, notes כשהסכמה תורחב
+        })),
+    [convexTasks, selectedDate]
+  );
 
   // allItems = Convex tasks (today) + mock event items
   // TODO: להחליף את items לחלוטין ב-events מ-Convex כשיחובר
@@ -281,11 +310,12 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
   ]);
   */
   const undatedTasks: UndatedTask[] = useMemo(
-    () => (convexUndatedTasks ?? []).map((t) => ({
-      id: t._id,
-      title: t.title,
-      completed: t.completed,
-    })),
+    () =>
+      (convexUndatedTasks ?? []).map((t) => ({
+        id: t._id,
+        title: t.title,
+        completed: t.completed,
+      })),
     [convexUndatedTasks]
   );
 
@@ -385,7 +415,7 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
 
   // Load last-used navigation app from storage
   useEffect(() => {
-    AsyncStorage.getItem('lastNavApp').then(val => {
+    AsyncStorage.getItem('lastNavApp').then((val) => {
       if (val) setLastNavApp(val as 'waze' | 'google' | 'apple');
     });
   }, []);
@@ -402,7 +432,11 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
   useEffect(() => {
     if (!canShowMoodFeatures) return; // לא להציג למשתמש ללא אירועים
     const check = () => {
-      if (shouldShowMoodPrompt() && selectedMood === null && !hasSeenMoodPopupToday) {
+      if (
+        shouldShowMoodPrompt() &&
+        selectedMood === null &&
+        !hasSeenMoodPopupToday
+      ) {
         setTempMoodSelection(null);
         setIsMoodModalVisible(true);
       }
@@ -410,7 +444,12 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
     check();
     const interval = setInterval(check, 60_000);
     return () => clearInterval(interval);
-  }, [canShowMoodFeatures, shouldShowMoodPrompt, selectedMood, hasSeenMoodPopupToday]);
+  }, [
+    canShowMoodFeatures,
+    shouldShowMoodPrompt,
+    selectedMood,
+    hasSeenMoodPopupToday,
+  ]);
 
   // Scroll main mood wheel to initial position after mount
   useEffect(() => {
@@ -435,7 +474,10 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
   useEffect(() => {
     const todayIndex = today.getDate() - 1;
     const PILL_WIDTH = 50;
-    const offset = Math.max(0, todayIndex * PILL_WIDTH - (screenWidth - 32 - 38) / 2 + 21);
+    const offset = Math.max(
+      0,
+      todayIndex * PILL_WIDTH - (screenWidth - 32 - 38) / 2 + 21
+    );
     setTimeout(() => {
       dateScrollRef.current?.scrollTo({ x: offset, animated: false });
     }, 80);
@@ -483,7 +525,9 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
   };
 
   // Popup scroll-end: loop-snap + update tempMoodSelection (NO confirm yet)
-  const handlePopupScrollEnd = (e: { nativeEvent: { contentOffset: { x: number } } }) => {
+  const handlePopupScrollEnd = (e: {
+    nativeEvent: { contentOffset: { x: number } };
+  }) => {
     if (!moodPopupInitialized.current) {
       moodPopupInitialized.current = true;
       return;
@@ -506,7 +550,9 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
   };
 
   // Bottom wheel scroll-end: immediate selection + loop-snap
-  const handleBottomScrollEnd = (e: { nativeEvent: { contentOffset: { x: number } } }) => {
+  const handleBottomScrollEnd = (e: {
+    nativeEvent: { contentOffset: { x: number } };
+  }) => {
     if (!moodWheelInitialized.current) {
       moodWheelInitialized.current = true;
       return;
@@ -541,9 +587,9 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
     if (!navLocation) return;
     const encoded = encodeURIComponent(navLocation);
     const urls = {
-      waze:   `https://waze.com/ul?q=${encoded}`,
+      waze: `https://waze.com/ul?q=${encoded}`,
       google: `https://www.google.com/maps/search/?api=1&query=${encoded}`,
-      apple:  `http://maps.apple.com/?q=${encoded}`,
+      apple: `http://maps.apple.com/?q=${encoded}`,
     };
     const url = urls[app];
     try {
@@ -565,7 +611,10 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
   const AVATAR_COLORS = ['#FFD1DC', '#E0F2F1', '#FFF9C4', '#E8EAF6', '#FCE4EC'];
 
   const moodWheelPad = (screenWidth - 48 - MOOD_ITEM_WIDTH) / 2;
-  const moodPopupHPad = Math.max(0, (screenWidth * 0.88 - 56 - MOOD_ITEM_WIDTH) / 2);
+  const moodPopupHPad = Math.max(
+    0,
+    (screenWidth * 0.88 - 56 - MOOD_ITEM_WIDTH) / 2
+  );
 
   // ── Mood wheel (reused in bottom section and popup) ────────────────────────
   const renderMoodWheel = (
@@ -614,7 +663,9 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
             <View style={{ opacity: iconOpacity }}>
               <MoodIcon value={mood.value} size={iconSize} active={isCenter} />
             </View>
-            <Text style={[styles.moodLabel, isCenter && styles.moodLabelActive]}>
+            <Text
+              style={[styles.moodLabel, isCenter && styles.moodLabelActive]}
+            >
               {isCenter ? mood.label : ''}
             </Text>
           </Pressable>
@@ -625,11 +676,15 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
 
   // ── Month calendar grid ─────────────────────────────────────────────────────
   const HEB_DAYS = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'];
-  const monthName = today.toLocaleDateString('he-IL', { month: 'long', year: 'numeric' });
+  const monthName = today.toLocaleDateString('he-IL', {
+    month: 'long',
+    year: 'numeric',
+  });
   const firstDayOfMonth = new Date(year, month, 1).getDay();
   const calGridDays: (Date | null)[] = [];
   for (let i = 0; i < firstDayOfMonth; i++) calGridDays.push(null);
-  for (let d = 1; d <= daysInMonth; d++) calGridDays.push(new Date(year, month, d));
+  for (let d = 1; d <= daysInMonth; d++)
+    calGridDays.push(new Date(year, month, d));
   while (calGridDays.length % 7 !== 0) calGridDays.push(null);
 
   const renderMonthCalendar = () => (
@@ -688,7 +743,10 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
   const scrollToToday = () => {
     const todayIndex = today.getDate() - 1;
     const PILL_WIDTH = 50;
-    const offset = Math.max(0, todayIndex * PILL_WIDTH - (screenWidth - 32 - 38) / 2 + 21);
+    const offset = Math.max(
+      0,
+      todayIndex * PILL_WIDTH - (screenWidth - 32 - 38) / 2 + 21
+    );
     dateScrollRef.current?.scrollTo({ x: offset, animated: true });
   };
 
@@ -698,7 +756,6 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#f6f7f8' }}>
-
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <View style={styles.header}>
         {/* Bell — left */}
@@ -706,7 +763,9 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
           onPress={handleBellPress}
           accessible={true}
           accessibilityRole="button"
-          accessibilityLabel={unseenCount > 0 ? `התראות, ${unseenCount} חדשות` : 'התראות'}
+          accessibilityLabel={
+            unseenCount > 0 ? `התראות, ${unseenCount} חדשות` : 'התראות'
+          }
           style={{ position: 'relative' }}
         >
           <MaterialIcons
@@ -743,7 +802,6 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
-
         {/* ── Daily Insight card ─────────────────────────────────────────────── */}
         {showInsightCard && (
           <View style={styles.insightCard}>
@@ -793,7 +851,9 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
             }
           >
             <MaterialIcons
-              name={calendarMode === 'carousel' ? 'calendar-month' : 'view-week'}
+              name={
+                calendarMode === 'carousel' ? 'calendar-month' : 'view-week'
+              }
               size={20}
               color="#36a9e2"
             />
@@ -813,7 +873,9 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
               {calendarDays.map((day, i) => {
                 const isSelected = isSameDay(day, selectedDate);
                 const isToday = isSameDay(day, today);
-                const shortName = day.toLocaleDateString('he-IL', { weekday: 'short' });
+                const shortName = day.toLocaleDateString('he-IL', {
+                  weekday: 'short',
+                });
                 return (
                   <Pressable
                     key={i}
@@ -825,12 +887,18 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                     ]}
                   >
                     <Text
-                      style={[styles.dayPillWeekday, isSelected && styles.dayPillTextSelected]}
+                      style={[
+                        styles.dayPillWeekday,
+                        isSelected && styles.dayPillTextSelected,
+                      ]}
                     >
                       {shortName}
                     </Text>
                     <Text
-                      style={[styles.dayPillNumber, isSelected && styles.dayPillTextSelected]}
+                      style={[
+                        styles.dayPillNumber,
+                        isSelected && styles.dayPillTextSelected,
+                      ]}
                     >
                       {day.getDate()}
                     </Text>
@@ -875,16 +943,20 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
               </Text>
             </Pressable>
             <Pressable
-              onPress={() => { /* TODO: פתח flow יצירת אירוע */ }}
+              onPress={() => {
+                /* TODO: פתח flow יצירת אירוע */
+              }}
               accessible={true}
               accessibilityRole="button"
               accessibilityLabel="הוספת אירוע ראשון"
             >
-              <Text style={styles.emptyStateSecondaryBtnText}>הוספת אירוע ראשון</Text>
+              <Text style={styles.emptyStateSecondaryBtnText}>
+                הוספת אירוע ראשון
+              </Text>
             </Pressable>
             <Text style={styles.emptyStateHint}>
-              אפשר גם ללחוץ על הפלוס במרכז המסך כדי ליצור אירוע, משימה, יום הולדת או
-              קבוצה.
+              אפשר גם ללחוץ על הפלוס במרכז המסך כדי ליצור אירוע, משימה, יום
+              הולדת או קבוצה.
             </Text>
           </View>
         )}
@@ -909,7 +981,15 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                     <Text style={styles.eventTime}>{nextEvent.time}</Text>
                   </View>
                   {nextEvent.endTime && (
-                    <Text style={{ color: '#94a3b8', fontSize: 13, textAlign: 'left', marginTop: -4, marginBottom: 6 }}>
+                    <Text
+                      style={{
+                        color: '#94a3b8',
+                        fontSize: 13,
+                        textAlign: 'left',
+                        marginTop: -4,
+                        marginBottom: 6,
+                      }}
+                    >
                       עד {nextEvent.endTime}
                     </Text>
                   )}
@@ -918,7 +998,11 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                   {/* Address row: icon+address group on right, nav button on left */}
                   <View style={styles.eventAddressRow}>
                     <View style={styles.eventAddressGroup}>
-                      <MaterialIcons name="location-on" size={16} color="#94a3b8" />
+                      <MaterialIcons
+                        name="location-on"
+                        size={16}
+                        color="#94a3b8"
+                      />
                       <Text style={styles.eventAddress} numberOfLines={1}>
                         {nextEvent.location}
                       </Text>
@@ -958,7 +1042,11 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
             <Text style={styles.emptyDaySubtitle}>
               אין לך אירועים או משימות בתאריך הזה.
             </Text>
-            <Pressable accessible={true} accessibilityRole="button" accessibilityLabel="הוספת אירוע">
+            <Pressable
+              accessible={true}
+              accessibilityRole="button"
+              accessibilityLabel="הוספת אירוע"
+            >
               <Text style={styles.emptyDayLink}>+ הוספת אירוע</Text>
             </Pressable>
           </View>
@@ -976,29 +1064,47 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
           </View>
 
           {shouldShowBirthdaysEmptyState ? (
-            <View style={{
-              marginHorizontal: 24,
-              backgroundColor: '#fff',
-              borderRadius: 16,
-              padding: 20,
-              alignItems: 'center',
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 1 },
-              shadowOpacity: 0.04,
-              shadowRadius: 4,
-              elevation: 1,
-            }}>
-              <MaterialIcons name="cake" size={28} color="#d1d5db" style={{ marginBottom: 8 }} />
-              <Text style={{ fontSize: 14, color: '#6b7280', textAlign: 'center', marginBottom: 12 }}>
+            <View
+              style={{
+                marginHorizontal: 24,
+                backgroundColor: '#fff',
+                borderRadius: 16,
+                padding: 20,
+                alignItems: 'center',
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 1 },
+                shadowOpacity: 0.04,
+                shadowRadius: 4,
+                elevation: 1,
+              }}
+            >
+              <MaterialIcons
+                name="cake"
+                size={28}
+                color="#d1d5db"
+                style={{ marginBottom: 8 }}
+              />
+              <Text
+                style={{
+                  fontSize: 14,
+                  color: '#6b7280',
+                  textAlign: 'center',
+                  marginBottom: 12,
+                }}
+              >
                 עוד לא הוספת ימי הולדת.
               </Text>
               <Pressable
-                onPress={() => { /* TODO: פתח flow הוספת יום הולדת */ }}
+                onPress={() => {
+                  /* TODO: פתח flow הוספת יום הולדת */
+                }}
                 accessible={true}
                 accessibilityRole="button"
                 accessibilityLabel="הוספת יום הולדת ראשון"
               >
-                <Text style={{ color: '#36a9e2', fontSize: 14, fontWeight: '700' }}>
+                <Text
+                  style={{ color: '#36a9e2', fontSize: 14, fontWeight: '700' }}
+                >
                   + הוספת יום הולדת ראשון
                 </Text>
               </Pressable>
@@ -1019,11 +1125,16 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                     <View
                       style={[
                         styles.birthdayAvatar,
-                        { backgroundColor: AVATAR_COLORS[idx % AVATAR_COLORS.length] },
+                        {
+                          backgroundColor:
+                            AVATAR_COLORS[idx % AVATAR_COLORS.length],
+                        },
                       ]}
                     />
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.birthdayCountdown}>{getCountdownLabel(b)}:</Text>
+                      <Text style={styles.birthdayCountdown}>
+                        {getCountdownLabel(b)}:
+                      </Text>
                       <Text style={styles.birthdayName}>{b.name}</Text>
                     </View>
                   </Pressable>
@@ -1068,13 +1179,22 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                     accessibilityRole="button"
                     accessibilityLabel={ev.title}
                   >
-                    <View style={[styles.allDayAccent, { backgroundColor: ev.iconColor }]} />
+                    <View
+                      style={[
+                        styles.allDayAccent,
+                        { backgroundColor: ev.iconColor },
+                      ]}
+                    />
                     <View style={{ flex: 1 }}>
                       <Text style={styles.allDayTitle}>{ev.title}</Text>
                       {/* TODO: לחבר לנתוני קבוצה אמיתיים מ-Convex כשהסכמה מוכנה */}
                       {ev.groupName ? (
                         <View style={styles.groupRow}>
-                          <MaterialIcons name="group" size={12} color="#64748b" />
+                          <MaterialIcons
+                            name="group"
+                            size={12}
+                            color="#64748b"
+                          />
                           <Text style={styles.groupText}>{ev.groupName}</Text>
                         </View>
                       ) : null}
@@ -1099,16 +1219,33 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                         accessibilityRole="button"
                         accessibilityLabel="מחק פריט"
                       >
-                        <MaterialIcons name="delete-outline" size={26} color="white" />
+                        <MaterialIcons
+                          name="delete-outline"
+                          size={26}
+                          color="white"
+                        />
                       </Pressable>
                     )}
                   >
-                    <View style={{ flexDirection: 'row-reverse', gap: 16, marginBottom: 4 }}>
+                    <View
+                      style={{
+                        flexDirection: 'row-reverse',
+                        gap: 16,
+                        marginBottom: 4,
+                      }}
+                    >
                       {/* Time column */}
                       <View style={styles.timeColumn}>
                         <Text style={styles.timeText}>{item.time}</Text>
                         {item.endTime && (
-                          <Text style={{ fontSize: 10, color: '#cbd5e1', textAlign: 'center', marginTop: 1 }}>
+                          <Text
+                            style={{
+                              fontSize: 10,
+                              color: '#cbd5e1',
+                              textAlign: 'center',
+                              marginTop: 1,
+                            }}
+                          >
                             {item.endTime}
                           </Text>
                         )}
@@ -1160,26 +1297,60 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                                     <Pressable
                                       onPress={(e) => {
                                         e.stopPropagation?.();
-                                        setOpenRsvpForId(prev => prev === item.id ? null : item.id);
+                                        setOpenRsvpForId((prev) =>
+                                          prev === item.id ? null : item.id
+                                        );
                                       }}
-                                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                      hitSlop={{
+                                        top: 8,
+                                        bottom: 8,
+                                        left: 8,
+                                        right: 8,
+                                      }}
                                       accessible={true}
                                       accessibilityRole="button"
                                       accessibilityLabel="סטטוס אישור"
                                     >
-                                      {(!item.rsvpStatus || item.rsvpStatus === 'none') && (
+                                      {(!item.rsvpStatus ||
+                                        item.rsvpStatus === 'none') && (
                                         <View style={styles.pendingBadge}>
-                                          <Text style={styles.pendingBadgeText}>ממתין לאישור</Text>
+                                          <Text style={styles.pendingBadgeText}>
+                                            ממתין לאישור
+                                          </Text>
                                         </View>
                                       )}
                                       {item.rsvpStatus === 'yes' && (
-                                        <View style={[styles.pendingBadge, { backgroundColor: '#dcfce7' }]}>
-                                          <Text style={[styles.pendingBadgeText, { color: '#166534' }]}>✓ מאושר</Text>
+                                        <View
+                                          style={[
+                                            styles.pendingBadge,
+                                            { backgroundColor: '#dcfce7' },
+                                          ]}
+                                        >
+                                          <Text
+                                            style={[
+                                              styles.pendingBadgeText,
+                                              { color: '#166534' },
+                                            ]}
+                                          >
+                                            ✓ מאושר
+                                          </Text>
                                         </View>
                                       )}
                                       {item.rsvpStatus === 'maybe' && (
-                                        <View style={[styles.pendingBadge, { backgroundColor: '#fef9c3' }]}>
-                                          <Text style={[styles.pendingBadgeText, { color: '#854d0e' }]}>אולי</Text>
+                                        <View
+                                          style={[
+                                            styles.pendingBadge,
+                                            { backgroundColor: '#fef9c3' },
+                                          ]}
+                                        >
+                                          <Text
+                                            style={[
+                                              styles.pendingBadgeText,
+                                              { color: '#854d0e' },
+                                            ]}
+                                          >
+                                            אולי
+                                          </Text>
                                         </View>
                                       )}
                                     </Pressable>
@@ -1194,42 +1365,82 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
 
                                 {/* RSVP inline chips */}
                                 {openRsvpForId === item.id && (
-                                  <View style={{ flexDirection: 'row-reverse', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-                                    {([
-                                      { key: 'yes',   label: 'כן',   activeBg: '#e0f2fe', activeColor: '#0369a1' },
-                                      { key: 'maybe', label: 'אולי', activeBg: '#fef9c3', activeColor: '#854d0e' },
-                                      { key: 'no',    label: 'לא',   activeBg: '#fee2e2', activeColor: '#991b1b' },
-                                    ] as const).map(opt => {
-                                      const isSelected = item.rsvpStatus === opt.key;
+                                  <View
+                                    style={{
+                                      flexDirection: 'row-reverse',
+                                      gap: 8,
+                                      marginTop: 10,
+                                      flexWrap: 'wrap',
+                                    }}
+                                  >
+                                    {(
+                                      [
+                                        {
+                                          key: 'yes',
+                                          label: 'כן',
+                                          activeBg: '#e0f2fe',
+                                          activeColor: '#0369a1',
+                                        },
+                                        {
+                                          key: 'maybe',
+                                          label: 'אולי',
+                                          activeBg: '#fef9c3',
+                                          activeColor: '#854d0e',
+                                        },
+                                        {
+                                          key: 'no',
+                                          label: 'לא',
+                                          activeBg: '#fee2e2',
+                                          activeColor: '#991b1b',
+                                        },
+                                      ] as const
+                                    ).map((opt) => {
+                                      const isSelected =
+                                        item.rsvpStatus === opt.key;
                                       return (
                                         <Pressable
                                           key={opt.key}
                                           onPress={() => {
                                             // TODO: לסנכרן עם Convex בעתיד
-                                            setItems(prev =>
-                                              prev.map(i =>
-                                                i.id === item.id ? { ...i, rsvpStatus: opt.key } : i
+                                            setItems((prev) =>
+                                              prev.map((i) =>
+                                                i.id === item.id
+                                                  ? {
+                                                      ...i,
+                                                      rsvpStatus: opt.key,
+                                                    }
+                                                  : i
                                               )
                                             );
                                             setOpenRsvpForId(null);
                                           }}
                                           style={{
-                                            backgroundColor: isSelected ? opt.activeBg : '#fff',
+                                            backgroundColor: isSelected
+                                              ? opt.activeBg
+                                              : '#fff',
                                             borderRadius: 20,
                                             paddingHorizontal: 16,
                                             paddingVertical: 6,
                                             borderWidth: 1,
-                                            borderColor: isSelected ? 'transparent' : '#e5e7eb',
+                                            borderColor: isSelected
+                                              ? 'transparent'
+                                              : '#e5e7eb',
                                           }}
                                           accessible={true}
                                           accessibilityRole="button"
                                           accessibilityLabel={opt.label}
                                         >
-                                          <Text style={{
-                                            color: isSelected ? opt.activeColor : '#6b7280',
-                                            fontWeight: isSelected ? '700' : '500',
-                                            fontSize: 14,
-                                          }}>
+                                          <Text
+                                            style={{
+                                              color: isSelected
+                                                ? opt.activeColor
+                                                : '#6b7280',
+                                              fontWeight: isSelected
+                                                ? '700'
+                                                : '500',
+                                              fontSize: 14,
+                                            }}
+                                          >
                                             {opt.label}
                                           </Text>
                                         </Pressable>
@@ -1238,23 +1449,35 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                                   </View>
                                 )}
 
-                                <Text style={styles.itemLocation}>{item.location}</Text>
+                                <Text style={styles.itemLocation}>
+                                  {item.location}
+                                </Text>
                                 {/* TODO: לחבר לנתוני קבוצה אמיתיים מ-Convex כשהסכמה מוכנה */}
                                 {item.groupName ? (
                                   <View style={styles.groupRow}>
-                                    <MaterialIcons name="group" size={12} color="#64748b" />
-                                    <Text style={styles.groupText}>{item.groupName}</Text>
+                                    <MaterialIcons
+                                      name="group"
+                                      size={12}
+                                      color="#64748b"
+                                    />
+                                    <Text style={styles.groupText}>
+                                      {item.groupName}
+                                    </Text>
                                   </View>
                                 ) : null}
 
                                 {/* Navigate / Join button */}
-                                {(item.location || item.remoteUrl) ? (
+                                {item.location || item.remoteUrl ? (
                                   <Pressable
                                     onPress={(e) => {
                                       e.stopPropagation?.();
                                       if (item.remoteUrl) {
-                                        Linking.openURL(item.remoteUrl).catch(() =>
-                                          Alert.alert('שגיאה', 'לא ניתן לפתוח את הקישור.')
+                                        Linking.openURL(item.remoteUrl).catch(
+                                          () =>
+                                            Alert.alert(
+                                              'שגיאה',
+                                              'לא ניתן לפתוח את הקישור.'
+                                            )
                                         );
                                       } else {
                                         handleOpenNavPicker(item.location);
@@ -1273,14 +1496,24 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                                     }}
                                     accessible={true}
                                     accessibilityRole="button"
-                                    accessibilityLabel={item.remoteUrl ? 'הצטרף לפגישה' : 'נווט'}
+                                    accessibilityLabel={
+                                      item.remoteUrl ? 'הצטרף לפגישה' : 'נווט'
+                                    }
                                   >
                                     <MaterialIcons
-                                      name={item.remoteUrl ? 'videocam' : 'near-me'}
+                                      name={
+                                        item.remoteUrl ? 'videocam' : 'near-me'
+                                      }
                                       size={13}
                                       color="#36a9e2"
                                     />
-                                    <Text style={{ color: '#36a9e2', fontSize: 12, fontWeight: '700' }}>
+                                    <Text
+                                      style={{
+                                        color: '#36a9e2',
+                                        fontSize: 12,
+                                        fontWeight: '700',
+                                      }}
+                                    >
                                       {item.remoteUrl ? 'הצטרף' : 'נווט'}
                                     </Text>
                                   </Pressable>
@@ -1309,7 +1542,13 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                   accessibilityRole="button"
                   accessibilityLabel={`הצג הכל, ${undatedTasks.length} משימות`}
                 >
-                  <Text style={{ color: '#36a9e2', fontSize: 13, fontWeight: '700' }}>
+                  <Text
+                    style={{
+                      color: '#36a9e2',
+                      fontSize: 13,
+                      fontWeight: '700',
+                    }}
+                  >
                     הצג הכל ({undatedTasks.length})
                   </Text>
                 </Pressable>
@@ -1320,7 +1559,9 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                 <Pressable
                   key={task.id}
                   style={styles.undatedRow}
-                  onPress={() => console.log('TODO: navigate to task edit', task.id)}
+                  onPress={() =>
+                    console.log('TODO: navigate to task edit', task.id)
+                  }
                   accessible={true}
                   accessibilityRole="button"
                   accessibilityLabel={task.title}
@@ -1330,7 +1571,10 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                     onToggle={() => toggleUndatedTask(task.id)}
                   />
                   <Text
-                    style={[styles.undatedTitle, task.completed && styles.completedText]}
+                    style={[
+                      styles.undatedTitle,
+                      task.completed && styles.completedText,
+                    ]}
                     numberOfLines={1}
                   >
                     {task.title}
@@ -1400,7 +1644,10 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                           onToggle={() => toggleUndatedTask(task.id)}
                         />
                         <Text
-                          style={[styles.undatedTitle, task.completed && styles.completedText]}
+                          style={[
+                            styles.undatedTitle,
+                            task.completed && styles.completedText,
+                          ]}
                           numberOfLines={2}
                         >
                           {task.title}
@@ -1411,12 +1658,25 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                 </ScrollView>
                 <Pressable
                   onPress={() => setShowAllUndated(false)}
-                  style={{ alignSelf: 'center', marginTop: 16, paddingVertical: 4, paddingHorizontal: 16 }}
+                  style={{
+                    alignSelf: 'center',
+                    marginTop: 16,
+                    paddingVertical: 4,
+                    paddingHorizontal: 16,
+                  }}
                   accessible={true}
                   accessibilityRole="button"
                   accessibilityLabel="סגירה"
                 >
-                  <Text style={{ color: '#94a3b8', fontSize: 15, fontWeight: '600' }}>סגירה</Text>
+                  <Text
+                    style={{
+                      color: '#94a3b8',
+                      fontSize: 15,
+                      fontWeight: '600',
+                    }}
+                  >
+                    סגירה
+                  </Text>
                 </Pressable>
               </View>
             </Modal>
@@ -1425,7 +1685,9 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
 
         {/* ── Mood section — shown only when user has events/tasks ──────────── */}
         {canShowMoodFeatures && (
-          <View style={{ paddingHorizontal: 24, marginTop: 8, marginBottom: 32 }}>
+          <View
+            style={{ paddingHorizontal: 24, marginTop: 8, marginBottom: 32 }}
+          >
             <Text style={styles.moodTitle}>איך הרגיש היום שלך?</Text>
 
             {selectedMood !== null && selectedMoodData ? (
@@ -1438,17 +1700,29 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
                 accessibilityRole="button"
                 accessibilityLabel={`הרגש שנבחר: ${selectedMoodData.label}`}
               >
-                <MoodIcon value={selectedMoodData.value} size={40} active={true} />
+                <MoodIcon
+                  value={selectedMoodData.value}
+                  size={40}
+                  active={true}
+                />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.moodCompactLabel}>{selectedMoodData.label}</Text>
-                  <Text style={styles.moodCompactPhrase}>{selectedMoodData.shortText}</Text>
+                  <Text style={styles.moodCompactLabel}>
+                    {selectedMoodData.label}
+                  </Text>
+                  <Text style={styles.moodCompactPhrase}>
+                    {selectedMoodData.shortText}
+                  </Text>
                 </View>
                 {lastMoodDate === todayISO && (
                   <MaterialIcons name="edit" size={16} color="#94a3b8" />
                 )}
               </Pressable>
             ) : (
-              renderMoodWheel(moodScrollRef, moodWheelPad, handleBottomScrollEnd)
+              renderMoodWheel(
+                moodScrollRef,
+                moodWheelPad,
+                handleBottomScrollEnd
+              )
             )}
           </View>
         )}
@@ -1540,113 +1814,199 @@ const [devClearBirthdays, setDevClearBirthdays] = useState(false);
           onPress={() => setNavPickerVisible(false)}
         />
 
-        <View style={{
-          backgroundColor: '#fff',
-          borderTopLeftRadius: 28,
-          borderTopRightRadius: 28,
-          paddingHorizontal: 24,
-          paddingTop: 12,
-          paddingBottom: 36,
-        }}>
+        <View
+          style={{
+            backgroundColor: '#fff',
+            borderTopLeftRadius: 28,
+            borderTopRightRadius: 28,
+            paddingHorizontal: 24,
+            paddingTop: 12,
+            paddingBottom: 36,
+          }}
+        >
           {/* Handle */}
-          <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: '#e5e7eb', alignSelf: 'center', marginBottom: 20 }} />
+          <View
+            style={{
+              width: 40,
+              height: 4,
+              borderRadius: 2,
+              backgroundColor: '#e5e7eb',
+              alignSelf: 'center',
+              marginBottom: 20,
+            }}
+          />
 
-          <Text style={{ fontSize: 16, fontWeight: '700', color: '#111517', textAlign: 'right', marginBottom: 16 }}>
+          <Text
+            style={{
+              fontSize: 16,
+              fontWeight: '700',
+              color: '#111517',
+              textAlign: 'right',
+              marginBottom: 16,
+            }}
+          >
             פתח עם...
           </Text>
 
           {/* Last-used app — shown first with a label */}
-          {lastNavApp ? (() => {
-            const labels: Record<'waze' | 'google' | 'apple', string> = {
-              waze: 'Waze',
-              google: 'Google Maps',
-              apple: 'Apple Maps',
-            };
-            return (
-              <View style={{ marginBottom: 8 }}>
-                <Text style={{ fontSize: 11, color: '#94a3b8', textAlign: 'right', marginBottom: 6 }}>
-                  השתמשת לאחרונה
-                </Text>
-                <Pressable
-                  onPress={() => handleNavSelect(lastNavApp)}
-                  style={{
-                    flexDirection: 'row-reverse', alignItems: 'center', gap: 12,
-                    backgroundColor: 'rgba(54,169,226,0.08)', borderRadius: 16,
-                    paddingHorizontal: 16, paddingVertical: 14,
-                    borderWidth: 1, borderColor: 'rgba(54,169,226,0.2)',
-                    marginBottom: 12,
-                  }}
-                  accessible={true}
-                  accessibilityRole="button"
-                  accessibilityLabel={`פתח עם ${labels[lastNavApp]}`}
-                >
-                  <Text style={{ fontSize: 17, fontWeight: '700', color: '#36a9e2', flex: 1, textAlign: 'right' }}>
-                    {labels[lastNavApp]}
-                  </Text>
-                  <MaterialIcons name="near-me" size={22} color="#36a9e2" />
-                </Pressable>
-                <View style={{ height: 1, backgroundColor: '#f1f5f9', marginBottom: 12 }} />
-              </View>
-            );
-          })() : null}
+          {lastNavApp
+            ? (() => {
+                const labels: Record<'waze' | 'google' | 'apple', string> = {
+                  waze: 'Waze',
+                  google: 'Google Maps',
+                  apple: 'Apple Maps',
+                };
+                return (
+                  <View style={{ marginBottom: 8 }}>
+                    <Text
+                      style={{
+                        fontSize: 11,
+                        color: '#94a3b8',
+                        textAlign: 'right',
+                        marginBottom: 6,
+                      }}
+                    >
+                      השתמשת לאחרונה
+                    </Text>
+                    <Pressable
+                      onPress={() => handleNavSelect(lastNavApp)}
+                      style={{
+                        flexDirection: 'row-reverse',
+                        alignItems: 'center',
+                        gap: 12,
+                        backgroundColor: 'rgba(54,169,226,0.08)',
+                        borderRadius: 16,
+                        paddingHorizontal: 16,
+                        paddingVertical: 14,
+                        borderWidth: 1,
+                        borderColor: 'rgba(54,169,226,0.2)',
+                        marginBottom: 12,
+                      }}
+                      accessible={true}
+                      accessibilityRole="button"
+                      accessibilityLabel={`פתח עם ${labels[lastNavApp]}`}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 17,
+                          fontWeight: '700',
+                          color: '#36a9e2',
+                          flex: 1,
+                          textAlign: 'right',
+                        }}
+                      >
+                        {labels[lastNavApp]}
+                      </Text>
+                      <MaterialIcons name="near-me" size={22} color="#36a9e2" />
+                    </Pressable>
+                    <View
+                      style={{
+                        height: 1,
+                        backgroundColor: '#f1f5f9',
+                        marginBottom: 12,
+                      }}
+                    />
+                  </View>
+                );
+              })()
+            : null}
 
           {/* All options */}
-          {([
-            { key: 'waze',   label: 'Waze',       icon: 'near-me',     show: true },
-            { key: 'google', label: 'Google Maps', icon: 'map',         show: true },
-            { key: 'apple',  label: 'Apple Maps',  icon: 'location-on', show: Platform.OS === 'ios' },
-          ] as const).filter(o => o.show).map(opt => (
-            <Pressable
-              key={opt.key}
-              onPress={() => handleNavSelect(opt.key)}
-              style={{
-                flexDirection: 'row-reverse', alignItems: 'center', gap: 12,
-                paddingHorizontal: 16, paddingVertical: 14,
-                borderRadius: 16, marginBottom: 8,
-                backgroundColor: '#f8fafc',
-              }}
-              accessible={true}
-              accessibilityRole="button"
-              accessibilityLabel={`פתח עם ${opt.label}`}
-            >
-              <MaterialIcons name={opt.icon} size={22} color="#64748b" />
-              <Text style={{ fontSize: 16, fontWeight: '600', color: '#111517', flex: 1, textAlign: 'right' }}>
-                {opt.label}
-              </Text>
-            </Pressable>
-          ))}
+          {(
+            [
+              { key: 'waze', label: 'Waze', icon: 'near-me', show: true },
+              { key: 'google', label: 'Google Maps', icon: 'map', show: true },
+              {
+                key: 'apple',
+                label: 'Apple Maps',
+                icon: 'location-on',
+                show: Platform.OS === 'ios',
+              },
+            ] as const
+          )
+            .filter((o) => o.show)
+            .map((opt) => (
+              <Pressable
+                key={opt.key}
+                onPress={() => handleNavSelect(opt.key)}
+                style={{
+                  flexDirection: 'row-reverse',
+                  alignItems: 'center',
+                  gap: 12,
+                  paddingHorizontal: 16,
+                  paddingVertical: 14,
+                  borderRadius: 16,
+                  marginBottom: 8,
+                  backgroundColor: '#f8fafc',
+                }}
+                accessible={true}
+                accessibilityRole="button"
+                accessibilityLabel={`פתח עם ${opt.label}`}
+              >
+                <MaterialIcons name={opt.icon} size={22} color="#64748b" />
+                <Text
+                  style={{
+                    fontSize: 16,
+                    fontWeight: '600',
+                    color: '#111517',
+                    flex: 1,
+                    textAlign: 'right',
+                  }}
+                >
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
 
           {/* Cancel */}
           <Pressable
             onPress={() => setNavPickerVisible(false)}
-            style={{ alignSelf: 'center', marginTop: 8, paddingVertical: 8, paddingHorizontal: 24 }}
+            style={{
+              alignSelf: 'center',
+              marginTop: 8,
+              paddingVertical: 8,
+              paddingHorizontal: 24,
+            }}
             accessible={true}
             accessibilityRole="button"
             accessibilityLabel="ביטול"
           >
-            <Text style={{ color: '#94a3b8', fontSize: 15, fontWeight: '600' }}>ביטול</Text>
+            <Text style={{ color: '#94a3b8', fontSize: 15, fontWeight: '600' }}>
+              ביטול
+            </Text>
           </Pressable>
         </View>
       </Modal>
       {__DEV__ && (
-  <Pressable
-    onPress={() => {
-      if (devClearBirthdays) {
-        // TODO: כשאירועים יחוברו ל-Convex – לשחזר נתוני mock כאן
-        setItems([/* הנתונים המקוריים שלך */]);
-        setDevClearBirthdays(false);
-      } else {
-        // undatedTasks מגיע מ-Convex – לא ניתן לנקות locally
-        // TODO: להוסיף dev toggle לנקות נתוני Convex
-        setItems([]);
-        setDevClearBirthdays(true);
-      }
-    }}
-    style={{ position: 'absolute', top: 60, left: 10, backgroundColor: '#ff000033', padding: 6, borderRadius: 8 }}
-  >
-    <Text style={{ fontSize: 10 }}>{devClearBirthdays ? '↩️ שחזר' : '🧪 ריק'}</Text>
-  </Pressable>
-)}
+        <Pressable
+          onPress={() => {
+            if (devClearBirthdays) {
+              // TODO: כשאירועים יחוברו ל-Convex – לשחזר נתוני mock כאן
+              setItems([
+                /* הנתונים המקוריים שלך */
+              ]);
+              setDevClearBirthdays(false);
+            } else {
+              // undatedTasks מגיע מ-Convex – לא ניתן לנקות locally
+              // TODO: להוסיף dev toggle לנקות נתוני Convex
+              setItems([]);
+              setDevClearBirthdays(true);
+            }
+          }}
+          style={{
+            position: 'absolute',
+            top: 60,
+            left: 10,
+            backgroundColor: '#ff000033',
+            padding: 6,
+            borderRadius: 8,
+          }}
+        >
+          <Text style={{ fontSize: 10 }}>
+            {devClearBirthdays ? '↩️ שחזר' : '🧪 ריק'}
+          </Text>
+        </Pressable>
+      )}
     </SafeAreaView>
   );
 }
@@ -1768,7 +2128,12 @@ const styles = StyleSheet.create({
   dayPillToday: { borderWidth: 2, borderColor: '#36a9e2' },
   dayPillSelected: { backgroundColor: '#36a9e2', borderWidth: 0 },
   dayPillWeekday: { fontSize: 10, color: '#94a3b8' },
-  dayPillNumber: { fontSize: 15, fontWeight: '700', color: '#111517', marginTop: 2 },
+  dayPillNumber: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111517',
+    marginTop: 2,
+  },
   dayPillTextSelected: { color: '#fff', fontWeight: '900' },
   subtitleCount: {
     color: '#94a3b8',
@@ -2135,7 +2500,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#fff',
   },
-  itemLocation: { color: '#94a3b8', fontSize: 13, textAlign: 'right', marginTop: 2 },
+  itemLocation: {
+    color: '#94a3b8',
+    fontSize: 13,
+    textAlign: 'right',
+    marginTop: 2,
+  },
 
   // ── Group name label ─────────────────────────────────────────────────────────
   groupRow: {
@@ -2306,7 +2676,12 @@ const styles = StyleSheet.create({
     gap: 12,
     width: '100%',
   },
-  toastText: { color: '#374151', fontSize: 14, lineHeight: 20, textAlign: 'right' },
+  toastText: {
+    color: '#374151',
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'right',
+  },
 
   // ── Bell badge ──────────────────────────────────────────────────────────────
   bellBadge: {

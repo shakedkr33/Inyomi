@@ -1,8 +1,6 @@
-import { api } from '@/convex/_generated/api';
-import type { Id } from '@/convex/_generated/dataModel';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import { useMutation, useQuery } from 'convex/react';
+import { useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import {
   Alert,
@@ -17,12 +15,22 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PRIMARY = '#36a9e2';
 
-const FILTER_CHIPS = ['הכל', 'גן', 'בית ספר', 'חוג', 'משפחה', 'עבודה', 'אישי'] as const;
+const FILTER_CHIPS = [
+  'הכל',
+  'גן',
+  'בית ספר',
+  'חוג',
+  'משפחה',
+  'עבודה',
+  'אישי',
+] as const;
 type FilterChip = (typeof FILTER_CHIPS)[number];
 
 type UserRole = 'owner' | 'admin' | 'member';
@@ -41,7 +49,10 @@ interface CommunityItem {
   pinned: boolean;
 }
 
-interface MenuPosition { x: number; y: number }
+interface MenuPosition {
+  x: number;
+  y: number;
+}
 
 // ─── Skeleton Card ────────────────────────────────────────────────────────────
 
@@ -51,7 +62,12 @@ function SkeletonCard() {
       <View style={styles.cardInner}>
         <View style={[styles.skeletonLine, { width: '65%' }]} />
         <View style={[styles.skeletonLine, { width: '35%', marginTop: 8 }]} />
-        <View style={[styles.skeletonLine, { width: '50%', marginTop: 6, height: 10 }]} />
+        <View
+          style={[
+            styles.skeletonLine,
+            { width: '50%', marginTop: 6, height: 10 },
+          ]}
+        />
       </View>
       <View style={[styles.colorBar, { backgroundColor: '#e5e7eb' }]} />
     </View>
@@ -100,7 +116,9 @@ function CommunityCard({ item, onPinToggle, onMenuPress, onPress }: CardProps) {
                 name={pinned ? 'pin' : 'pin-outline'}
                 size={pinned ? 18 : 16}
                 color={pinned ? PRIMARY : '#bbb'}
-                style={pinned ? { transform: [{ rotate: '-15deg' }] } : undefined}
+                style={
+                  pinned ? { transform: [{ rotate: '-15deg' }] } : undefined
+                }
               />
             </TouchableOpacity>
             <View ref={menuRef}>
@@ -136,7 +154,12 @@ function CommunityCard({ item, onPinToggle, onMenuPress, onPress }: CardProps) {
       </View>
 
       {/* פס צבע בצד ימין */}
-      <View style={[styles.colorBar, { backgroundColor: community.color ?? PRIMARY }]} />
+      <View
+        style={[
+          styles.colorBar,
+          { backgroundColor: community.color ?? PRIMARY },
+        ]}
+      />
     </Pressable>
   );
 }
@@ -184,7 +207,9 @@ function PopoverMenu({ visible, position, onClose, items }: PopoverMenuProps) {
             accessibilityRole="button"
             accessibilityLabel={m.label}
           >
-            <Text style={[styles.popoverLabel, m.danger && styles.popoverDanger]}>
+            <Text
+              style={[styles.popoverLabel, m.danger && styles.popoverDanger]}
+            >
               {m.label}
             </Text>
             <Ionicons
@@ -283,13 +308,28 @@ export default function CommunitiesScreen() {
           iconName: pinned ? 'pin' : 'pin-outline',
           onPress: () => handleTogglePin(community._id),
         },
+        ...(role === 'owner' || role === 'admin'
+          ? [
+              {
+                label: 'ערוך קהילה',
+                iconName: 'create-outline' as const,
+                onPress: () => {
+                  router.push({
+                    pathname: '/(authenticated)/community-edit/[id]',
+                    params: { id: community._id, returnTo: 'list' },
+                  });
+                },
+              },
+            ]
+          : []),
         {
           label: 'ניהול חברים',
           iconName: 'people-outline',
           onPress: () => {
-            // TODO: create CommunityMembersScreen
             router.push(
-              `/(authenticated)/community-members/${community._id}` as Parameters<typeof router.push>[0]
+              `/(authenticated)/community-members/${community._id}` as Parameters<
+                typeof router.push
+              >[0]
             );
           },
         },
@@ -332,7 +372,9 @@ export default function CommunitiesScreen() {
           onPress: () => {
             // TODO: add communityId filter to calendar screen
             router.push(
-              `/(authenticated)/calendar?communityId=${community._id}` as Parameters<typeof router.push>[0]
+              `/(authenticated)/calendar?communityId=${community._id}` as Parameters<
+                typeof router.push
+              >[0]
             );
           },
         },
@@ -441,8 +483,10 @@ export default function CommunitiesScreen() {
               onPinToggle={() => handleTogglePin(item.community._id)}
               onMenuPress={(ref) => handleMenuPress(item, ref)}
               onPress={() => {
-              router.push(
-                  `/(authenticated)/community/${item.community._id}` as Parameters<typeof router.push>[0]
+                router.push(
+                  `/(authenticated)/community/${item.community._id}` as Parameters<
+                    typeof router.push
+                  >[0]
                 );
               }}
             />
@@ -625,7 +669,10 @@ const styles = StyleSheet.create({
   // ── Popover
   popoverBackdrop: {
     position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   popover: {
     position: 'absolute',

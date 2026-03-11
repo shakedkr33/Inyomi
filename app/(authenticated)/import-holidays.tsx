@@ -37,7 +37,10 @@ const fetchHolidays = async (year: number): Promise<HolidayItem[]> => {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   return (data.items ?? []).map(
-    (item: { title: string; hebrew?: string; date: string; category?: string }, idx: number) => ({
+    (
+      item: { title: string; hebrew?: string; date: string; category?: string },
+      idx: number
+    ) => ({
       id: `${year}-${idx}`,
       title: item.title,
       hebrew: item.hebrew ?? item.title,
@@ -54,7 +57,16 @@ function formatDate(dateStr: string): string {
   return `${d}.${m}.${y}`;
 }
 
-const SKELETON_KEYS = ['sk-a', 'sk-b', 'sk-c', 'sk-d', 'sk-e', 'sk-f', 'sk-g', 'sk-h'];
+const SKELETON_KEYS = [
+  'sk-a',
+  'sk-b',
+  'sk-c',
+  'sk-d',
+  'sk-e',
+  'sk-f',
+  'sk-g',
+  'sk-h',
+];
 
 function Skeleton(): React.JSX.Element {
   return (
@@ -122,8 +134,7 @@ export default function ImportHolidaysScreen(): React.JSX.Element {
     });
   }, []);
 
-  const selectAll = (): void =>
-    setSelected(new Set(holidays.map((h) => h.id)));
+  const selectAll = (): void => setSelected(new Set(holidays.map((h) => h.id)));
   const deselectAll = (): void => setSelected(new Set());
 
   const handleImport = async (): Promise<void> => {
@@ -140,11 +151,9 @@ export default function ImportHolidaysScreen(): React.JSX.Element {
     // }))
     await new Promise((r) => setTimeout(r, 1000));
     setImporting(false);
-    Alert.alert(
-      'ייבוא הושלם ✓',
-      `${count} חגים יובאו בהצלחה ליומן שלך`,
-      [{ text: 'מצוין', onPress: () => router.back() }]
-    );
+    Alert.alert('ייבוא הושלם ✓', `${count} חגים יובאו בהצלחה ליומן שלך`, [
+      { text: 'מצוין', onPress: () => router.back() },
+    ]);
   };
 
   // ─── Render row ────────────────────────────────────────────────────────────
@@ -154,10 +163,7 @@ export default function ImportHolidaysScreen(): React.JSX.Element {
       const isSelected = selected.has(item.id);
       return (
         <Pressable
-          style={({ pressed }) => [
-            s.holidayRow,
-            pressed && s.rowPressed,
-          ]}
+          style={({ pressed }) => [s.holidayRow, pressed && s.rowPressed]}
           onPress={() => toggleItem(item.id)}
           accessible={true}
           accessibilityRole="checkbox"
@@ -306,9 +312,7 @@ export default function ImportHolidaysScreen(): React.JSX.Element {
           ) : (
             <>
               <MaterialIcons name="celebration" size={20} color="#fff" />
-              <Text style={s.importBtnText}>
-                ייבא {selected.size} חגים
-              </Text>
+              <Text style={s.importBtnText}>ייבא {selected.size} חגים</Text>
             </>
           )}
         </Pressable>
@@ -407,7 +411,10 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
-  bulkBtnPrimary: { backgroundColor: `${HOLIDAY_COLOR}18`, borderColor: HOLIDAY_COLOR },
+  bulkBtnPrimary: {
+    backgroundColor: `${HOLIDAY_COLOR}18`,
+    borderColor: HOLIDAY_COLOR,
+  },
   bulkBtnText: { fontSize: 12, fontWeight: '600', color: '#64748b' },
   bulkBtnPrimaryText: { color: '#92400e' },
   // List
@@ -433,7 +440,10 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  checkboxChecked: { backgroundColor: HOLIDAY_COLOR, borderColor: HOLIDAY_COLOR },
+  checkboxChecked: {
+    backgroundColor: HOLIDAY_COLOR,
+    borderColor: HOLIDAY_COLOR,
+  },
   holidayInfo: { flex: 1, gap: 2 },
   holidayName: {
     fontSize: 15,

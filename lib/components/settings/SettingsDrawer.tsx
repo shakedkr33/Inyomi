@@ -1,6 +1,6 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { MaterialIcons } from '@expo/vector-icons';
 import { useAuthActions } from '@convex-dev/auth/react';
+import { MaterialIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -16,7 +16,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   interpolate,
   runOnJS,
@@ -24,7 +24,7 @@ import Animated, {
   useSharedValue,
   withSpring,
 } from 'react-native-reanimated';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DRAWER_WIDTH = Math.round(SCREEN_WIDTH * 0.75);
@@ -389,18 +389,14 @@ export function SettingsDrawer({
                 iconBg={ICON_BG}
                 iconColor={ICON_COLOR}
                 title="ייבוא יומן חיצוני"
-                onPress={() =>
-                  navigateTo('/(authenticated)/import-calendar')
-                }
+                onPress={() => navigateTo('/(authenticated)/import-calendar')}
               />
               <NavRow
                 icon="celebration"
                 iconBg={ICON_BG}
                 iconColor={ICON_COLOR}
                 title="ייבוא חגים ישראליים"
-                onPress={() =>
-                  navigateTo('/(authenticated)/import-holidays')
-                }
+                onPress={() => navigateTo('/(authenticated)/import-holidays')}
               />
 
               <Divider />

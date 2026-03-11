@@ -2,7 +2,10 @@ import * as Contacts from 'expo-contacts';
 import { useRef, useState } from 'react';
 import { Keyboard } from 'react-native';
 
-import { PET_COLORS, PROFILE_COLORS } from '../components/onboarding/ColorPicker';
+import {
+  PET_COLORS,
+  PROFILE_COLORS,
+} from '../components/onboarding/ColorPicker';
 import type { FamilyMember } from '../contexts/OnboardingContext';
 import { useOnboarding } from '../contexts/OnboardingContext';
 
@@ -20,7 +23,9 @@ export interface PendingMember {
 
 const MOBILE_LABELS = new Set(['mobile', 'iphone', 'cell', 'נייד', 'cellular']);
 
-function getBestPhone(phoneNumbers?: Contacts.PhoneNumber[]): string | undefined {
+function getBestPhone(
+  phoneNumbers?: Contacts.PhoneNumber[]
+): string | undefined {
   if (!phoneNumbers?.length) return undefined;
   const mobile = phoneNumbers.find((p) =>
     MOBILE_LABELS.has((p.label ?? '').toLowerCase())
@@ -35,7 +40,9 @@ function getBestPhone(phoneNumbers?: Contacts.PhoneNumber[]): string | undefined
  *  - app/onboarding-step4.tsx  (starts with empty familyMembers)
  *  - app/(authenticated)/family-profile.tsx  (initialised from saved context data)
  */
-export function useFamilyProfileEditor(initialFamilyMembers: FamilyMember[] = []) {
+export function useFamilyProfileEditor(
+  initialFamilyMembers: FamilyMember[] = []
+) {
   const { data, updateData } = useOnboarding();
 
   // ── Core profile state ────────────────────────────────────────────────────
@@ -46,21 +53,26 @@ export function useFamilyProfileEditor(initialFamilyMembers: FamilyMember[] = []
 
   // Used in the Family Space owner card
   const [ownerFullName, setOwnerFullName] = useState(data.firstName || '');
-  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>(initialFamilyMembers);
+  const [familyMembers, setFamilyMembers] =
+    useState<FamilyMember[]>(initialFamilyMembers);
 
   // ── Save-confirmation flash ───────────────────────────────────────────────
   const [ownerSaved, setOwnerSaved] = useState(false);
   const ownerSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [personalSaved, setPersonalSaved] = useState(false);
-  const personalSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const personalSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
   // ── Contact picker guard ──────────────────────────────────────────────────
   const isPickingContactRef = useRef(false);
 
   // ── Bottom sheet + inline edit ────────────────────────────────────────────
   const [isBottomSheetOpen, setIsBottomSheetOpen] = useState(false);
-  const [pendingMember, setPendingMember] = useState<PendingMember | null>(null);
+  const [pendingMember, setPendingMember] = useState<PendingMember | null>(
+    null
+  );
   const [editingId, setEditingId] = useState<string | null>(null);
 
   // ── Derived ───────────────────────────────────────────────────────────────
@@ -68,7 +80,8 @@ export function useFamilyProfileEditor(initialFamilyMembers: FamilyMember[] = []
   const petMembers = familyMembers.filter((m) => m.type === 'pet');
   const canAddPerson = personMembers.length < MAX_PEOPLE;
   const canAddPet = petMembers.length < MAX_PETS;
-  const isAddingNewPerson = !editingId && !!pendingMember && pendingMember.type !== 'pet';
+  const isAddingNewPerson =
+    !editingId && !!pendingMember && pendingMember.type !== 'pet';
   const isAddingNewPet = !editingId && pendingMember?.type === 'pet';
 
   // ── Color helpers ─────────────────────────────────────────────────────────
@@ -78,7 +91,9 @@ export function useFamilyProfileEditor(initialFamilyMembers: FamilyMember[] = []
       personalColor,
       ...personMembers.filter((m) => m.id !== excludeId).map((m) => m.color),
     ]);
-    return (PROFILE_COLORS.find((c) => !taken.has(c)) as string) ?? PROFILE_COLORS[0];
+    return (
+      (PROFILE_COLORS.find((c) => !taken.has(c)) as string) ?? PROFILE_COLORS[0]
+    );
   };
 
   const getAvailablePetColor = (excludeId?: string): string => {
@@ -123,7 +138,10 @@ export function useFamilyProfileEditor(initialFamilyMembers: FamilyMember[] = []
         const phone = getBestPhone(contact.phoneNumbers);
         const email = contact.emails?.[0]?.email;
         const rawName = contact.name?.trim();
-        const combinedName = [contact.firstName?.trim(), contact.lastName?.trim()]
+        const combinedName = [
+          contact.firstName?.trim(),
+          contact.lastName?.trim(),
+        ]
           .filter(Boolean)
           .join(' ')
           .trim();
@@ -145,7 +163,11 @@ export function useFamilyProfileEditor(initialFamilyMembers: FamilyMember[] = []
   };
 
   const startManualAddPerson = () => {
-    setPendingMember({ name: '', color: getAvailablePersonColor(), type: 'person' });
+    setPendingMember({
+      name: '',
+      color: getAvailablePersonColor(),
+      type: 'person',
+    });
   };
 
   const confirmPendingMember = () => {
@@ -205,9 +227,13 @@ export function useFamilyProfileEditor(initialFamilyMembers: FamilyMember[] = []
     if (!firstName.trim()) return;
     updateData({ firstName: firstName.trim(), personalColor });
     Keyboard.dismiss();
-    if (personalSavedTimerRef.current) clearTimeout(personalSavedTimerRef.current);
+    if (personalSavedTimerRef.current)
+      clearTimeout(personalSavedTimerRef.current);
     setPersonalSaved(true);
-    personalSavedTimerRef.current = setTimeout(() => setPersonalSaved(false), 1500);
+    personalSavedTimerRef.current = setTimeout(
+      () => setPersonalSaved(false),
+      1500
+    );
   };
 
   const handleSaveOwnerName = () => {

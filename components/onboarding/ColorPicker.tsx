@@ -69,7 +69,8 @@ export function ColorPicker({
               borderRadius,
               backgroundColor: color,
               borderWidth: selectedColor === color ? 2.5 : 0,
-              borderColor: selectedColor === color ? colors.slate : 'transparent',
+              borderColor:
+                selectedColor === color ? colors.slate : 'transparent',
               opacity: takenColors.includes(color) ? 0.35 : 1,
             }}
           />

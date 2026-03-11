@@ -1,18 +1,25 @@
-import { useOnboarding } from '@/contexts/OnboardingContext';
-import { MaterialIcons } from '@expo/vector-icons';
 import { useAuthActions } from '@convex-dev/auth/react';
+import { MaterialIcons } from '@expo/vector-icons';
 import { useMutation } from 'convex/react';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
 import {
   APP_ENV,
   IS_DEV_MODE,
   MOCK_PAYMENTS,
   PAYMENT_SYSTEM_ENABLED,
 } from '@/config/appConfig';
+import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { api } from '@/convex/_generated/api';
 
@@ -36,8 +43,11 @@ export default function ProfileScreen() {
 
   const { data: onboardingData } = useOnboarding();
   const familyMembers = onboardingData.familyData?.familyMembers ?? [];
-  const isPersonalOnly = onboardingData.spaceType === 'personal' && familyMembers.length === 0;
-  const profileRowTitle = isPersonalOnly ? 'ניהול פרופיל אישי' : 'ניהול פרופיל משפחתי';
+  const isPersonalOnly =
+    onboardingData.spaceType === 'personal' && familyMembers.length === 0;
+  const profileRowTitle = isPersonalOnly
+    ? 'ניהול פרופיל אישי'
+    : 'ניהול פרופיל משפחתי';
   const profileMemberCount = familyMembers.length;
 
   // ============================================================================
@@ -129,7 +139,6 @@ export default function ProfileScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
-
         {/* Header */}
         <View style={styles.headerContainer}>
           {/* Left side — full logo (icon + InYomi text combined) */}
@@ -180,8 +189,12 @@ export default function ProfileScreen() {
           <View style={styles.inviteRow}>
             <MaterialIcons name="chevron-left" size={20} color="#d1d5db" />
             <View style={styles.inviteTexts}>
-              <Text style={styles.inviteTitle}>הזמיני חברה וקבלי חודש מתנה</Text>
-              <Text style={styles.inviteSubtitle}>שתפי קישור ותרוויחי 30 יום בחינם</Text>
+              <Text style={styles.inviteTitle}>
+                הזמיני חברה וקבלי חודש מתנה
+              </Text>
+              <Text style={styles.inviteSubtitle}>
+                שתפי קישור ותרוויחי 30 יום בחינם
+              </Text>
             </View>
             <MaterialIcons name="group-add" size={22} color="#9ca3af" />
           </View>
@@ -195,7 +208,11 @@ export default function ProfileScreen() {
           <SettingsRow
             iconName="people-outline"
             label={profileRowTitle}
-            note={profileMemberCount > 0 ? `${profileMemberCount} מחוברים` : undefined}
+            note={
+              profileMemberCount > 0
+                ? `${profileMemberCount} מחוברים`
+                : undefined
+            }
             onPress={() => router.push('/(authenticated)/family-profile')}
           />
           <SettingsRow
@@ -253,9 +270,13 @@ export default function ProfileScreen() {
                 name="chevron-left"
                 size={20}
                 color="#eab308"
-                style={{ transform: [{ rotate: isDebugOpen ? '-90deg' : '0deg' }] }}
+                style={{
+                  transform: [{ rotate: isDebugOpen ? '-90deg' : '0deg' }],
+                }}
               />
-              <Text style={styles.debugHeaderText}>קונסולת דיבאג (מצב פיתוח)</Text>
+              <Text style={styles.debugHeaderText}>
+                קונסולת דיבאג (מצב פיתוח)
+              </Text>
               <MaterialIcons name="bug-report" size={20} color="#eab308" />
             </TouchableOpacity>
 
@@ -324,7 +345,6 @@ export default function ProfileScreen() {
         {/* Footer */}
         {/* TODO: use expo-constants for real version */}
         <Text style={styles.footer}>InYomi v1.0.0</Text>
-
       </ScrollView>
     </SafeAreaView>
   );
@@ -364,8 +384,15 @@ function SettingsRow({
         <MaterialIcons name="chevron-left" size={20} color="#d1d5db" />
       )}
       {/* Label + note in the middle */}
-      <View style={[styles.rowTextContainer, hideChevron && styles.rowTextNoChevron]}>
-        <Text style={[styles.rowLabel, danger && styles.rowLabelDanger]}>{label}</Text>
+      <View
+        style={[
+          styles.rowTextContainer,
+          hideChevron && styles.rowTextNoChevron,
+        ]}
+      >
+        <Text style={[styles.rowLabel, danger && styles.rowLabelDanger]}>
+          {label}
+        </Text>
         {note !== undefined && <Text style={styles.rowNote}>{note}</Text>}
       </View>
       {/* Icon on the right */}

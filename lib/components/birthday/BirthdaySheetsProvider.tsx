@@ -1,7 +1,7 @@
-import type { Birthday } from '@/lib/types/birthday';
 import * as Contacts from 'expo-contacts';
 import { createContext, type ReactNode, useContext, useState } from 'react';
 import { Alert } from 'react-native';
+import type { Birthday } from '@/lib/types/birthday';
 import { BirthdayCardSheet } from './BirthdayCardSheet';
 import { BirthdayEditSheet } from './BirthdayEditSheet';
 

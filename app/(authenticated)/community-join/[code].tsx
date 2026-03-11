@@ -1,7 +1,6 @@
-import { api } from '@/convex/_generated/api';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMutation, useQuery } from 'convex/react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   ActivityIndicator,
@@ -12,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { api } from '@/convex/_generated/api';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -26,8 +26,18 @@ function JoinSkeleton() {
       <View style={[styles.skeletonLine, { width: '90%', marginTop: 12 }]} />
       <View style={[styles.skeletonLine, { width: '60%', marginTop: 6 }]} />
       <View style={{ flexDirection: 'row-reverse', gap: 8, marginTop: 20 }}>
-        <View style={[styles.skeletonLine, { width: 56, height: 28, borderRadius: 14 }]} />
-        <View style={[styles.skeletonLine, { width: 72, height: 28, borderRadius: 14 }]} />
+        <View
+          style={[
+            styles.skeletonLine,
+            { width: 56, height: 28, borderRadius: 14 },
+          ]}
+        />
+        <View
+          style={[
+            styles.skeletonLine,
+            { width: 72, height: 28, borderRadius: 14 },
+          ]}
+        />
       </View>
     </View>
   );

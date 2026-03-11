@@ -13,7 +13,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { AddPersonBottomSheet } from '../components/onboarding/AddPersonBottomSheet';
-import { ColorPicker, PET_COLORS, PROFILE_COLORS } from '../components/onboarding/ColorPicker';
+import {
+  ColorPicker,
+  PET_COLORS,
+  PROFILE_COLORS,
+} from '../components/onboarding/ColorPicker';
 import {
   FamilyMemberDisplayCard,
   FamilyMemberEditCard,
@@ -36,27 +40,44 @@ export default function OnboardingStep4() {
     data.spaceType === 'personal' ? 'personal' : 'family';
   const cameFromPersonal = data.spaceType === 'personal';
 
-  const [currentView, setCurrentView] = useState<'personal' | 'family'>(initialView);
+  const [currentView, setCurrentView] = useState<'personal' | 'family'>(
+    initialView
+  );
 
   // ── All profile state + handlers come from the shared hook ────────────────
   const editor = useFamilyProfileEditor();
   const {
-    firstName, setFirstName,
-    personalColor, setPersonalColor,
-    ownerFullName, setOwnerFullName,
+    firstName,
+    setFirstName,
+    personalColor,
+    setPersonalColor,
+    ownerFullName,
+    setOwnerFullName,
     familyMembers,
-    pendingMember, setPendingMember,
+    pendingMember,
+    setPendingMember,
     editingId,
-    isBottomSheetOpen, setIsBottomSheetOpen,
-    ownerSaved, personalSaved,
-    personMembers, petMembers,
-    canAddPerson, canAddPet,
-    isAddingNewPerson, isAddingNewPet,
-    getTakenColorsForPerson, getTakenColorsForPet,
-    openAddPersonSheet, handleAddPet,
-    startManualAddPerson, confirmPendingMember, cancelPending,
-    startEditMember, removeMember,
-    handleSavePersonalName, handleSaveOwnerName,
+    isBottomSheetOpen,
+    setIsBottomSheetOpen,
+    ownerSaved,
+    personalSaved,
+    personMembers,
+    petMembers,
+    canAddPerson,
+    canAddPet,
+    isAddingNewPerson,
+    isAddingNewPet,
+    getTakenColorsForPerson,
+    getTakenColorsForPet,
+    openAddPersonSheet,
+    handleAddPet,
+    startManualAddPerson,
+    confirmPendingMember,
+    cancelPending,
+    startEditMember,
+    removeMember,
+    handleSavePersonalName,
+    handleSaveOwnerName,
     handleFromContacts,
     saveAll,
   } = editor;
@@ -92,7 +113,11 @@ export default function OnboardingStep4() {
         name={pendingMember.name}
         color={pendingMember.color}
         palette={isPet ? PET_COLORS : PROFILE_COLORS}
-        takenColors={isPet ? getTakenColorsForPet(member.id) : getTakenColorsForPerson(member.id)}
+        takenColors={
+          isPet
+            ? getTakenColorsForPet(member.id)
+            : getTakenColorsForPerson(member.id)
+        }
         onChangeName={(t) => setPendingMember((p) => p && { ...p, name: t })}
         onChangeColor={(c) => setPendingMember((p) => p && { ...p, color: c })}
         onConfirm={confirmPendingMember}
@@ -120,9 +145,16 @@ export default function OnboardingStep4() {
               accessibilityLabel="חזרה"
               className="p-2"
             >
-              <MaterialIcons name="arrow-forward" size={24} color={colors.slate} />
+              <MaterialIcons
+                name="arrow-forward"
+                size={24}
+                color={colors.slate}
+              />
             </Pressable>
-            <Text className="text-base font-bold" style={{ color: colors.primary }}>
+            <Text
+              className="text-base font-bold"
+              style={{ color: colors.primary }}
+            >
               InYomi
             </Text>
             <View className="w-10" />
@@ -145,7 +177,10 @@ export default function OnboardingStep4() {
             </Text>
 
             {/* Personal profile card */}
-            <View className="bg-white rounded-3xl p-5 mb-4" style={shadows.soft}>
+            <View
+              className="bg-white rounded-3xl p-5 mb-4"
+              style={shadows.soft}
+            >
               <View className="items-center mb-5">
                 <View className="relative">
                   <View
@@ -193,7 +228,10 @@ export default function OnboardingStep4() {
                 />
               </View>
               {personalSaved ? (
-                <Text className="text-xs text-right mt-1 mb-4" style={{ color: colors.primary }}>
+                <Text
+                  className="text-xs text-right mt-1 mb-4"
+                  style={{ color: colors.primary }}
+                >
                   נשמר ✓
                 </Text>
               ) : (
@@ -245,7 +283,11 @@ export default function OnboardingStep4() {
               accessibilityLabel="המשך"
               className="w-full h-16 rounded-2xl items-center justify-center"
               style={[
-                { backgroundColor: firstName.trim() ? colors.primary : '#e5e7eb' },
+                {
+                  backgroundColor: firstName.trim()
+                    ? colors.primary
+                    : '#e5e7eb',
+                },
                 shadows.primaryCta,
               ]}
             >
@@ -274,9 +316,16 @@ export default function OnboardingStep4() {
             accessibilityLabel="חזרה"
             className="p-2"
           >
-            <MaterialIcons name="arrow-forward" size={24} color={colors.slate} />
+            <MaterialIcons
+              name="arrow-forward"
+              size={24}
+              color={colors.slate}
+            />
           </Pressable>
-          <Text className="text-base font-bold text-right" style={{ color: colors.slate }}>
+          <Text
+            className="text-base font-bold text-right"
+            style={{ color: colors.slate }}
+          >
             המשפחה שלך ב-InYomi
           </Text>
           <View className="w-10" />
@@ -301,7 +350,9 @@ export default function OnboardingStep4() {
                 <MaterialIcons name="person" size={28} color="white" />
               </View>
               <View className="flex-1">
-                <Text className="text-xs text-gray-400 text-right mb-1">השם שלך</Text>
+                <Text className="text-xs text-gray-400 text-right mb-1">
+                  השם שלך
+                </Text>
                 <View
                   className="flex-row items-center bg-[#f6f7f8] rounded-xl overflow-hidden"
                   style={{ minHeight: 44 }}
@@ -329,7 +380,10 @@ export default function OnboardingStep4() {
                   />
                 </View>
                 {ownerSaved ? (
-                  <Text className="text-xs text-right mt-1" style={{ color: colors.primary }}>
+                  <Text
+                    className="text-xs text-right mt-1"
+                    style={{ color: colors.primary }}
+                  >
                     נשמר ✓
                   </Text>
                 ) : null}
@@ -371,8 +425,15 @@ export default function OnboardingStep4() {
                     accessibilityLabel="הוספת בן משפחה"
                     className="flex-row-reverse items-center gap-2 px-5 py-2.5 rounded-full border border-gray-300"
                   >
-                    <MaterialIcons name="person-add" size={18} color={colors.primary} />
-                    <Text style={{ color: colors.primary }} className="font-semibold">
+                    <MaterialIcons
+                      name="person-add"
+                      size={18}
+                      color={colors.primary}
+                    />
+                    <Text
+                      style={{ color: colors.primary }}
+                      className="font-semibold"
+                    >
                       הוספת בן משפחה +
                     </Text>
                   </Pressable>
@@ -381,16 +442,16 @@ export default function OnboardingStep4() {
             ) : (
               <>
                 {personMembers.map((member) =>
-                  editingId === member.id && pendingMember
-                    ? renderEditCard(member)
-                    : (
-                      <FamilyMemberDisplayCard
-                        key={member.id}
-                        member={member}
-                        onEdit={() => startEditMember(member)}
-                        onRemove={() => removeMember(member.id)}
-                      />
-                    )
+                  editingId === member.id && pendingMember ? (
+                    renderEditCard(member)
+                  ) : (
+                    <FamilyMemberDisplayCard
+                      key={member.id}
+                      member={member}
+                      onEdit={() => startEditMember(member)}
+                      onRemove={() => removeMember(member.id)}
+                    />
+                  )
                 )}
                 {isAddingNewPerson && pendingMember && (
                   <FamilyMemberEditCard
@@ -398,8 +459,12 @@ export default function OnboardingStep4() {
                     color={pendingMember.color}
                     palette={PROFILE_COLORS}
                     takenColors={getTakenColorsForPerson()}
-                    onChangeName={(t) => setPendingMember((p) => p && { ...p, name: t })}
-                    onChangeColor={(c) => setPendingMember((p) => p && { ...p, color: c })}
+                    onChangeName={(t) =>
+                      setPendingMember((p) => p && { ...p, name: t })
+                    }
+                    onChangeColor={(c) =>
+                      setPendingMember((p) => p && { ...p, color: c })
+                    }
                     onConfirm={confirmPendingMember}
                     onCancel={cancelPending}
                     label="הוספת בן משפחה:"
@@ -413,8 +478,15 @@ export default function OnboardingStep4() {
                     accessibilityLabel="הוספת בן משפחה נוסף"
                     className="flex-row-reverse items-center justify-center gap-2 py-3 border border-dashed border-gray-200 rounded-xl mt-1"
                   >
-                    <MaterialIcons name="person-add" size={18} color={colors.primary} />
-                    <Text style={{ color: colors.primary }} className="font-semibold">
+                    <MaterialIcons
+                      name="person-add"
+                      size={18}
+                      color={colors.primary}
+                    />
+                    <Text
+                      style={{ color: colors.primary }}
+                      className="font-semibold"
+                    >
                       הוספת בן משפחה +
                     </Text>
                   </Pressable>
@@ -449,8 +521,15 @@ export default function OnboardingStep4() {
                     accessibilityLabel="הוספת חיית מחמד"
                     className="flex-row-reverse items-center gap-2 mt-3 px-5 py-2.5 rounded-full border border-gray-300"
                   >
-                    <MaterialIcons name="pets" size={18} color={colors.primary} />
-                    <Text style={{ color: colors.primary }} className="font-semibold">
+                    <MaterialIcons
+                      name="pets"
+                      size={18}
+                      color={colors.primary}
+                    />
+                    <Text
+                      style={{ color: colors.primary }}
+                      className="font-semibold"
+                    >
                       הוספת חיית מחמד
                     </Text>
                   </Pressable>
@@ -459,16 +538,16 @@ export default function OnboardingStep4() {
             ) : (
               <>
                 {petMembers.map((member) =>
-                  editingId === member.id && pendingMember
-                    ? renderEditCard(member)
-                    : (
-                      <FamilyMemberDisplayCard
-                        key={member.id}
-                        member={member}
-                        onEdit={() => startEditMember(member)}
-                        onRemove={() => removeMember(member.id)}
-                      />
-                    )
+                  editingId === member.id && pendingMember ? (
+                    renderEditCard(member)
+                  ) : (
+                    <FamilyMemberDisplayCard
+                      key={member.id}
+                      member={member}
+                      onEdit={() => startEditMember(member)}
+                      onRemove={() => removeMember(member.id)}
+                    />
+                  )
                 )}
                 {isAddingNewPet && pendingMember && (
                   <FamilyMemberEditCard
@@ -476,8 +555,12 @@ export default function OnboardingStep4() {
                     color={pendingMember.color}
                     palette={PET_COLORS}
                     takenColors={getTakenColorsForPet()}
-                    onChangeName={(t) => setPendingMember((p) => p && { ...p, name: t })}
-                    onChangeColor={(c) => setPendingMember((p) => p && { ...p, color: c })}
+                    onChangeName={(t) =>
+                      setPendingMember((p) => p && { ...p, name: t })
+                    }
+                    onChangeColor={(c) =>
+                      setPendingMember((p) => p && { ...p, color: c })
+                    }
                     onConfirm={confirmPendingMember}
                     onCancel={cancelPending}
                     label="הוספת חיית מחמד:"
@@ -491,8 +574,15 @@ export default function OnboardingStep4() {
                     accessibilityLabel="הוספת חיית מחמד נוספת"
                     className="flex-row-reverse items-center justify-center gap-2 py-3 border border-dashed border-gray-200 rounded-xl mt-1"
                   >
-                    <MaterialIcons name="pets" size={18} color={colors.primary} />
-                    <Text style={{ color: colors.primary }} className="font-semibold">
+                    <MaterialIcons
+                      name="pets"
+                      size={18}
+                      color={colors.primary}
+                    />
+                    <Text
+                      style={{ color: colors.primary }}
+                      className="font-semibold"
+                    >
                       הוספת חיית מחמד
                     </Text>
                   </Pressable>

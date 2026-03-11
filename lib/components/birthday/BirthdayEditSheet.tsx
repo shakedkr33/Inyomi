@@ -1,5 +1,3 @@
-import type { Birthday } from '@/lib/types/birthday';
-import { formatBirthdayDate, getCountdownLabel } from '@/lib/utils/birthday';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
@@ -13,6 +11,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import type { Birthday } from '@/lib/types/birthday';
+import { formatBirthdayDate, getCountdownLabel } from '@/lib/utils/birthday';
 import { BirthdayWheelPicker } from './BirthdayWheelPicker';
 import { BottomSheet } from './BottomSheet';
 

@@ -1,12 +1,6 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import { useEffect, useRef } from 'react';
-import {
-  Animated,
-  Modal,
-  Pressable,
-  Text,
-  View,
-} from 'react-native';
+import { Animated, Modal, Pressable, Text, View } from 'react-native';
 import { colors, shadows } from '../../constants/theme';
 
 interface AddPersonBottomSheetProps {
@@ -95,7 +89,11 @@ export function AddPersonBottomSheet({
               className="w-12 h-12 rounded-xl items-center justify-center"
               style={{ backgroundColor: `${colors.primary}18` }}
             >
-              <MaterialIcons name="contact-page" size={26} color={colors.primary} />
+              <MaterialIcons
+                name="contact-page"
+                size={26}
+                color={colors.primary}
+              />
             </View>
             <View className="flex-1">
               <Text className="font-bold text-[16px] text-gray-900 text-right">
@@ -124,7 +122,11 @@ export function AddPersonBottomSheet({
               className="w-12 h-12 rounded-xl items-center justify-center"
               style={{ backgroundColor: `${colors.primary}18` }}
             >
-              <MaterialIcons name="person-add" size={26} color={colors.primary} />
+              <MaterialIcons
+                name="person-add"
+                size={26}
+                color={colors.primary}
+              />
             </View>
             <View className="flex-1">
               <Text className="font-bold text-[16px] text-gray-900 text-right">

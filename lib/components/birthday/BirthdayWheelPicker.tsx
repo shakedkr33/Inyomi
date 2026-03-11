@@ -1,4 +1,3 @@
-import { NativeViewGestureHandler } from 'react-native-gesture-handler';
 import { useEffect, useRef } from 'react';
 import {
   type NativeScrollEvent,
@@ -8,6 +7,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { NativeViewGestureHandler } from 'react-native-gesture-handler';
 
 const ITEM_HEIGHT = 44;
 // 5 visible items: center row (index 2) is selected.
@@ -159,7 +159,9 @@ export function BirthdayWheelPicker({
           >
             {MONTH_ITEMS.map((m) => (
               <View key={`month-${m.value}`} style={s.item}>
-                <Text style={[s.itemText, m.value === month && s.itemTextActive]}>
+                <Text
+                  style={[s.itemText, m.value === month && s.itemTextActive]}
+                >
                   {m.label}
                 </Text>
               </View>
@@ -179,7 +181,9 @@ export function BirthdayWheelPicker({
           >
             {YEAR_ITEMS.map((y) => (
               <View key={`year-${y.value ?? 'null'}`} style={s.item}>
-                <Text style={[s.itemText, y.value === year && s.itemTextActive]}>
+                <Text
+                  style={[s.itemText, y.value === year && s.itemTextActive]}
+                >
                   {y.label}
                 </Text>
               </View>

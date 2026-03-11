@@ -6,8 +6,8 @@ import { mutation, query } from './_generated/server';
 // ─────────────────────────────────────────────────────────────
 export const upsertMood = mutation({
   args: {
-    date: v.string(),       // YYYY-MM-DD
-    moodValue: v.number(),  // 0–4 (מתאים לסדר carousel: 😤 מתסכל → 😊 מעולה)
+    date: v.string(), // YYYY-MM-DD
+    moodValue: v.number(), // 0–4 (מתאים לסדר carousel: 😤 מתסכל → 😊 מעולה)
     note: v.optional(v.string()),
   },
   handler: async (ctx, { date, moodValue, note }) => {
@@ -72,7 +72,7 @@ export const getMoodForDate = query({
 export const listMoodHistory = query({
   args: {
     fromDate: v.string(), // YYYY-MM-DD
-    toDate: v.string(),   // YYYY-MM-DD
+    toDate: v.string(), // YYYY-MM-DD
   },
   handler: async (ctx, { fromDate, toDate }) => {
     const identity = await ctx.auth.getUserIdentity();

@@ -1,7 +1,5 @@
-import { api } from '@/convex/_generated/api';
-import type { Id } from '@/convex/_generated/dataModel';
-import type { TaskDraft } from '@/lib/types/task';
 import { MaterialIcons } from '@expo/vector-icons';
+import { useMutation, useQuery } from 'convex/react';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -16,7 +14,9 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useMutation, useQuery } from 'convex/react';
+import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
+import type { TaskDraft } from '@/lib/types/task';
 import { AssigneesChips } from './AssigneesChips';
 import { ReminderChips } from './ReminderChips';
 import { RepeatSection } from './RepeatSection';
@@ -80,14 +80,19 @@ export default function TaskEditorScreen({
     if (existingTask) {
       // ממלא את הטופס בנתוני המשימה הקיימת
       const hasDueDate = existingTask.dueDate != null;
-      const dueDate = existingTask.dueDate ? new Date(existingTask.dueDate) : null;
+      const dueDate = existingTask.dueDate
+        ? new Date(existingTask.dueDate)
+        : null;
       setDraft((prev) => ({
         ...prev,
         title: existingTask.title,
         notes: existingTask.description ?? '',
         dateOption: hasDueDate ? 'today' : 'none', // TODO: להבחין בין היום לתאריך אחר
         selectedTime: dueDate
-          ? dueDate.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+          ? dueDate.toLocaleTimeString('he-IL', {
+              hour: '2-digit',
+              minute: '2-digit',
+            })
           : '09:00',
       }));
     }
@@ -177,7 +182,13 @@ export default function TaskEditorScreen({
     return (
       <SafeAreaView style={s.safe}>
         <View style={s.header}>
-          <Pressable onPress={handleBack} style={s.closeBtn} accessible accessibilityRole="button" accessibilityLabel="סגור">
+          <Pressable
+            onPress={handleBack}
+            style={s.closeBtn}
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel="סגור"
+          >
             <MaterialIcons name="close" size={22} color="#9ca3af" />
           </Pressable>
           <Text style={s.headerTitle}>יצירת משימה חדשה</Text>
@@ -195,7 +206,13 @@ export default function TaskEditorScreen({
     return (
       <SafeAreaView style={s.safe}>
         <View style={s.header}>
-          <Pressable onPress={handleBack} style={s.closeBtn} accessible accessibilityRole="button" accessibilityLabel="סגור">
+          <Pressable
+            onPress={handleBack}
+            style={s.closeBtn}
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel="סגור"
+          >
             <MaterialIcons name="close" size={22} color="#9ca3af" />
           </Pressable>
           <Text style={s.headerTitle}>יצירת משימה חדשה</Text>
@@ -669,8 +686,18 @@ const s = StyleSheet.create({
     padding: 32,
   },
   spaceLoadingText: { fontSize: 15, color: '#6b7280', textAlign: 'center' },
-  spaceErrorText: { fontSize: 18, fontWeight: '700', color: '#374151', textAlign: 'center' },
-  spaceErrorSubtext: { fontSize: 14, color: '#9ca3af', textAlign: 'center', lineHeight: 20 },
+  spaceErrorText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#374151',
+    textAlign: 'center',
+  },
+  spaceErrorSubtext: {
+    fontSize: 14,
+    color: '#9ca3af',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
   retryBtn: {
     marginTop: 8,
     backgroundColor: PRIMARY,

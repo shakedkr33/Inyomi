@@ -1,4 +1,3 @@
-import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useAuthActions } from '@convex-dev/auth/react';
 import { useMutation } from 'convex/react';
 import { useRouter } from 'expo-router';
@@ -17,13 +16,13 @@ import {
 import { useState } from 'react';
 import { Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-
 import {
   APP_ENV,
   IS_DEV_MODE,
   MOCK_PAYMENTS,
   PAYMENT_SYSTEM_ENABLED,
 } from '@/config/appConfig';
+import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { api } from '@/convex/_generated/api';
 import { tw } from '@/lib/rtl';
@@ -48,8 +47,11 @@ export default function SettingsScreen() {
 
   const { data: onboardingData } = useOnboarding();
   const familyMembers = onboardingData.familyData?.familyMembers ?? [];
-  const isPersonalOnly = onboardingData.spaceType === 'personal' && familyMembers.length === 0;
-  const profileRowTitle = isPersonalOnly ? 'ניהול פרופיל אישי' : 'ניהול פרופיל משפחתי';
+  const isPersonalOnly =
+    onboardingData.spaceType === 'personal' && familyMembers.length === 0;
+  const profileRowTitle = isPersonalOnly
+    ? 'ניהול פרופיל אישי'
+    : 'ניהול פרופיל משפחתי';
   const profileMemberCount = familyMembers.length;
 
   // ============================================================================
@@ -172,11 +174,15 @@ export default function SettingsScreen() {
           >
             <ChevronLeft size={20} color="#71717a" />
             <View className="flex-1">
-              <Text className={`text-white text-base font-semibold ${tw.textStart}`}>
+              <Text
+                className={`text-white text-base font-semibold ${tw.textStart}`}
+              >
                 {profileRowTitle}
               </Text>
               {profileMemberCount > 0 && (
-                <Text className={`text-zinc-400 text-xs mt-0.5 ${tw.textStart}`}>
+                <Text
+                  className={`text-zinc-400 text-xs mt-0.5 ${tw.textStart}`}
+                >
                   {profileMemberCount} מחוברים
                 </Text>
               )}

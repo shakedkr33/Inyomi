@@ -1,8 +1,6 @@
-import { api } from '@/convex/_generated/api';
-import type { Id } from '@/convex/_generated/dataModel';
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery } from 'convex/react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
   Alert,
@@ -14,6 +12,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -78,7 +78,10 @@ function MemberRow({ member }: { member: MemberInfo }) {
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function CommunityMembersScreen() {
-  const { id, returnTab } = useLocalSearchParams<{ id: string; returnTab?: string }>();
+  const { id, returnTab } = useLocalSearchParams<{
+    id: string;
+    returnTab?: string;
+  }>();
   const router = useRouter();
 
   const data = useQuery(api.communities.getCommunityMembers, {
@@ -108,7 +111,9 @@ export default function CommunityMembersScreen() {
         <TouchableOpacity
           onPress={() => {
             router.replace(
-              `/(authenticated)/community/${id}?tab=${returnTab ?? 'הכל'}` as Parameters<typeof router.replace>[0]
+              `/(authenticated)/community/${id}?tab=${returnTab ?? 'הכל'}` as Parameters<
+                typeof router.replace
+              >[0]
             );
           }}
           style={styles.backBtn}
@@ -156,7 +161,12 @@ export default function CommunityMembersScreen() {
           accessibilityRole="button"
           accessibilityLabel="הזמנת חברים לקהילה"
         >
-          <Ionicons name="share-outline" size={20} color="#fff" style={styles.inviteIcon} />
+          <Ionicons
+            name="share-outline"
+            size={20}
+            color="#fff"
+            style={styles.inviteIcon}
+          />
           <Text style={styles.inviteBtnText}>הזמנת חברים</Text>
         </TouchableOpacity>
       </View>

@@ -2,11 +2,13 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useMutation, useQuery } from 'convex/react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
@@ -18,7 +20,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
-import EventScreen from '@/lib/components/event/EventScreen';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -34,10 +35,16 @@ function buildTimestamp(date: Date, timeDate: Date): number {
   return result.getTime();
 }
 
-// ─── Community Event Form ─────────────────────────────────────────────────────
+// ─── Edit Event Form ───────────────────────────────────────────────────────────
 
-function CommunityEventForm({ communityId }: { communityId: string }) {
+export default function EditEventScreen(): React.JSX.Element {
+  const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const eventId = id as Id<'events'>;
+
+  const event = useQuery(api.events.getById, { eventId });
+  const updateEvent = useMutation(api.events.update);
+  const currentUserId = useQuery(api.users.getMyId);
 
   // ── Form state
   const [title, setTitle] = useState('');
@@ -50,7 +57,7 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
   const [saving, setSaving] = useState(false);
 
   // ── Date/time pickers
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
   const [startTimeDate, setStartTimeDate] = useState<Date>(() => {
     const d = new Date();
     d.setHours(9, 0, 0, 0);
@@ -66,20 +73,34 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
 
-  const createEvent = useMutation(api.events.create);
-  const spaceId = useQuery(api.users.getMySpace);
+  // ── Prefill form when event loads
+  useEffect(() => {
+    if (!event || event._id !== eventId) return;
+    setTitle(event.title ?? '');
+    setDescription(event.description ?? '');
+    setAllDay(event.allDay ?? false);
+    setRsvpRequired(event.requiresRsvp ?? false);
+
+    const start = new Date(event.startTime);
+    setSelectedDate(start);
+    setStartTimeDate(new Date(start));
+    setEndTimeDate(new Date(event.endTime));
+
+    if (event.onlineUrl?.trim()) {
+      setLocationType('link');
+      setLocation(event.onlineUrl);
+    } else {
+      setLocationType('address');
+      setLocation(event.location ?? '');
+    }
+  }, [event, eventId]);
 
   const handleSave = useCallback(async () => {
     if (!title.trim()) {
       setTitleError(true);
       return;
     }
-    // Only block if there's no communityId context either
-    if (!spaceId && !communityId) {
-      Alert.alert('שגיאה', 'לא נמצא מרחב פעיל. נסה להתנתק ולהתחבר מחדש.');
-      return;
-    }
-
+    setTitleError(false);
     setSaving(true);
     try {
       const startTs = allDay
@@ -89,7 +110,8 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
         ? new Date(selectedDate).setHours(23, 59, 59, 999)
         : buildTimestamp(selectedDate, endTimeDate);
 
-      const eventArgs = {
+      await updateEvent({
+        id: eventId,
         title: title.trim(),
         description: description.trim() || undefined,
         startTime: startTs,
@@ -99,20 +121,15 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
           locationType === 'address' ? location.trim() || undefined : undefined,
         onlineUrl:
           locationType === 'link' ? location.trim() || undefined : undefined,
-        spaceId: spaceId ?? undefined,
-        communityId: communityId as Id<'communities'>,
         requiresRsvp: rsvpRequired,
-      };
-      console.log('Creating event with args:', eventArgs);
-      await createEvent(eventArgs);
-      router.replace(
-        `/(authenticated)/community/${communityId}` as Parameters<
-          typeof router.replace
-        >[0]
-      );
+      });
+      router.replace({
+        pathname: '/(authenticated)/event/[id]',
+        params: { id: eventId },
+      });
     } catch (e) {
-      console.error('createCommunityEvent error:', e);
-      Alert.alert('שגיאה', 'לא ניתן לשמור את האירוע. נסה שוב.');
+      const msg = e instanceof Error ? e.message : 'לא ניתן לשמור את האירוע';
+      Alert.alert('שגיאה', msg);
     } finally {
       setSaving(false);
     }
@@ -126,27 +143,102 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
     location,
     locationType,
     rsvpRequired,
-    communityId,
-    spaceId,
-    createEvent,
+    eventId,
+    updateEvent,
     router,
   ]);
 
-  // selectedDate is always set (initialized to today), so no null check needed
-  const isSaveDisabled = !title.trim() || saving || spaceId === undefined;
+  const handleCancel = useCallback(() => {
+    router.replace({
+      pathname: '/(authenticated)/event/[id]',
+      params: { id: eventId },
+    });
+  }, [router, eventId]);
 
+  const isSaveDisabled = !title.trim() || saving;
   const dateLabel = selectedDate.toLocaleDateString('he-IL', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
   });
 
+  // ── Loading
+  if (event === undefined) {
+    return (
+      <SafeAreaView style={s.safe} edges={['top']}>
+        <View style={s.loadingCenter}>
+          <ActivityIndicator size="large" color={PRIMARY} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ── Not found
+  if (event === null) {
+    return (
+      <SafeAreaView style={s.safe} edges={['top']}>
+        <View style={s.loadingCenter}>
+          <Text style={s.notFoundText}>אירוע לא נמצא</Text>
+          <Pressable
+            onPress={handleCancel}
+            style={s.backBtn}
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel="חזור"
+          >
+            <Text style={s.backBtnText}>חזור</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ── Unauthorized (not creator)
+  if (currentUserId !== undefined && event.createdBy !== currentUserId) {
+    return (
+      <SafeAreaView style={s.safe} edges={['top']}>
+        <View style={s.loadingCenter}>
+          <Text style={s.notFoundText}>אין לך הרשאה לערוך את האירוע</Text>
+          <Pressable
+            onPress={handleCancel}
+            style={s.backBtn}
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel="חזור"
+          >
+            <Text style={s.backBtnText}>חזור</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ── Cannot edit cancelled event
+  if (event.status === 'cancelled') {
+    return (
+      <SafeAreaView style={s.safe} edges={['top']}>
+        <View style={s.loadingCenter}>
+          <Text style={s.notFoundText}>לא ניתן לערוך אירוע שבוטל</Text>
+          <Pressable
+            onPress={handleCancel}
+            style={s.backBtn}
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel="חזור"
+          >
+            <Text style={s.backBtnText}>חזור</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
       {/* Header */}
       <View style={s.header}>
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={handleCancel}
           style={s.closeBtn}
           accessible
           accessibilityRole="button"
@@ -154,7 +246,7 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
         >
           <Ionicons name="close" size={22} color="#374151" />
         </TouchableOpacity>
-        <Text style={s.headerTitle}>אירוע חדש</Text>
+        <Text style={s.headerTitle}>עריכת אירוע</Text>
         <View style={{ width: 36 }} />
       </View>
 
@@ -192,7 +284,6 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
 
           {/* תאריך ושעה */}
           <View style={s.card}>
-            {/* כל היום toggle */}
             <View style={s.rowBetween}>
               <Switch
                 value={allDay}
@@ -205,7 +296,6 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
               <Text style={s.fieldLabel}>כל היום</Text>
             </View>
 
-            {/* תאריך */}
             <Text style={[s.fieldLabel, { marginTop: 12 }]}>תאריך</Text>
             <View
               style={{
@@ -215,7 +305,6 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
                 marginTop: 4,
               }}
             >
-              {/* Calendar icon — opens inline monthly grid */}
               <TouchableOpacity
                 onPress={() => {
                   setCalendarPickerOpen(!calendarPickerOpen);
@@ -229,7 +318,6 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
                 <Ionicons name="calendar-outline" size={20} color="#36a9e2" />
               </TouchableOpacity>
 
-              {/* Date value button — opens spinner */}
               <TouchableOpacity
                 style={[s.input, s.dateValueBtn]}
                 onPress={() => {
@@ -250,7 +338,6 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
               </TouchableOpacity>
             </View>
 
-            {/* Date spinner picker */}
             {datePickerOpen ? (
               <View style={[s.pickerWrapper, { width: '100%' }]}>
                 <DateTimePicker
@@ -273,13 +360,16 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
                   accessibilityLabel="אישור"
                 >
                   <Text style={s.pickerConfirmText}>
-                    {`אישור — ${selectedDate.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' })}`}
+                    {`אישור — ${selectedDate.toLocaleDateString('he-IL', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                    })}`}
                   </Text>
                 </TouchableOpacity>
               </View>
             ) : null}
 
-            {/* Inline monthly calendar picker */}
             {calendarPickerOpen ? (
               <View
                 style={{
@@ -307,12 +397,9 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
               </View>
             ) : null}
 
-            {/* שעות (רק אם לא כל היום) */}
             {!allDay ? (
               <>
-                {/* Time buttons row */}
                 <View style={s.timeRow}>
-                  {/* סיום */}
                   <View style={{ flex: 1 }}>
                     <Text style={s.timeLabel}>סיום</Text>
                     <TouchableOpacity
@@ -323,7 +410,13 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
                       }}
                       accessible
                       accessibilityRole="button"
-                      accessibilityLabel={`שעת סיום: ${endTimeDate.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`}
+                      accessibilityLabel={`שעת סיום: ${endTimeDate.toLocaleTimeString(
+                        'he-IL',
+                        {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        }
+                      )}`}
                     >
                       <Text style={{ fontSize: 15, color: '#111827' }}>
                         {endTimeDate.toLocaleTimeString('he-IL', {
@@ -333,7 +426,6 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
                       </Text>
                     </TouchableOpacity>
                   </View>
-                  {/* התחלה */}
                   <View style={{ flex: 1 }}>
                     <Text style={s.timeLabel}>התחלה</Text>
                     <TouchableOpacity
@@ -344,7 +436,13 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
                       }}
                       accessible
                       accessibilityRole="button"
-                      accessibilityLabel={`שעת התחלה: ${startTimeDate.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`}
+                      accessibilityLabel={`שעת התחלה: ${startTimeDate.toLocaleTimeString(
+                        'he-IL',
+                        {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        }
+                      )}`}
                     >
                       <Text style={{ fontSize: 15, color: '#111827' }}>
                         {startTimeDate.toLocaleTimeString('he-IL', {
@@ -356,7 +454,6 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
                   </View>
                 </View>
 
-                {/* Start time picker — full width below the row */}
                 {showStartPicker ? (
                   <View
                     style={[s.pickerWrapper, { width: '100%', minHeight: 200 }]}
@@ -382,13 +479,15 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
                       accessibilityLabel="אישור שעת התחלה"
                     >
                       <Text style={s.pickerConfirmText}>
-                        {`אישור — ${startTimeDate.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`}
+                        {`אישור — ${startTimeDate.toLocaleTimeString('he-IL', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}`}
                       </Text>
                     </TouchableOpacity>
                   </View>
                 ) : null}
 
-                {/* End time picker — full width below the row */}
                 {showEndPicker ? (
                   <View
                     style={[s.pickerWrapper, { width: '100%', minHeight: 200 }]}
@@ -414,7 +513,10 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
                       accessibilityLabel="אישור שעת סיום"
                     >
                       <Text style={s.pickerConfirmText}>
-                        {`אישור — ${endTimeDate.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`}
+                        {`אישור — ${endTimeDate.toLocaleTimeString('he-IL', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}`}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -516,12 +618,12 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
             disabled={isSaveDisabled}
             accessible
             accessibilityRole="button"
-            accessibilityLabel="שמור אירוע"
+            accessibilityLabel="שמור שינויים"
           >
             <Text
               style={[s.saveBtnText, isSaveDisabled && s.saveBtnTextDisabled]}
             >
-              {saving ? 'שומר...' : 'שמור אירוע'}
+              {saving ? 'שומר...' : 'שמור שינויים'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -530,22 +632,31 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
   );
 }
 
-// ─── Route Entry ──────────────────────────────────────────────────────────────
-
-export default function NewEventScreen(): React.JSX.Element {
-  const { communityId } = useLocalSearchParams<{ communityId?: string }>();
-
-  if (communityId) {
-    return <CommunityEventForm communityId={communityId} />;
-  }
-
-  return <EventScreen mode="create" />;
-}
-
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#f8fafc' },
+
+  loadingCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 24,
+  },
+  notFoundText: {
+    fontSize: 16,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  backBtn: {
+    backgroundColor: PRIMARY,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginTop: 8,
+  },
+  backBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 
   header: {
     flexDirection: 'row',

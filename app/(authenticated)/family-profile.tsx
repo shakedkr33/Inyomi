@@ -13,7 +13,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AddPersonBottomSheet } from '../../components/onboarding/AddPersonBottomSheet';
-import { ColorPicker, PET_COLORS, PROFILE_COLORS } from '../../components/onboarding/ColorPicker';
+import {
+  ColorPicker,
+  PET_COLORS,
+  PROFILE_COLORS,
+} from '../../components/onboarding/ColorPicker';
 import {
   FamilyMemberDisplayCard,
   FamilyMemberEditCard,
@@ -32,28 +36,46 @@ export default function FamilyProfileScreen() {
   const { data } = useOnboarding();
 
   const savedFamilyMembers = data.familyData?.familyMembers ?? [];
-  const isPersonalOnly = data.spaceType === 'personal' && savedFamilyMembers.length === 0;
-  const screenTitle = isPersonalOnly ? 'ניהול פרופיל אישי' : 'ניהול פרופיל משפחתי';
+  const isPersonalOnly =
+    data.spaceType === 'personal' && savedFamilyMembers.length === 0;
+  const screenTitle = isPersonalOnly
+    ? 'ניהול פרופיל אישי'
+    : 'ניהול פרופיל משפחתי';
 
   // Initialise from previously saved context data (unlike onboarding which starts empty)
   const editor = useFamilyProfileEditor(data.familyData?.familyMembers ?? []);
   const {
-    firstName, setFirstName,
-    personalColor, setPersonalColor,
-    ownerFullName, setOwnerFullName,
+    firstName,
+    setFirstName,
+    personalColor,
+    setPersonalColor,
+    ownerFullName,
+    setOwnerFullName,
     familyMembers,
-    pendingMember, setPendingMember,
+    pendingMember,
+    setPendingMember,
     editingId,
-    isBottomSheetOpen, setIsBottomSheetOpen,
-    ownerSaved, personalSaved,
-    personMembers, petMembers,
-    canAddPerson, canAddPet,
-    isAddingNewPerson, isAddingNewPet,
-    getTakenColorsForPerson, getTakenColorsForPet,
-    openAddPersonSheet, handleAddPet,
-    startManualAddPerson, confirmPendingMember, cancelPending,
-    startEditMember, removeMember,
-    handleSavePersonalName, handleSaveOwnerName,
+    isBottomSheetOpen,
+    setIsBottomSheetOpen,
+    ownerSaved,
+    personalSaved,
+    personMembers,
+    petMembers,
+    canAddPerson,
+    canAddPet,
+    isAddingNewPerson,
+    isAddingNewPet,
+    getTakenColorsForPerson,
+    getTakenColorsForPet,
+    openAddPersonSheet,
+    handleAddPet,
+    startManualAddPerson,
+    confirmPendingMember,
+    cancelPending,
+    startEditMember,
+    removeMember,
+    handleSavePersonalName,
+    handleSaveOwnerName,
     handleFromContacts,
     saveAll,
   } = editor;
@@ -74,7 +96,11 @@ export default function FamilyProfileScreen() {
         name={pendingMember.name}
         color={pendingMember.color}
         palette={isPet ? PET_COLORS : PROFILE_COLORS}
-        takenColors={isPet ? getTakenColorsForPet(member.id) : getTakenColorsForPerson(member.id)}
+        takenColors={
+          isPet
+            ? getTakenColorsForPet(member.id)
+            : getTakenColorsForPerson(member.id)
+        }
         onChangeName={(t) => setPendingMember((p) => p && { ...p, name: t })}
         onChangeColor={(c) => setPendingMember((p) => p && { ...p, color: c })}
         onConfirm={confirmPendingMember}
@@ -102,7 +128,11 @@ export default function FamilyProfileScreen() {
               accessibilityLabel="חזרה"
               className="p-2"
             >
-              <MaterialIcons name="arrow-forward" size={24} color={colors.slate} />
+              <MaterialIcons
+                name="arrow-forward"
+                size={24}
+                color={colors.slate}
+              />
             </Pressable>
             <Text
               className="text-base font-bold text-right"
@@ -168,7 +198,10 @@ export default function FamilyProfileScreen() {
                 />
               </View>
               {personalSaved ? (
-                <Text className="text-xs text-right mt-1 mb-4" style={{ color: colors.primary }}>
+                <Text
+                  className="text-xs text-right mt-1 mb-4"
+                  style={{ color: colors.primary }}
+                >
                   נשמר ✓
                 </Text>
               ) : (
@@ -223,7 +256,11 @@ export default function FamilyProfileScreen() {
             accessibilityLabel="חזרה"
             className="p-2"
           >
-            <MaterialIcons name="arrow-forward" size={24} color={colors.slate} />
+            <MaterialIcons
+              name="arrow-forward"
+              size={24}
+              color={colors.slate}
+            />
           </Pressable>
           <Text
             className="text-base font-bold text-right"
@@ -253,7 +290,9 @@ export default function FamilyProfileScreen() {
                 <MaterialIcons name="person" size={28} color="white" />
               </View>
               <View className="flex-1">
-                <Text className="text-xs text-gray-400 text-right mb-1">השם שלך</Text>
+                <Text className="text-xs text-gray-400 text-right mb-1">
+                  השם שלך
+                </Text>
                 <View
                   className="flex-row items-center bg-[#f6f7f8] rounded-xl overflow-hidden"
                   style={{ minHeight: 44 }}
@@ -281,7 +320,10 @@ export default function FamilyProfileScreen() {
                   />
                 </View>
                 {ownerSaved ? (
-                  <Text className="text-xs text-right mt-1" style={{ color: colors.primary }}>
+                  <Text
+                    className="text-xs text-right mt-1"
+                    style={{ color: colors.primary }}
+                  >
                     נשמר ✓
                   </Text>
                 ) : null}
@@ -323,8 +365,15 @@ export default function FamilyProfileScreen() {
                     accessibilityLabel="הוספת בן משפחה"
                     className="flex-row-reverse items-center gap-2 px-5 py-2.5 rounded-full border border-gray-300"
                   >
-                    <MaterialIcons name="person-add" size={18} color={colors.primary} />
-                    <Text style={{ color: colors.primary }} className="font-semibold">
+                    <MaterialIcons
+                      name="person-add"
+                      size={18}
+                      color={colors.primary}
+                    />
+                    <Text
+                      style={{ color: colors.primary }}
+                      className="font-semibold"
+                    >
                       הוספת בן משפחה +
                     </Text>
                   </Pressable>
@@ -333,16 +382,16 @@ export default function FamilyProfileScreen() {
             ) : (
               <>
                 {personMembers.map((member) =>
-                  editingId === member.id && pendingMember
-                    ? renderEditCard(member)
-                    : (
-                      <FamilyMemberDisplayCard
-                        key={member.id}
-                        member={member}
-                        onEdit={() => startEditMember(member)}
-                        onRemove={() => removeMember(member.id)}
-                      />
-                    )
+                  editingId === member.id && pendingMember ? (
+                    renderEditCard(member)
+                  ) : (
+                    <FamilyMemberDisplayCard
+                      key={member.id}
+                      member={member}
+                      onEdit={() => startEditMember(member)}
+                      onRemove={() => removeMember(member.id)}
+                    />
+                  )
                 )}
                 {isAddingNewPerson && pendingMember && (
                   <FamilyMemberEditCard
@@ -350,8 +399,12 @@ export default function FamilyProfileScreen() {
                     color={pendingMember.color}
                     palette={PROFILE_COLORS}
                     takenColors={getTakenColorsForPerson()}
-                    onChangeName={(t) => setPendingMember((p) => p && { ...p, name: t })}
-                    onChangeColor={(c) => setPendingMember((p) => p && { ...p, color: c })}
+                    onChangeName={(t) =>
+                      setPendingMember((p) => p && { ...p, name: t })
+                    }
+                    onChangeColor={(c) =>
+                      setPendingMember((p) => p && { ...p, color: c })
+                    }
                     onConfirm={confirmPendingMember}
                     onCancel={cancelPending}
                     label="הוספת בן משפחה:"
@@ -365,8 +418,15 @@ export default function FamilyProfileScreen() {
                     accessibilityLabel="הוספת בן משפחה נוסף"
                     className="flex-row-reverse items-center justify-center gap-2 py-3 border border-dashed border-gray-200 rounded-xl mt-1"
                   >
-                    <MaterialIcons name="person-add" size={18} color={colors.primary} />
-                    <Text style={{ color: colors.primary }} className="font-semibold">
+                    <MaterialIcons
+                      name="person-add"
+                      size={18}
+                      color={colors.primary}
+                    />
+                    <Text
+                      style={{ color: colors.primary }}
+                      className="font-semibold"
+                    >
                       הוספת בן משפחה +
                     </Text>
                   </Pressable>
@@ -401,8 +461,15 @@ export default function FamilyProfileScreen() {
                     accessibilityLabel="הוספת חיית מחמד"
                     className="flex-row-reverse items-center gap-2 mt-3 px-5 py-2.5 rounded-full border border-gray-300"
                   >
-                    <MaterialIcons name="pets" size={18} color={colors.primary} />
-                    <Text style={{ color: colors.primary }} className="font-semibold">
+                    <MaterialIcons
+                      name="pets"
+                      size={18}
+                      color={colors.primary}
+                    />
+                    <Text
+                      style={{ color: colors.primary }}
+                      className="font-semibold"
+                    >
                       הוספת חיית מחמד
                     </Text>
                   </Pressable>
@@ -411,16 +478,16 @@ export default function FamilyProfileScreen() {
             ) : (
               <>
                 {petMembers.map((member) =>
-                  editingId === member.id && pendingMember
-                    ? renderEditCard(member)
-                    : (
-                      <FamilyMemberDisplayCard
-                        key={member.id}
-                        member={member}
-                        onEdit={() => startEditMember(member)}
-                        onRemove={() => removeMember(member.id)}
-                      />
-                    )
+                  editingId === member.id && pendingMember ? (
+                    renderEditCard(member)
+                  ) : (
+                    <FamilyMemberDisplayCard
+                      key={member.id}
+                      member={member}
+                      onEdit={() => startEditMember(member)}
+                      onRemove={() => removeMember(member.id)}
+                    />
+                  )
                 )}
                 {isAddingNewPet && pendingMember && (
                   <FamilyMemberEditCard
@@ -428,8 +495,12 @@ export default function FamilyProfileScreen() {
                     color={pendingMember.color}
                     palette={PET_COLORS}
                     takenColors={getTakenColorsForPet()}
-                    onChangeName={(t) => setPendingMember((p) => p && { ...p, name: t })}
-                    onChangeColor={(c) => setPendingMember((p) => p && { ...p, color: c })}
+                    onChangeName={(t) =>
+                      setPendingMember((p) => p && { ...p, name: t })
+                    }
+                    onChangeColor={(c) =>
+                      setPendingMember((p) => p && { ...p, color: c })
+                    }
                     onConfirm={confirmPendingMember}
                     onCancel={cancelPending}
                     label="הוספת חיית מחמד:"
@@ -443,8 +514,15 @@ export default function FamilyProfileScreen() {
                     accessibilityLabel="הוספת חיית מחמד נוספת"
                     className="flex-row-reverse items-center justify-center gap-2 py-3 border border-dashed border-gray-200 rounded-xl mt-1"
                   >
-                    <MaterialIcons name="pets" size={18} color={colors.primary} />
-                    <Text style={{ color: colors.primary }} className="font-semibold">
+                    <MaterialIcons
+                      name="pets"
+                      size={18}
+                      color={colors.primary}
+                    />
+                    <Text
+                      style={{ color: colors.primary }}
+                      className="font-semibold"
+                    >
                       הוספת חיית מחמד
                     </Text>
                   </Pressable>

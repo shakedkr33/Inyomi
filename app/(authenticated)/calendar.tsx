@@ -1,9 +1,7 @@
-import { api } from '@/convex/_generated/api';
-import type { Id } from '@/convex/_generated/dataModel';
 import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery } from 'convex/react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -23,6 +21,8 @@ import ReAnimated, {
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNotifications } from '@/contexts/NotificationsContext';
+import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 import { useBirthdaySheets } from '@/lib/components/birthday/BirthdaySheetsProvider';
 import { NotificationsDrawer } from '@/lib/components/notifications/NotificationsDrawer';
 import { rtl } from '@/lib/rtl';
@@ -358,7 +358,11 @@ function getFirstDayOfMonth(year: number, month: number): number {
   return new Date(year, month, 1).getDay();
 }
 
-function generateCalendarGrid(year: number, month: number, monthlyEventsOverride?: Record<number, CalendarEvent[]>): CalendarDay[][] {
+function generateCalendarGrid(
+  year: number,
+  month: number,
+  monthlyEventsOverride?: Record<number, CalendarEvent[]>
+): CalendarDay[][] {
   const now = new Date();
   const todayDay = now.getDate();
   const todayMonth = now.getMonth();
@@ -417,9 +421,11 @@ function generateCalendarGrid(year: number, month: number, monthlyEventsOverride
 // ===== Main Component =====
 export default function CalendarScreen(): React.JSX.Element {
   const router = useRouter();
-  const rawCommunityId = useLocalSearchParams<{ communityId?: string }>().communityId;
+  const rawCommunityId = useLocalSearchParams<{ communityId?: string }>()
+    .communityId;
   // Guard against the string "undefined" being passed as a route param
-  const communityId = rawCommunityId === 'undefined' ? undefined : rawCommunityId;
+  const communityId =
+    rawCommunityId === 'undefined' ? undefined : rawCommunityId;
 
   const communityEvents = useQuery(
     api.events.listByCommunity,
@@ -460,7 +466,12 @@ export default function CalendarScreen(): React.JSX.Element {
 
   // === Calendar grid data — suppress mock dots when community filter is active ===
   const grid = useMemo(
-    () => generateCalendarGrid(displayYear, displayMonth, isFiltered ? {} : undefined),
+    () =>
+      generateCalendarGrid(
+        displayYear,
+        displayMonth,
+        isFiltered ? {} : undefined
+      ),
     [displayYear, displayMonth, isFiltered]
   );
 
@@ -668,7 +679,7 @@ export default function CalendarScreen(): React.JSX.Element {
       // Immediately snap — no animation delay since this is initialization
       slideAnim.setValue(1);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [communityId]); // slideAnim is stable (useState), excluded to avoid re-run
 
   // ── Build timeline data: use real events when filtering by community
@@ -682,13 +693,16 @@ export default function CalendarScreen(): React.JSX.Element {
     // Filtered and loaded but no events — return empty
     if (communityEvents.length === 0) return [];
 
-    const grouped: Record<string, {
-      dayLabel: string;
-      dayNumber: string;
-      isToday: boolean;
-      events: typeof MOCK_TIMELINE_DATA[0]['events'];
-      sortKey: number;
-    }> = {};
+    const grouped: Record<
+      string,
+      {
+        dayLabel: string;
+        dayNumber: string;
+        isToday: boolean;
+        events: (typeof MOCK_TIMELINE_DATA)[0]['events'];
+        sortKey: number;
+      }
+    > = {};
 
     const todayD = new Date();
     for (const event of communityEvents) {
@@ -733,8 +747,8 @@ export default function CalendarScreen(): React.JSX.Element {
 
   // DEBUG — remove after validation
   console.log('CALENDAR DEBUG:', {
-    rawCommunityId,                              // what actually arrives in the param
-    communityId,                                 // after "undefined" string guard
+    rawCommunityId, // what actually arrives in the param
+    communityId, // after "undefined" string guard
     isFiltered,
     viewMode,
     communityEventsLength: communityEvents?.length, // undefined=loading, 0=empty, N=has events
@@ -757,7 +771,9 @@ export default function CalendarScreen(): React.JSX.Element {
               <MaterialIcons name="close" size={16} color="#fff" />
             </Pressable>
             <Text style={styles.communityBannerText}>
-              {communityData?.name ? `מסונן לפי: ${communityData.name}` : 'מסונן לפי קהילה'}
+              {communityData?.name
+                ? `מסונן לפי: ${communityData.name}`
+                : 'מסונן לפי קהילה'}
             </Text>
             <MaterialIcons name="filter-list" size={16} color="#fff" />
           </View>
@@ -1356,7 +1372,16 @@ function TimelineView({
 }): React.JSX.Element {
   if (data.length === 0) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 48, gap: 16, paddingTop: 80 }}>
+      <View
+        style={{
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 48,
+          gap: 16,
+          paddingTop: 80,
+        }}
+      >
         <MaterialIcons name="event-busy" size={48} color="#d1d5db" />
         <Text style={{ fontSize: 16, color: '#9ca3af', textAlign: 'center' }}>
           אין אירועים לקהילה זו

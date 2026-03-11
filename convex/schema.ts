@@ -63,8 +63,8 @@ export default defineSchema({
   events: defineTable({
     title: v.string(),
     description: v.optional(v.string()),
-    startTime: v.number(),         // Unix timestamp (ms)
-    endTime: v.number(),           // Unix timestamp (ms)
+    startTime: v.number(), // Unix timestamp (ms)
+    endTime: v.number(), // Unix timestamp (ms)
     spaceId: v.optional(v.id('spaces')),
     category: v.optional(v.string()),
     location: v.optional(v.string()),
@@ -77,12 +77,15 @@ export default defineSchema({
     createdAt: v.number(),
     // MVP additions
     allDay: v.optional(v.boolean()),
-    locationUrl: v.optional(v.string()),   // Google Maps / Waze link
-    onlineUrl: v.optional(v.string()),     // Zoom / Meet link
+    locationUrl: v.optional(v.string()), // Google Maps / Waze link
+    onlineUrl: v.optional(v.string()), // Zoom / Meet link
     // TODO: migrate groupId → communityId (groupId was v.optional(v.id('spaces')))
     sharedWithUserIds: v.optional(v.array(v.id('users'))), // משתמשים מוזמנים
     communityId: v.optional(v.id('communities')),
     requiresRsvp: v.optional(v.boolean()), // האם האירוע דורש אישור השתתפות
+    status: v.optional(v.union(v.literal('active'), v.literal('cancelled'))),
+    cancelledAt: v.optional(v.number()),
+    cancelReason: v.optional(v.string()),
   })
     .index('by_space_and_time', ['spaceId', 'startTime'])
     .index('by_creator', ['createdBy'])
@@ -96,7 +99,7 @@ export default defineSchema({
     title: v.string(),
     description: v.optional(v.string()),
     dueDate: v.optional(v.number()), // null = ללא תאריך (undated task)
-    completed: v.boolean(),          // החליף את status
+    completed: v.boolean(), // החליף את status
     spaceId: v.optional(v.id('spaces')),
     assignedTo: v.optional(v.id('users')),
     category: v.optional(v.string()),
@@ -104,7 +107,7 @@ export default defineSchema({
     createdBy: v.id('users'),
     createdAt: v.number(),
     communityId: v.optional(v.id('communities')), // קהילה שאליה שייכת המשימה
-    completedAt: v.optional(v.number()),           // חותמת זמן השלמה (לצורך היסטוריה)
+    completedAt: v.optional(v.number()), // חותמת זמן השלמה (לצורך היסטוריה)
   })
     .index('by_space_completed', ['spaceId', 'completed'])
     .index('by_assigned', ['assignedTo'])
@@ -177,8 +180,8 @@ export default defineSchema({
   // ═══════════════════════════════════════════════════════
   dailyMoods: defineTable({
     userId: v.id('users'),
-    date: v.string(),              // YYYY-MM-DD
-    moodValue: v.number(),         // 0–4
+    date: v.string(), // YYYY-MM-DD
+    moodValue: v.number(), // 0–4
     note: v.optional(v.string()),
     createdAt: v.number(),
   }).index('by_user_date', ['userId', 'date']),
@@ -188,11 +191,7 @@ export default defineSchema({
   // ═══════════════════════════════════════════════════════
   subscriptions: defineTable({
     userId: v.id('users'),
-    plan: v.union(
-      v.literal('free'),
-      v.literal('plus'),
-      v.literal('family')
-    ),
+    plan: v.union(v.literal('free'), v.literal('plus'), v.literal('family')),
     status: v.union(
       v.literal('active'),
       v.literal('trial'),
@@ -205,8 +204,8 @@ export default defineSchema({
       v.literal('stripe'),
       v.literal('demo')
     ),
-    productId: v.optional(v.string()),  // מזהה מוצר ב-RevenueCat
-    expiresAt: v.optional(v.number()),  // null = חינמי / ללא תפוגה
+    productId: v.optional(v.string()), // מזהה מוצר ב-RevenueCat
+    expiresAt: v.optional(v.number()), // null = חינמי / ללא תפוגה
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index('by_user', ['userId']),
@@ -216,18 +215,20 @@ export default defineSchema({
   // ═══════════════════════════════════════════════════════
   communities: defineTable({
     name: v.string(),
-    description: v.optional(v.string()),   // תיאור קצר (חדש)
+    description: v.optional(v.string()), // תיאור קצר (חדש)
     ownerId: v.id('users'),
-    spaceId: v.optional(v.id('spaces')),   // optional – לא תמיד משויך ל-space
-    category: v.optional(v.union(
-      v.literal('school'),
-      v.literal('kindergarten'),
-      v.literal('club'),
-      v.literal('family'),
-      v.literal('work'),
-      v.literal('personal'),
-      v.literal('other')
-    )),
+    spaceId: v.optional(v.id('spaces')), // optional – לא תמיד משויך ל-space
+    category: v.optional(
+      v.union(
+        v.literal('school'),
+        v.literal('kindergarten'),
+        v.literal('club'),
+        v.literal('family'),
+        v.literal('work'),
+        v.literal('personal'),
+        v.literal('other')
+      )
+    ),
     tags: v.optional(v.array(v.string())),
     color: v.optional(v.string()),
     inviteCode: v.string(),
@@ -245,11 +246,7 @@ export default defineSchema({
   communityMembers: defineTable({
     communityId: v.id('communities'),
     userId: v.id('users'),
-    role: v.union(
-      v.literal('owner'),
-      v.literal('admin'),
-      v.literal('member')
-    ),
+    role: v.union(v.literal('owner'), v.literal('admin'), v.literal('member')),
     pinned: v.boolean(),
     notificationsEnabled: v.boolean(),
     joinedAt: v.number(),

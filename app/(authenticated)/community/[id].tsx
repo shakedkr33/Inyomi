@@ -1,9 +1,7 @@
-import { api } from '@/convex/_generated/api';
-import type { Id } from '@/convex/_generated/dataModel';
 import { Ionicons } from '@expo/vector-icons';
+import { useMutation, useQuery } from 'convex/react';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useMutation, useQuery } from 'convex/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -21,6 +19,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -31,8 +31,12 @@ const TABS = ['הכל', 'אירועים', 'תזכורות', 'פעילות'] as c
 type Tab = (typeof TABS)[number];
 
 const EVENT_COLORS = [
-  '#36a9e2', '#f59e0b', '#10b981',
-  '#8b5cf6', '#f43f5e', '#6366f1',
+  '#36a9e2',
+  '#f59e0b',
+  '#10b981',
+  '#8b5cf6',
+  '#f43f5e',
+  '#6366f1',
 ] as const;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -50,6 +54,9 @@ interface EventDoc {
   communityId?: Id<'communities'>;
   requiresRsvp?: boolean;
   createdBy?: Id<'users'>;
+  status?: 'active' | 'cancelled';
+  cancelledAt?: number;
+  cancelReason?: string;
 }
 
 interface TaskDoc {
@@ -65,7 +72,7 @@ interface TaskDoc {
 function getEventColor(id: string): string {
   let hash = 0;
   for (let i = 0; i < id.length; i++) {
-    hash = ((hash << 5) - hash) + id.charCodeAt(i);
+    hash = (hash << 5) - hash + id.charCodeAt(i);
     hash |= 0;
   }
   return EVENT_COLORS[Math.abs(hash) % EVENT_COLORS.length];
@@ -87,7 +94,10 @@ function formatEventDate(ts: number, allDay?: boolean): string {
     return d.toLocaleDateString('he-IL', { day: 'numeric', month: 'short' });
   }
   return d.toLocaleDateString('he-IL', {
-    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
   });
 }
 
@@ -95,7 +105,10 @@ function formatEventDateTime(ts: number, allDay?: boolean): string {
   const d = new Date(ts);
   const day = d.toLocaleDateString('he-IL', { day: 'numeric', month: 'long' });
   if (allDay) return day;
-  const time = d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  const time = d.toLocaleTimeString('he-IL', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
   return `${day} • ${time}`;
 }
 
@@ -108,7 +121,10 @@ function formatDueDate(ts: number): string {
   if (diff === 0) return 'היום';
   if (diff === 1) return 'מחר';
   if (diff === -1) return 'אתמול';
-  return new Date(ts).toLocaleDateString('he-IL', { day: 'numeric', month: 'short' });
+  return new Date(ts).toLocaleDateString('he-IL', {
+    day: 'numeric',
+    month: 'short',
+  });
 }
 
 // ─── RSVP Bottom Sheet ────────────────────────────────────────────────────────
@@ -120,13 +136,23 @@ interface RsvpSheetProps {
   onClose: () => void;
 }
 
-const RSVP_OPTIONS: { status: RsvpStatus; label: string; icon: React.ComponentProps<typeof Ionicons>['name']; color: string }[] = [
-  { status: 'yes',   label: 'כן',   icon: 'checkmark-circle', color: '#22c55e' },
-  { status: 'maybe', label: 'אולי', icon: 'help-circle',       color: '#eab308' },
-  { status: 'no',    label: 'לא',   icon: 'close-circle',      color: '#ef4444' },
+const RSVP_OPTIONS: {
+  status: RsvpStatus;
+  label: string;
+  icon: React.ComponentProps<typeof Ionicons>['name'];
+  color: string;
+}[] = [
+  { status: 'yes', label: 'כן', icon: 'checkmark-circle', color: '#22c55e' },
+  { status: 'maybe', label: 'אולי', icon: 'help-circle', color: '#eab308' },
+  { status: 'no', label: 'לא', icon: 'close-circle', color: '#ef4444' },
 ];
 
-function RsvpBottomSheet({ eventId, currentStatus, onSelect, onClose }: RsvpSheetProps) {
+function RsvpBottomSheet({
+  eventId,
+  currentStatus,
+  onSelect,
+  onClose,
+}: RsvpSheetProps) {
   const slideAnim = useRef(new Animated.Value(300)).current;
 
   useEffect(() => {
@@ -175,7 +201,10 @@ function RsvpBottomSheet({ eventId, currentStatus, onSelect, onClose }: RsvpShee
             <Text
               style={[
                 styles.sheetOptionText,
-                currentStatus === opt.status && { color: opt.color, fontWeight: '700' },
+                currentStatus === opt.status && {
+                  color: opt.color,
+                  fontWeight: '700',
+                },
               ]}
             >
               {opt.label}
@@ -198,7 +227,12 @@ interface AddPopoverMenuProps {
   onClose: () => void;
 }
 
-function AddPopoverMenu({ visible, position, communityId, onClose }: AddPopoverMenuProps) {
+function AddPopoverMenu({
+  visible,
+  position,
+  communityId,
+  onClose,
+}: AddPopoverMenuProps) {
   const router = useRouter();
   if (!visible) return null;
   return (
@@ -210,7 +244,9 @@ function AddPopoverMenu({ visible, position, communityId, onClose }: AddPopoverM
           onPress={() => {
             onClose();
             router.push(
-              `/(authenticated)/event/new?communityId=${communityId}` as Parameters<typeof router.push>[0]
+              `/(authenticated)/event/new?communityId=${communityId}` as Parameters<
+                typeof router.push
+              >[0]
             );
           }}
           accessible
@@ -225,7 +261,9 @@ function AddPopoverMenu({ visible, position, communityId, onClose }: AddPopoverM
           onPress={() => {
             onClose();
             router.push(
-              `/(authenticated)/community-reminder/new?communityId=${communityId}` as Parameters<typeof router.push>[0]
+              `/(authenticated)/community-reminder/new?communityId=${communityId}` as Parameters<
+                typeof router.push
+              >[0]
             );
           }}
           accessible
@@ -246,34 +284,61 @@ interface EventCardProps {
   event: EventDoc;
   rsvpStatus: RsvpStatus;
   currentUserId?: Id<'users'>;
+  isCancelled?: boolean;
 }
 
-function EventCard({ event, rsvpStatus, currentUserId }: EventCardProps) {
+function EventCard({
+  event,
+  rsvpStatus,
+  currentUserId,
+  isCancelled,
+}: EventCardProps) {
   const router = useRouter();
   const color = getEventColor(event._id);
-  const isCreator = currentUserId !== undefined && event.createdBy === currentUserId;
+  const isCreator =
+    currentUserId !== undefined && event.createdBy === currentUserId;
 
-  // Badge — only shown when requiresRsvp is true and user is not the creator
+  // Badge — when isCancelled: always "בוטל"; else when requiresRsvp and not creator: RSVP badge
   let badgeLabel = '';
   let badgeColor = '';
-  if (event.requiresRsvp && !isCreator) {
-    if (rsvpStatus === 'yes') { badgeLabel = 'נוסף ליומן ✓'; badgeColor = '#22c55e'; }
-    else if (rsvpStatus === 'maybe') { badgeLabel = 'אולי'; badgeColor = '#eab308'; }
-    else { badgeLabel = 'ממתין לאישור'; badgeColor = '#eab308'; }
+  if (isCancelled) {
+    badgeLabel = 'בוטל';
+    badgeColor = '#fee2e2';
+  } else if (event.requiresRsvp && !isCreator) {
+    if (rsvpStatus === 'yes') {
+      badgeLabel = 'נוסף ליומן ✓';
+      badgeColor = '#22c55e';
+    } else if (rsvpStatus === 'maybe') {
+      badgeLabel = 'אולי';
+      badgeColor = '#eab308';
+    } else {
+      badgeLabel = 'ממתין לאישור';
+      badgeColor = '#eab308';
+    }
   }
 
   const dateStr = formatEventDateTime(event.startTime, event.allDay);
 
   return (
     <Pressable
-      style={styles.eventCard}
-      onPress={() => router.push({ pathname: '/(authenticated)/event/[id]', params: { id: event._id } })}
+      style={[styles.eventCard, isCancelled && { opacity: 0.6 }]}
+      onPress={
+        isCancelled
+          ? undefined
+          : () =>
+              router.push({
+                pathname: '/(authenticated)/event/[id]',
+                params: { id: event._id },
+              })
+      }
       accessible
       accessibilityRole="button"
       accessibilityLabel={event.title}
     >
       {/* Solid color base */}
-      <View style={[StyleSheet.absoluteFillObject, { backgroundColor: color }]} />
+      <View
+        style={[StyleSheet.absoluteFillObject, { backgroundColor: color }]}
+      />
 
       {/* Gradient overlay — transparent top to dark bottom */}
       <LinearGradient
@@ -284,17 +349,34 @@ function EventCard({ event, rsvpStatus, currentUserId }: EventCardProps) {
 
       {/* Badge — absolute top-right */}
       {badgeLabel !== '' && (
-        <View style={[styles.eventCardBadge, { backgroundColor: badgeColor }]}>
-          <Text style={styles.eventCardBadgeText}>{badgeLabel}</Text>
+        <View
+          style={[
+            styles.eventCardBadge,
+            { backgroundColor: badgeColor },
+            isCancelled && styles.eventCardBadgeCancelled,
+          ]}
+        >
+          <Text
+            style={[
+              styles.eventCardBadgeText,
+              isCancelled && styles.eventCardBadgeTextCancelled,
+            ]}
+          >
+            {badgeLabel}
+          </Text>
         </View>
       )}
 
       {/* Bottom content */}
       <View style={styles.eventCardBottom}>
-        <Text style={styles.eventCardTitle} numberOfLines={2}>{event.title}</Text>
+        <Text style={styles.eventCardTitle} numberOfLines={2}>
+          {event.title}
+        </Text>
         <Text style={styles.eventCardMeta}>{dateStr}</Text>
         {event.location ? (
-          <Text style={styles.eventCardMeta} numberOfLines={1}>{event.location}</Text>
+          <Text style={styles.eventCardMeta} numberOfLines={1}>
+            {event.location}
+          </Text>
         ) : null}
         {rsvpStatus === 'yes' ? (
           <Text style={styles.eventCardConfirmed}>אישרת הגעה ✓</Text>
@@ -310,44 +392,104 @@ interface EventRowProps {
   event: EventDoc;
   rsvpStatus: RsvpStatus;
   onRsvpPress: (eventId: Id<'events'>) => void;
+  isCancelled?: boolean;
+  cancelReason?: string;
 }
 
-function EventRow({ event, rsvpStatus, onRsvpPress }: EventRowProps) {
+function EventRow({
+  event,
+  rsvpStatus,
+  onRsvpPress,
+  isCancelled,
+  cancelReason,
+}: EventRowProps) {
   const past = isEventPast(event);
 
   let badgeLabel = '';
   let badgeColor = '#eab308';
-  if (rsvpStatus === 'yes') { badgeLabel = 'כן'; badgeColor = '#22c55e'; }
-  else if (rsvpStatus === 'maybe') { badgeLabel = 'אולי'; badgeColor = '#eab308'; }
-  else if (rsvpStatus === 'no') { badgeLabel = 'לא'; badgeColor = '#ef4444'; }
+  if (isCancelled) {
+    badgeLabel = 'בוטל';
+    badgeColor = '#fee2e2';
+  } else if (rsvpStatus === 'yes') {
+    badgeLabel = 'כן';
+    badgeColor = '#22c55e';
+  } else if (rsvpStatus === 'maybe') {
+    badgeLabel = 'אולי';
+    badgeColor = '#eab308';
+  } else if (rsvpStatus === 'no') {
+    badgeLabel = 'לא';
+    badgeColor = '#ef4444';
+  }
+
+  const showRsvpBadge =
+    !isCancelled && !past && (event.requiresRsvp || rsvpStatus !== 'none');
+  const showCancelledBadge = isCancelled;
 
   return (
-    <View style={[styles.eventRow, past && { opacity: 0.45 }]}>
+    <View
+      style={[
+        styles.eventRow,
+        past && { opacity: 0.45 },
+        isCancelled && { opacity: 0.5 },
+      ]}
+    >
       <View style={styles.eventRowLeft}>
         <Text style={styles.eventRowDate}>
           {new Date(event.startTime).toLocaleDateString('he-IL', {
-            day: 'numeric', month: 'short',
+            day: 'numeric',
+            month: 'short',
           })}
         </Text>
-        <View style={[styles.eventDot, { backgroundColor: getEventColor(event._id) }]} />
+        <View
+          style={[
+            styles.eventDot,
+            { backgroundColor: getEventColor(event._id) },
+          ]}
+        />
       </View>
       <View style={styles.eventRowContent}>
         <View style={styles.eventRowTop}>
-          {past && (
-            <View style={[styles.eventBadge, { backgroundColor: '#94a3b8', marginLeft: 0, marginRight: 6 }]}>
+          {past && !isCancelled && (
+            <View
+              style={[
+                styles.eventBadge,
+                { backgroundColor: '#94a3b8', marginLeft: 0, marginRight: 6 },
+              ]}
+            >
               <Text style={styles.eventBadgeText}>עבר</Text>
             </View>
           )}
-          <Text style={[styles.eventRowTitle, past && { color: '#9ca3af' }]} numberOfLines={2}>
+          <Text
+            style={[
+              styles.eventRowTitle,
+              past && !isCancelled && { color: '#9ca3af' },
+            ]}
+            numberOfLines={2}
+          >
             {event.title}
           </Text>
         </View>
+        {cancelReason ? (
+          <Text style={styles.eventRowCancelReason} numberOfLines={1}>
+            {cancelReason}
+          </Text>
+        ) : null}
         {event.location ? (
-          <Text style={[styles.eventRowLocation, past && { color: '#c4c9d4' }]} numberOfLines={1}>
+          <Text
+            style={[
+              styles.eventRowLocation,
+              past && !isCancelled && { color: '#c4c9d4' },
+            ]}
+            numberOfLines={1}
+          >
             📍 {event.location}
           </Text>
         ) : null}
-        {!past && (event.requiresRsvp || rsvpStatus !== 'none') && (
+        {showCancelledBadge ? (
+          <View style={styles.eventRowCancelledBadge}>
+            <Text style={styles.eventRowCancelledBadgeText}>{badgeLabel}</Text>
+          </View>
+        ) : showRsvpBadge ? (
           <TouchableOpacity
             style={[styles.rsvpStatusBadge, { backgroundColor: badgeColor }]}
             onPress={() => onRsvpPress(event._id)}
@@ -356,7 +498,7 @@ function EventRow({ event, rsvpStatus, onRsvpPress }: EventRowProps) {
               {badgeLabel !== '' ? `${badgeLabel} ▾` : 'ממתין לאישור ▾'}
             </Text>
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
     </View>
   );
@@ -382,7 +524,10 @@ function TaskRow({ task, onToggle }: TaskRowProps) {
       <View style={[styles.checkbox, task.completed && styles.checkboxChecked]}>
         {task.completed && <Ionicons name="checkmark" size={13} color="#fff" />}
       </View>
-      <Text style={[styles.taskTitle, task.completed && styles.taskTitleDone]} numberOfLines={2}>
+      <Text
+        style={[styles.taskTitle, task.completed && styles.taskTitleDone]}
+        numberOfLines={2}
+      >
         {task.title}
       </Text>
       {task.dueDate !== undefined ? (
@@ -401,19 +546,30 @@ interface SectionHeaderProps {
   onAction?: () => void;
 }
 
-function SectionHeader({ title, subtitle, actionLabel, onAction }: SectionHeaderProps) {
+function SectionHeader({
+  title,
+  subtitle,
+  actionLabel,
+  onAction,
+}: SectionHeaderProps) {
   return (
     <View style={styles.sectionHeader}>
       <View style={styles.sectionLeft}>
         {actionLabel && onAction && (
-          <TouchableOpacity onPress={onAction} accessible accessibilityRole="button">
+          <TouchableOpacity
+            onPress={onAction}
+            accessible
+            accessibilityRole="button"
+          >
             <Text style={styles.sectionAction}>{actionLabel}</Text>
           </TouchableOpacity>
         )}
       </View>
       <View style={styles.sectionRight}>
         <Text style={styles.sectionTitle}>{title}</Text>
-        {subtitle ? <Text style={styles.sectionSubtitle}>{subtitle}</Text> : null}
+        {subtitle ? (
+          <Text style={styles.sectionSubtitle}>{subtitle}</Text>
+        ) : null}
       </View>
     </View>
   );
@@ -435,7 +591,12 @@ interface OverflowMenuProps {
   onClose: () => void;
 }
 
-function OverflowMenu({ visible, position, items, onClose }: OverflowMenuProps) {
+function OverflowMenu({
+  visible,
+  position,
+  items,
+  onClose,
+}: OverflowMenuProps) {
   if (!visible) return null;
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
@@ -444,16 +605,28 @@ function OverflowMenu({ visible, position, items, onClose }: OverflowMenuProps) 
         {items.map((m, idx) => (
           <Pressable
             key={m.label}
-            style={[styles.popoverItem, idx < items.length - 1 && styles.popoverBorder]}
-            onPress={() => { onClose(); m.onPress(); }}
+            style={[
+              styles.popoverItem,
+              idx < items.length - 1 && styles.popoverBorder,
+            ]}
+            onPress={() => {
+              onClose();
+              m.onPress();
+            }}
             accessible
             accessibilityRole="button"
             accessibilityLabel={m.label}
           >
-            <Text style={[styles.popoverLabel, m.danger && styles.popoverDanger]}>
+            <Text
+              style={[styles.popoverLabel, m.danger && styles.popoverDanger]}
+            >
               {m.label}
             </Text>
-            <Ionicons name={m.iconName} size={18} color={m.danger ? '#ef4444' : '#374151'} />
+            <Ionicons
+              name={m.iconName}
+              size={18}
+              color={m.danger ? '#ef4444' : '#374151'}
+            />
           </Pressable>
         ))}
       </View>
@@ -472,7 +645,12 @@ interface SearchModalProps {
 
 function SearchModal({ visible, value, onChange, onClose }: SearchModalProps) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
       <Pressable style={styles.searchBackdrop} onPress={onClose} />
       <View style={styles.searchBox}>
         <TextInput
@@ -512,13 +690,21 @@ function ReminderRowAll({ task, onToggle, onHide }: ReminderRowAllProps) {
       accessibilityState={{ checked: task.completed }}
     >
       {/* Checkbox — square, right side (first element in RTL row) */}
-      <View style={[styles.reminderCheckbox, task.completed && styles.reminderCheckboxDone]}>
+      <View
+        style={[
+          styles.reminderCheckbox,
+          task.completed && styles.reminderCheckboxDone,
+        ]}
+      >
         {task.completed && <Ionicons name="checkmark" size={13} color="#fff" />}
       </View>
 
       {/* Title */}
       <Text
-        style={[styles.reminderTitle, task.completed && styles.reminderTitleDone]}
+        style={[
+          styles.reminderTitle,
+          task.completed && styles.reminderTitleDone,
+        ]}
         numberOfLines={2}
       >
         {task.title}
@@ -582,12 +768,22 @@ function TabAll({
   currentUserId,
 }: TabAllProps) {
   // Stable timestamps — computed once on mount, never change
-  const windowStart = useMemo(() => Date.now(), []);
+  const windowStart = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }, []);
   const windowEnd = useMemo(() => NOW_PLUS_60_DAYS(), []);
 
   // Memoized query args — prevents Convex from seeing new object references each render
   const eventsArgs = useMemo(
-    () => ({ communityId, cursor: null as null, numItems: 8, fromTime: windowStart, toTime: windowEnd }),
+    () => ({
+      communityId,
+      cursor: null as null,
+      numItems: 8,
+      fromTime: windowStart,
+      toTime: windowEnd,
+    }),
     [communityId, windowStart, windowEnd]
   );
   const remindersArgs = useMemo(
@@ -596,7 +792,10 @@ function TabAll({
   );
 
   const eventsPage = useQuery(api.events.listByCommunityPaged, eventsArgs);
-  const remindersPage = useQuery(api.tasks.listCommunityRemindersPaged, remindersArgs);
+  const remindersPage = useQuery(
+    api.tasks.listCommunityRemindersPaged,
+    remindersArgs
+  );
 
   const events = (eventsPage?.page ?? []) as EventDoc[];
   const reminders = (remindersPage?.page ?? []) as TaskDoc[];
@@ -609,16 +808,22 @@ function TabAll({
 
   // Pending move state: items in the 600ms visual transition (open → completed)
   const [pendingMoveIds, setPendingMoveIds] = useState<Set<string>>(new Set());
-  const [pendingSnapshots, setPendingSnapshots] = useState<Map<string, TaskDoc>>(new Map());
+  const [pendingSnapshots, setPendingSnapshots] = useState<
+    Map<string, TaskDoc>
+  >(new Map());
+
+  const activeEvents = events.filter((ev) => ev.status !== 'cancelled');
 
   // Section 1: events the user already RSVPed to OR created by current user
-  const myEvents = events.filter(
-    (ev) => (rsvpMap[ev._id] ?? 'none') !== 'none' || ev.createdBy === currentUserId
+  const myEvents = activeEvents.filter(
+    (ev) =>
+      (rsvpMap[ev._id] ?? 'none') !== 'none' || ev.createdBy === currentUserId
   );
 
   // Section 3: events the user hasn't responded to AND not created by current user
-  const pendingEvents = events.filter(
-    (ev) => (rsvpMap[ev._id] ?? 'none') === 'none' && ev.createdBy !== currentUserId
+  const pendingEvents = activeEvents.filter(
+    (ev) =>
+      (rsvpMap[ev._id] ?? 'none') === 'none' && ev.createdBy !== currentUserId
   );
 
   // Section 2: merge query results with locally-completed tasks + pending-transition tasks
@@ -643,77 +848,108 @@ function TabAll({
         return snap ? [{ ...snap, completed: false }] : [];
       });
     return [...fromQuery, ...fromLocalCache, ...fromPendingCache];
-  }, [reminders, localCompletedIds, localTaskCache, pendingMoveIds, pendingSnapshots]);
+  }, [
+    reminders,
+    localCompletedIds,
+    localTaskCache,
+    pendingMoveIds,
+    pendingSnapshots,
+  ]);
 
-  const visibleForSection = allRemindersForSection.filter((t) => !hiddenReminderIds.has(t._id as string));
-  const openReminderItems = visibleForSection.filter((t) => !t.completed && !pendingMoveIds.has(t._id as string));
-  const pendingMoveItems = visibleForSection.filter((t) => pendingMoveIds.has(t._id as string));
-  const completedReminderItems = visibleForSection.filter((t) => t.completed && !pendingMoveIds.has(t._id as string));
+  const visibleForSection = allRemindersForSection.filter(
+    (t) => !hiddenReminderIds.has(t._id as string)
+  );
+  const openReminderItems = visibleForSection.filter(
+    (t) => !t.completed && !pendingMoveIds.has(t._id as string)
+  );
+  const pendingMoveItems = visibleForSection.filter((t) =>
+    pendingMoveIds.has(t._id as string)
+  );
+  const completedReminderItems = visibleForSection.filter(
+    (t) => t.completed && !pendingMoveIds.has(t._id as string)
+  );
   const openCount = openReminderItems.length + pendingMoveItems.length;
   const completedCount = completedReminderItems.length;
-  const remindersSummaryText = completedCount > 0
-    ? `${openCount} פתוחות · ${completedCount} הושלמו`
-    : `${openCount} פתוחות`;
+  const remindersSummaryText =
+    completedCount > 0
+      ? `${openCount} פתוחות · ${completedCount} הושלמו`
+      : `${openCount} פתוחות`;
 
-  const handleToggleInSection = useCallback((id: Id<'tasks'>) => {
-    const task = allRemindersForSection.find((t) => t._id === id);
-    const isEffectivelyCompleted = task?.completed ?? false;
-    const isPending = pendingMoveIds.has(id as string);
+  const handleToggleInSection = useCallback(
+    (id: Id<'tasks'>) => {
+      const task = allRemindersForSection.find((t) => t._id === id);
+      const isEffectivelyCompleted = task?.completed ?? false;
+      const isPending = pendingMoveIds.has(id as string);
 
-    if (!isEffectivelyCompleted && !isPending) {
-      // Open → completing: 600ms visual delay before moving to completed group
-      const taskSnapshot = task;
-      if (taskSnapshot) {
-        setPendingSnapshots((prev) => new Map(prev).set(id as string, taskSnapshot));
-      }
-      setPendingMoveIds((prev) => new Set([...prev, id as string]));
-      setTimeout(() => {
-        setPendingMoveIds((prev) => {
-          const s = new Set(prev);
-          s.delete(id as string);
-          return s;
-        });
-        setPendingSnapshots((prev) => {
-          const m = new Map(prev);
-          m.delete(id as string);
-          return m;
-        });
+      if (!isEffectivelyCompleted && !isPending) {
+        // Open → completing: 600ms visual delay before moving to completed group
+        const taskSnapshot = task;
         if (taskSnapshot) {
-          setLocalCompletedIds((prev) => new Set([...prev, id as string]));
-          setLocalTaskCache((prev) => new Map(prev).set(id as string, taskSnapshot));
+          setPendingSnapshots((prev) =>
+            new Map(prev).set(id as string, taskSnapshot)
+          );
         }
-      }, 600);
-    } else if (isEffectivelyCompleted || isPending) {
-      // Completed/pending → open
-      if (isPending) {
-        setPendingMoveIds((prev) => {
+        setPendingMoveIds((prev) => new Set([...prev, id as string]));
+        setTimeout(() => {
+          setPendingMoveIds((prev) => {
+            const s = new Set(prev);
+            s.delete(id as string);
+            return s;
+          });
+          setPendingSnapshots((prev) => {
+            const m = new Map(prev);
+            m.delete(id as string);
+            return m;
+          });
+          if (taskSnapshot) {
+            setLocalCompletedIds((prev) => new Set([...prev, id as string]));
+            setLocalTaskCache((prev) =>
+              new Map(prev).set(id as string, taskSnapshot)
+            );
+          }
+        }, 600);
+      } else if (isEffectivelyCompleted || isPending) {
+        // Completed/pending → open
+        if (isPending) {
+          setPendingMoveIds((prev) => {
+            const s = new Set(prev);
+            s.delete(id as string);
+            return s;
+          });
+          setPendingSnapshots((prev) => {
+            const m = new Map(prev);
+            m.delete(id as string);
+            return m;
+          });
+        }
+        setLocalCompletedIds((prev) => {
           const s = new Set(prev);
           s.delete(id as string);
           return s;
         });
-        setPendingSnapshots((prev) => {
-          const m = new Map(prev);
-          m.delete(id as string);
-          return m;
-        });
       }
-      setLocalCompletedIds((prev) => {
-        const s = new Set(prev);
-        s.delete(id as string);
-        return s;
-      });
-    }
-    onToggleTask(id);
-  }, [allRemindersForSection, pendingMoveIds, onToggleTask, setLocalCompletedIds, setLocalTaskCache]);
+      onToggleTask(id);
+    },
+    [
+      allRemindersForSection,
+      pendingMoveIds,
+      onToggleTask,
+      setLocalCompletedIds,
+      setLocalTaskCache,
+    ]
+  );
 
-  const handleHideReminder = useCallback((id: string) => {
-    setHiddenReminderIds((prev) => new Set([...prev, id]));
-    setLocalCompletedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
-  }, [setHiddenReminderIds, setLocalCompletedIds]);
+  const handleHideReminder = useCallback(
+    (id: string) => {
+      setHiddenReminderIds((prev) => new Set([...prev, id]));
+      setLocalCompletedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    },
+    [setHiddenReminderIds, setLocalCompletedIds]
+  );
 
   return (
     <ScrollView
@@ -731,7 +967,9 @@ function TabAll({
           <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
         ) : myEvents.length === 0 ? (
           <View style={styles.emptySmall}>
-            <Text style={styles.emptySmallText}>עדיין לא הצטרפת לאירועים בקהילה זו</Text>
+            <Text style={styles.emptySmallText}>
+              עדיין לא הצטרפת לאירועים בקהילה זו
+            </Text>
           </View>
         ) : (
           <View style={styles.eventsGrid}>
@@ -767,7 +1005,9 @@ function TabAll({
             />
             {!isLoadingReminders && (
               <View style={styles.reminderSummaryBadge}>
-                <Text style={styles.reminderSummaryText}>{remindersSummaryText}</Text>
+                <Text style={styles.reminderSummaryText}>
+                  {remindersSummaryText}
+                </Text>
               </View>
             )}
           </View>
@@ -776,8 +1016,8 @@ function TabAll({
         </Pressable>
 
         {/* Body — visible only when open */}
-        {isRemindersOpen && (
-          isLoadingReminders ? (
+        {isRemindersOpen &&
+          (isLoadingReminders ? (
             <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
           ) : (
             <View style={{ gap: 8, marginTop: 4 }}>
@@ -812,14 +1052,17 @@ function TabAll({
                 </>
               )}
               {/* Empty state */}
-              {openReminderItems.length === 0 && pendingMoveItems.length === 0 && completedReminderItems.length === 0 && (
-                <View style={styles.emptySmall}>
-                  <Text style={styles.emptySmallText}>אין תזכורות לקהילה זו</Text>
-                </View>
-              )}
+              {openReminderItems.length === 0 &&
+                pendingMoveItems.length === 0 &&
+                completedReminderItems.length === 0 && (
+                  <View style={styles.emptySmall}>
+                    <Text style={styles.emptySmallText}>
+                      אין תזכורות לקהילה זו
+                    </Text>
+                  </View>
+                )}
             </View>
-          )
-        )}
+          ))}
       </View>
 
       {/* ── Section 3: אירועים נוספים */}
@@ -875,6 +1118,7 @@ interface TabEventsProps {
   selectedMonth: Date;
   onMonthChange: (d: Date) => void;
   searchQuery: string;
+  currentUserId?: Id<'users'>;
 }
 
 function TabEvents({
@@ -884,17 +1128,32 @@ function TabEvents({
   selectedMonth,
   onMonthChange,
   searchQuery,
+  currentUserId,
 }: TabEventsProps) {
   const [cursor, setCursor] = useState<string | null>(null);
   const [accumulated, setAccumulated] = useState<EventDoc[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
 
   const monthStart = useMemo(
-    () => new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1).getTime(),
+    () =>
+      new Date(
+        selectedMonth.getFullYear(),
+        selectedMonth.getMonth(),
+        1
+      ).getTime(),
     [selectedMonth]
   );
   const monthEnd = useMemo(
-    () => new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0, 23, 59, 59, 999).getTime(),
+    () =>
+      new Date(
+        selectedMonth.getFullYear(),
+        selectedMonth.getMonth() + 1,
+        0,
+        23,
+        59,
+        59,
+        999
+      ).getTime(),
     [selectedMonth]
   );
 
@@ -910,8 +1169,12 @@ function TabEvents({
     if (page?.page) {
       setAccumulated((prev) => {
         const ids = new Set(prev.map((e) => e._id));
-        const newItems = (page.page as EventDoc[]).filter((e) => !ids.has(e._id));
-        return cursor === null ? (page.page as EventDoc[]) : [...prev, ...newItems];
+        const newItems = (page.page as EventDoc[]).filter(
+          (e) => !ids.has(e._id)
+        );
+        return cursor === null
+          ? (page.page as EventDoc[])
+          : [...prev, ...newItems];
       });
       setLoadingMore(false);
     }
@@ -923,8 +1186,17 @@ function TabEvents({
     setAccumulated([]);
   }, [monthStart]);
 
+  const gracePeriod = 14 * 24 * 60 * 60 * 1000;
+  const activeEvents = accumulated.filter((ev) => ev.status !== 'cancelled');
+  const cancelledEvents = accumulated.filter(
+    (ev) =>
+      ev.status === 'cancelled' &&
+      ev.cancelledAt !== undefined &&
+      Date.now() - ev.cancelledAt < gracePeriod
+  );
+
   const filtered = useMemo(() => {
-    let result = accumulated;
+    let result = activeEvents;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       result = result.filter(
@@ -941,10 +1213,11 @@ function TabEvents({
       if (aPast !== bPast) return aPast ? 1 : -1;
       return a.startTime - b.startTime;
     });
-  }, [accumulated, searchQuery]);
+  }, [activeEvents, searchQuery]);
 
   const monthLabel = selectedMonth.toLocaleDateString('he-IL', {
-    month: 'long', year: 'numeric',
+    month: 'long',
+    year: 'numeric',
   });
 
   const renderItem = useCallback(
@@ -1018,9 +1291,34 @@ function TabEvents({
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.3}
           ListFooterComponent={
-            loadingMore ? (
-              <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
-            ) : null
+            <View>
+              {loadingMore ? (
+                <ActivityIndicator
+                  color={PRIMARY}
+                  style={{ marginVertical: 16 }}
+                />
+              ) : null}
+              {cancelledEvents.length > 0 ? (
+                <View style={styles.cancelledEventsSection}>
+                  <Text style={styles.cancelledEventsTitle}>
+                    אירועים שבוטלו
+                  </Text>
+                  <Text style={styles.cancelledEventsSubtitle}>
+                    אירועים שבוטלו יימחקו לצמיתות לאחר 14 ימים מרגע ביטולם
+                  </Text>
+                  {cancelledEvents.map((ev) => (
+                    <EventRow
+                      key={ev._id}
+                      event={ev}
+                      rsvpStatus="none"
+                      onRsvpPress={() => {}}
+                      isCancelled
+                      cancelReason={ev.cancelReason}
+                    />
+                  ))}
+                </View>
+              ) : null}
+            </View>
           }
           showsVerticalScrollIndicator={false}
         />
@@ -1059,8 +1357,12 @@ function TabReminders({ communityId, onToggle }: TabRemindersProps) {
     if (page?.page) {
       setAccumulated((prev) => {
         const ids = new Set(prev.map((t) => t._id));
-        const newItems = (page.page as TaskDoc[]).filter((t) => !ids.has(t._id));
-        return cursor === null ? (page.page as TaskDoc[]) : [...prev, ...newItems];
+        const newItems = (page.page as TaskDoc[]).filter(
+          (t) => !ids.has(t._id)
+        );
+        return cursor === null
+          ? (page.page as TaskDoc[])
+          : [...prev, ...newItems];
       });
       setLoadingMore(false);
     }
@@ -1095,7 +1397,11 @@ function TabReminders({ communityId, onToggle }: TabRemindersProps) {
         <SectionHeader title="תזכורות פתוחות" />
         {accumulated.length === 0 ? (
           <View style={[styles.emptySmall, { alignItems: 'center', gap: 8 }]}>
-            <Ionicons name="checkmark-circle-outline" size={36} color="#d1d5db" />
+            <Ionicons
+              name="checkmark-circle-outline"
+              size={36}
+              color="#d1d5db"
+            />
             <Text style={[styles.emptySmallText, { textAlign: 'center' }]}>
               כל התזכורות טופלו 🎉
             </Text>
@@ -1106,7 +1412,10 @@ function TabReminders({ communityId, onToggle }: TabRemindersProps) {
               <ReminderRowAll key={t._id} task={t} onToggle={onToggle} />
             ))}
             {loadingMore ? (
-              <ActivityIndicator color={PRIMARY} style={{ marginVertical: 8 }} />
+              <ActivityIndicator
+                color={PRIMARY}
+                style={{ marginVertical: 8 }}
+              />
             ) : page?.isDone === false ? (
               <TouchableOpacity
                 onPress={handleLoadMore}
@@ -1115,7 +1424,11 @@ function TabReminders({ communityId, onToggle }: TabRemindersProps) {
                 accessibilityRole="button"
                 accessibilityLabel="טען עוד"
               >
-                <Text style={{ color: PRIMARY, fontSize: 14, fontWeight: '600' }}>טען עוד</Text>
+                <Text
+                  style={{ color: PRIMARY, fontSize: 14, fontWeight: '600' }}
+                >
+                  טען עוד
+                </Text>
               </TouchableOpacity>
             ) : null}
           </View>
@@ -1130,7 +1443,9 @@ function TabReminders({ communityId, onToggle }: TabRemindersProps) {
               onPress={() => setShowHistory((v) => !v)}
               accessible
               accessibilityRole="button"
-              accessibilityLabel={showHistory ? 'הסתר היסטוריה' : `הצג היסטוריה ${historyCount}`}
+              accessibilityLabel={
+                showHistory ? 'הסתר היסטוריה' : `הצג היסטוריה ${historyCount}`
+              }
             >
               <Text style={styles.sectionAction}>
                 {showHistory ? 'הסתר' : `הצג היסטוריה (${historyCount})`}
@@ -1138,7 +1453,9 @@ function TabReminders({ communityId, onToggle }: TabRemindersProps) {
             </TouchableOpacity>
             <View style={styles.sectionRight}>
               <Text style={styles.sectionTitle}>תזכורות אחרונות</Text>
-              <Text style={styles.sectionSubtitle}>תזכורות שטופלו נשמרות כאן עד 30 יום</Text>
+              <Text style={styles.sectionSubtitle}>
+                תזכורות שטופלו נשמרות כאן עד 30 יום
+              </Text>
             </View>
           </View>
           {showHistory ? (
@@ -1198,13 +1515,27 @@ export default function CommunityDetailScreen() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [rsvpSheet, setRsvpSheet] = useState<Id<'events'> | null>(null);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [descriptionCanExpand, setDescriptionCanExpand] = useState(false);
   const menuBtnRef = useRef<View>(null);
+
+  // Reset description state when community changes
+  useEffect(() => {
+    setDescriptionExpanded(false);
+    setDescriptionCanExpand(false);
+  }, [communityId]);
   const addBtnRef = useRef<View>(null);
 
   // ── Persisted TabAll state — lifted here so it survives tab switches
-  const [hiddenReminderIds, setHiddenReminderIds] = useState<Set<string>>(new Set());
-  const [localCompletedIds, setLocalCompletedIds] = useState<Set<string>>(new Set());
-  const [localTaskCache, setLocalTaskCache] = useState<Map<string, TaskDoc>>(new Map());
+  const [hiddenReminderIds, setHiddenReminderIds] = useState<Set<string>>(
+    new Set()
+  );
+  const [localCompletedIds, setLocalCompletedIds] = useState<Set<string>>(
+    new Set()
+  );
+  const [localTaskCache, setLocalTaskCache] = useState<Map<string, TaskDoc>>(
+    new Map()
+  );
 
   // ── Back navigation — inner tabs go back to הכל, הכל goes to communities list
   const handleBack = useCallback(() => {
@@ -1212,7 +1543,9 @@ export default function CommunityDetailScreen() {
       setActiveTab('הכל');
       return;
     }
-    router.replace('/(authenticated)/communities' as Parameters<typeof router.replace>[0]);
+    router.replace(
+      '/(authenticated)/communities' as Parameters<typeof router.replace>[0]
+    );
   }, [router, activeTab]);
 
   // ── RSVP map
@@ -1340,23 +1673,44 @@ export default function CommunityDetailScreen() {
         onPress: () => {
           // TODO: add communityId filter to calendar screen
           router.push(
-            `/(authenticated)/calendar?communityId=${communityId}` as Parameters<typeof router.push>[0]
+            `/(authenticated)/calendar?communityId=${communityId}` as Parameters<
+              typeof router.push
+            >[0]
           );
         },
       },
+      ...(community?.myRole === 'owner' || community?.myRole === 'admin'
+        ? [
+            {
+              label: 'ערוך קהילה',
+              iconName: 'create-outline' as const,
+              onPress: () =>
+                router.push({
+                  pathname: '/(authenticated)/community-edit/[id]',
+                  params: { id: communityId, returnTo: 'detail' },
+                }),
+            },
+          ]
+        : []),
       {
         label: 'ניהול חברים',
         iconName: 'people-outline',
         onPress: () =>
           router.push(
-            `/(authenticated)/community-members/${communityId}?returnTab=${activeTab}` as Parameters<typeof router.push>[0]
+            `/(authenticated)/community-members/${communityId}?returnTab=${activeTab}` as Parameters<
+              typeof router.push
+            >[0]
           ),
       },
       {
-        label: community?.myNotificationsEnabled !== false ? 'בטל התראות' : 'הפעל התראות',
-        iconName: community?.myNotificationsEnabled !== false
-          ? 'notifications-off-outline'
-          : 'notifications-outline',
+        label:
+          community?.myNotificationsEnabled !== false
+            ? 'בטל התראות'
+            : 'הפעל התראות',
+        iconName:
+          community?.myNotificationsEnabled !== false
+            ? 'notifications-off-outline'
+            : 'notifications-outline',
         onPress: handleToggleNotifications,
       },
       {
@@ -1371,7 +1725,15 @@ export default function CommunityDetailScreen() {
         onPress: handleDeleteCommunity,
       },
     ],
-    [community, communityId, router, activeTab, handleToggleNotifications, handleDeleteCommunity, handleShare]
+    [
+      community,
+      communityId,
+      router,
+      activeTab,
+      handleToggleNotifications,
+      handleDeleteCommunity,
+      handleShare,
+    ]
   );
 
   // ── Loading / not found
@@ -1405,6 +1767,8 @@ export default function CommunityDetailScreen() {
   }
 
   const memberLabel = `${community.tags?.[0] ? `${community.tags[0]} • ` : ''}${community.memberCount} חברים`;
+  const descriptionTrimmed = community.description?.trim();
+  const showDescription = !!descriptionTrimmed;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -1443,6 +1807,43 @@ export default function CommunityDetailScreen() {
               {community.name}
             </Text>
             <Text style={styles.headerSubtitle}>{memberLabel}</Text>
+            {showDescription ? (
+              <View style={styles.headerDescriptionWrap}>
+                <Text
+                  style={[
+                    styles.headerDescription,
+                    styles.headerDescriptionMeasurer,
+                  ]}
+                  onTextLayout={(e) => {
+                    const n = e.nativeEvent.lines.length;
+                    if (n > 2) setDescriptionCanExpand(true);
+                  }}
+                >
+                  {descriptionTrimmed}
+                </Text>
+                <Text
+                  style={styles.headerDescription}
+                  numberOfLines={descriptionExpanded ? undefined : 2}
+                >
+                  {descriptionTrimmed}
+                </Text>
+                {descriptionCanExpand ? (
+                  <TouchableOpacity
+                    onPress={() => setDescriptionExpanded((s) => !s)}
+                    style={styles.headerDescriptionToggleWrap}
+                    accessible
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      descriptionExpanded ? 'הצג פחות' : 'הצג עוד'
+                    }
+                  >
+                    <Text style={styles.headerDescriptionToggle}>
+                      {descriptionExpanded ? 'הצג פחות' : 'הצג עוד'}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : null}
           </View>
           <TouchableOpacity
             onPress={handleBack}
@@ -1475,7 +1876,9 @@ export default function CommunityDetailScreen() {
               accessibilityState={{ selected: active }}
               accessibilityLabel={tab}
             >
-              <Text style={[styles.tabChipText, active && styles.tabChipTextActive]}>
+              <Text
+                style={[styles.tabChipText, active && styles.tabChipTextActive]}
+              >
                 {tab}
               </Text>
             </TouchableOpacity>
@@ -1510,6 +1913,7 @@ export default function CommunityDetailScreen() {
           selectedMonth={selectedMonth}
           onMonthChange={setSelectedMonth}
           searchQuery={searchQuery}
+          currentUserId={currentUserId}
         />
       )}
       {activeTab === 'תזכורות' && (
@@ -1553,7 +1957,12 @@ export default function CommunityDetailScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
-  loadingCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  loadingCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
 
   // ── Header
   header: {
@@ -1567,7 +1976,13 @@ const styles = StyleSheet.create({
     borderBottomColor: '#f1f5f9',
     gap: 8,
   },
-  headerRight: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8 },
+  headerRight: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
   headerTextBlock: { alignItems: 'flex-end', flex: 1 },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   headerTitle: {
@@ -1576,7 +1991,32 @@ const styles = StyleSheet.create({
     color: '#111827',
     textAlign: 'right',
   },
-  headerSubtitle: { fontSize: 12, color: '#6b7280', marginTop: 2, textAlign: 'right' },
+  headerSubtitle: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
+    textAlign: 'right',
+  },
+  headerDescriptionWrap: { marginTop: 6, width: '100%' },
+  headerDescription: {
+    fontSize: 13,
+    color: '#6b7280',
+    textAlign: 'right',
+    lineHeight: 18,
+  },
+  headerDescriptionMeasurer: {
+    position: 'absolute',
+    opacity: 0,
+    width: '100%',
+    maxWidth: '100%',
+  },
+  headerDescriptionToggleWrap: { marginTop: 4, alignSelf: 'flex-end' },
+  headerDescriptionToggle: {
+    fontSize: 12,
+    color: '#36a9e2',
+    fontWeight: '600',
+    textAlign: 'right',
+  },
   headerIconBtn: {
     width: 36,
     height: 36,
@@ -1631,8 +2071,18 @@ const styles = StyleSheet.create({
   },
   sectionRight: { flex: 1, alignItems: 'flex-end' },
   sectionLeft: { alignItems: 'flex-start', minWidth: 60 },
-  sectionTitle: { fontSize: 20, fontWeight: '700', color: '#111827', textAlign: 'right' },
-  sectionSubtitle: { fontSize: 12, color: '#9ca3af', textAlign: 'right', marginTop: 2 },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    textAlign: 'right',
+  },
+  sectionSubtitle: {
+    fontSize: 12,
+    color: '#9ca3af',
+    textAlign: 'right',
+    marginTop: 2,
+  },
   sectionAction: { fontSize: 13, color: PRIMARY, fontWeight: '600' },
 
   // ── Events grid
@@ -1654,6 +2104,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   eventCardBadgeText: { fontSize: 10, fontWeight: '700', color: '#fff' },
+  eventCardBadgeCancelled: { borderRadius: 999 },
+  eventCardBadgeTextCancelled: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#dc2626',
+  },
   eventCardBottom: {
     position: 'absolute',
     bottom: 12,
@@ -1661,14 +2117,40 @@ const styles = StyleSheet.create({
     right: 12,
     gap: 3,
   },
-  eventCardTitle: { fontSize: 13, fontWeight: '700', color: '#fff', textAlign: 'right' },
-  eventCardMeta: { fontSize: 10, color: '#fff', opacity: 0.9, textAlign: 'right' },
+  eventCardTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#fff',
+    textAlign: 'right',
+  },
+  eventCardMeta: {
+    fontSize: 10,
+    color: '#fff',
+    opacity: 0.9,
+    textAlign: 'right',
+  },
   eventCardConfirmed: {
     fontSize: 11,
     fontWeight: '700',
     color: '#86efac',
     textAlign: 'right',
     marginTop: 4,
+  },
+  cancelledEventsSection: {
+    paddingTop: 24,
+    gap: 12,
+  },
+  cancelledEventsTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    textAlign: 'right',
+    color: '#111827',
+  },
+  cancelledEventsSubtitle: {
+    fontSize: 12,
+    color: '#9ca3af',
+    textAlign: 'right',
+    marginTop: 2,
   },
   // Keep eventBadge for EventRow (אירועים tab) — unchanged
   eventBadge: {
@@ -1694,9 +2176,39 @@ const styles = StyleSheet.create({
   eventDot: { width: 8, height: 8, borderRadius: 4 },
   eventRowDate: { fontSize: 11, color: '#9ca3af', textAlign: 'center' },
   eventRowContent: { flex: 1, alignItems: 'flex-end', gap: 4 },
-  eventRowTop: { flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'flex-end', width: '100%' },
-  eventRowTitle: { fontSize: 15, fontWeight: '600', color: '#111827', textAlign: 'right', flex: 1 },
+  eventRowTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    justifyContent: 'flex-end',
+    width: '100%',
+  },
+  eventRowTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111827',
+    textAlign: 'right',
+    flex: 1,
+  },
   eventRowLocation: { fontSize: 12, color: '#9ca3af', textAlign: 'right' },
+  eventRowCancelReason: {
+    fontSize: 12,
+    color: '#9ca3af',
+    textAlign: 'right',
+    marginTop: 2,
+  },
+  eventRowCancelledBadge: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#fee2e2',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  eventRowCancelledBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#dc2626',
+  },
   rsvpStatusBadge: {
     alignSelf: 'flex-end',
     paddingHorizontal: 8,
@@ -1755,8 +2267,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#f1f5f9',
   },
-  monthArrow: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  monthLabel: { fontSize: 16, fontWeight: '700', color: '#111827', textAlign: 'center' },
+  monthArrow: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  monthLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+    textAlign: 'center',
+  },
 
   // ── See more
   seeMoreBtn: { alignSelf: 'flex-end', marginTop: 8 },
@@ -1765,7 +2287,13 @@ const styles = StyleSheet.create({
   // ── Empty states
   emptySmall: { paddingVertical: 16, alignItems: 'flex-end' },
   emptySmallText: { fontSize: 13, color: '#9ca3af', textAlign: 'right' },
-  emptyFull: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12, padding: 32 },
+  emptyFull: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 32,
+  },
   emptyText: { fontSize: 16, color: '#6b7280', textAlign: 'center' },
 
   // ── Retry
@@ -1779,7 +2307,14 @@ const styles = StyleSheet.create({
   retryText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 
   // ── RSVP Bottom Sheet
-  sheetBackdrop: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' },
+  sheetBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
   sheet: {
     position: 'absolute',
     bottom: 0,
@@ -1848,10 +2383,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addSheetLabel: { fontSize: 17, fontWeight: '600', color: '#111827', textAlign: 'right' },
+  addSheetLabel: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#111827',
+    textAlign: 'right',
+  },
 
   // ── Overflow popover
-  popoverBackdrop: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+  popoverBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
   popover: {
     position: 'absolute',
     backgroundColor: '#fff',
@@ -1904,9 +2450,19 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   reminderCheckboxDone: { backgroundColor: PRIMARY },
-  reminderTitle: { flex: 1, fontSize: 15, color: '#111827', textAlign: 'right' },
+  reminderTitle: {
+    flex: 1,
+    fontSize: 15,
+    color: '#111827',
+    textAlign: 'right',
+  },
   reminderTitleDone: { textDecorationLine: 'line-through', color: '#9ca3af' },
-  reminderDue: { fontSize: 11, color: '#9ca3af', minWidth: 36, textAlign: 'left' },
+  reminderDue: {
+    fontSize: 11,
+    color: '#9ca3af',
+    minWidth: 36,
+    textAlign: 'left',
+  },
   reminderHideBtn: { padding: 4, flexShrink: 0 },
 
   // ── Activity placeholder (Section 4 in הכל tab)
@@ -1961,7 +2517,13 @@ const styles = StyleSheet.create({
   },
 
   // ── Search modal
-  searchBackdrop: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+  searchBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
   searchBox: {
     position: 'absolute',
     top: 60,

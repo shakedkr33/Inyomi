@@ -241,9 +241,7 @@ export default function ImportCalendarScreen(): React.JSX.Element {
                   <Text style={s.previewTitle} numberOfLines={1}>
                     {ev.title}
                   </Text>
-                  {ev.time && (
-                    <Text style={s.previewTime}>{ev.time}</Text>
-                  )}
+                  {ev.time && <Text style={s.previewTime}>{ev.time}</Text>}
                 </View>
               ))}
               {filteredEvents.length > 3 && (
@@ -637,7 +635,12 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f8fafc',
   },
-  previewDate: { fontSize: 12, color: '#94a3b8', width: 70, textAlign: 'right' },
+  previewDate: {
+    fontSize: 12,
+    color: '#94a3b8',
+    width: 70,
+    textAlign: 'right',
+  },
   previewDot: {
     width: 5,
     height: 5,
