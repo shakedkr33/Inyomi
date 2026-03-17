@@ -50,12 +50,18 @@ export function useFamilyProfileEditor(
 
   // ── Core profile state ────────────────────────────────────────────────────
   const [firstName, setFirstName] = useState(data.firstName || '');
+  const [lastName, setLastName] = useState(data.lastName || '');
+  const [nickname, setNickname] = useState(data.nickname || '');
   const [personalColor, setPersonalColor] = useState<string>(
     data.personalColor || PROFILE_COLORS[5]
   );
 
-  // Used in the Family Space owner card
-  const [ownerFullName, setOwnerFullName] = useState(data.firstName || '');
+  // Used in the Family Space owner card (pre-filled from firstName + lastName)
+  const [ownerFullName, setOwnerFullName] = useState(
+    data.firstName
+      ? [data.firstName, data.lastName].filter(Boolean).join(' ')
+      : ''
+  );
   const [familyMembers, setFamilyMembers] =
     useState<FamilyMember[]>(initialFamilyMembers);
 
@@ -228,7 +234,12 @@ export function useFamilyProfileEditor(
 
   const handleSavePersonalName = () => {
     if (!firstName.trim()) return;
-    updateData({ firstName: firstName.trim(), personalColor });
+    updateData({
+      firstName: firstName.trim(),
+      lastName: lastName.trim() || undefined,
+      nickname: nickname.trim() || undefined,
+      personalColor,
+    });
     Keyboard.dismiss();
     if (personalSavedTimerRef.current)
       clearTimeout(personalSavedTimerRef.current);
@@ -258,17 +269,22 @@ export function useFamilyProfileEditor(
    * Returns the mutation Promise so callers can await completion before navigating.
    */
   const saveAll = (): Promise<{ spaceId: string }> => {
-    const nameSource = ownerFullName.trim() || firstName.trim();
-    const nameParts = nameSource.split(' ');
+    // Build full name: prefer split firstName+lastName, fall back to ownerFullName
+    const splitName = [firstName.trim(), lastName.trim()]
+      .filter(Boolean)
+      .join(' ');
+    const nameSource = splitName || ownerFullName.trim() || 'משתמש';
 
-    // Update in-memory context (used by other steps if needed)
+    // Update in-memory context
     updateData({
-      firstName: nameParts[0] || nameSource,
+      firstName: firstName.trim() || nameSource,
+      lastName: lastName.trim() || undefined,
+      nickname: nickname.trim() || undefined,
       personalColor,
       familyData: {
         owner: {
-          firstName: nameParts[0] || nameSource,
-          lastName: nameParts.slice(1).join(' ') || undefined,
+          firstName: firstName.trim() || nameSource,
+          lastName: lastName.trim() || undefined,
           color: personalColor,
         },
         familyMembers,
@@ -277,7 +293,7 @@ export function useFamilyProfileEditor(
 
     // Persist to Convex — sets onboardingCompleted: true on the user record
     return finishOnboarding({
-      fullName: nameSource || 'משתמשת',
+      fullName: nameSource,
       profileColor: personalColor,
       spaceType: data.spaceType ?? 'personal',
       challenges: data.challenges ?? [],
@@ -290,6 +306,10 @@ export function useFamilyProfileEditor(
     // state
     firstName,
     setFirstName,
+    lastName,
+    setLastName,
+    nickname,
+    setNickname,
     personalColor,
     setPersonalColor,
     ownerFullName,

@@ -44,9 +44,9 @@ export default function OnboardingChildrenSelect() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.beige }}>
-      {/* Header */}
+      {/* Header — label removed, back button kept */}
       <View className="pt-4 px-6">
-        <View className="flex-row-reverse items-center justify-between mb-2">
+        <View className="flex-row-reverse items-center mb-2">
           <Pressable
             onPress={() => router.replace('/onboarding-step1')}
             className="p-2"
@@ -60,27 +60,19 @@ export default function OnboardingChildrenSelect() {
               color={colors.slate}
             />
           </Pressable>
-          <Text style={{ color: colors.slate }} className="text-sm font-medium">
-            מיקוד משפחתי
-          </Text>
-          <View className="w-10" />
         </View>
       </View>
 
-      <View className="flex-1 justify-between pb-10 pt-4">
-        {/* Title */}
+      {/* Scrollable middle — title, circles, illustration */}
+      <View className="flex-1 justify-between pt-2 pb-4">
+
+        {/* Title — no subtitle */}
         <View className="items-center px-8">
           <Text
             style={{ color: colors.slate }}
-            className="text-[26px] font-extrabold text-center leading-tight mb-2"
+            className="text-[26px] font-extrabold text-center leading-tight"
           >
-            כמה ילדים יש במשפחה?
-          </Text>
-          <Text
-            style={{ color: colors.slateLight }}
-            className="text-[15px] text-center leading-relaxed"
-          >
-            זה יעזור לנו להתאים את הלוז והתזכורות למשפחה שלכם
+            כמה ילדים יש לך?
           </Text>
         </View>
 
@@ -120,7 +112,7 @@ export default function OnboardingChildrenSelect() {
 
           {/* Custom Input for 5+ */}
           {selected === '5+' && (
-            <View className="mt-6 items-center">
+            <View className="mt-5 items-center">
               <Text
                 style={{ color: colors.slateLight }}
                 className="text-sm font-medium mb-2"
@@ -151,45 +143,81 @@ export default function OnboardingChildrenSelect() {
           )}
         </View>
 
-        {/* Helper Box — consistent with onboarding step 1 */}
-        <View className="px-6">
+        {/* Illustration area — soft family icon in a light blue dashed circle */}
+        <View className="items-center" style={{ marginTop: 40, marginBottom: 40 }}>
           <View
-            className="rounded-2xl p-4 flex-row-reverse items-start border"
             style={{
-              backgroundColor: 'rgba(74, 159, 226, 0.06)',
-              borderColor: 'rgba(74, 159, 226, 0.12)',
+              width: 100,
+              height: 100,
+              borderRadius: 50,
+              backgroundColor: 'rgba(54, 169, 226, 0.07)',
+              borderWidth: 1.5,
+              borderColor: 'rgba(54, 169, 226, 0.18)',
+              borderStyle: 'dashed',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
             <MaterialIcons
-              name="auto-awesome"
-              size={20}
-              color={colors.sage}
-              style={{ marginLeft: 12 }}
+              name="family-restroom"
+              size={52}
+              color="rgba(54, 169, 226, 0.45)"
             />
-            <Text
-              style={{ color: colors.slate }}
-              className="text-sm font-medium flex-1 leading-relaxed text-right"
-            >
-              זה יעזור לנו להתאים את הלוז בצורה טובה יותר למשפחה שלכם
-            </Text>
           </View>
         </View>
 
-        {/* Continue Button */}
-        <View className="px-6">
-          <Pressable
-            onPress={handleContinue}
-            disabled={!canContinue}
-            className="w-full h-16 rounded-full flex-row items-center justify-center gap-3"
-            style={{ backgroundColor: canContinue ? colors.sage : '#d1d5db' }}
-            accessible={true}
-            accessibilityRole="button"
-            accessibilityLabel="המשך"
-            accessibilityState={{ disabled: !canContinue }}
+      </View>
+
+      {/* Bottom section — helper box anchored directly above CTA, matches step 1 */}
+      <View className="px-6 mb-3">
+        <View
+          className="rounded-2xl p-4 flex-row-reverse items-start border"
+          style={{
+            backgroundColor: 'rgba(74, 159, 226, 0.06)',
+            borderColor: 'rgba(74, 159, 226, 0.12)',
+          }}
+        >
+          <MaterialIcons
+            name="auto-awesome"
+            size={20}
+            color={colors.sage}
+            style={{ marginLeft: 12 }}
+          />
+          <Text
+            style={{ color: colors.slate }}
+            className="text-sm font-medium flex-1 leading-relaxed text-right"
           >
-            <Text className="text-white text-xl font-bold">המשך</Text>
-            <MaterialIcons name="chevron-left" size={24} color="white" />
-          </Pressable>
+            זה יעזור לנו להתאים את הלוז בצורה טובה יותר למשפחה שלכם
+          </Text>
+        </View>
+      </View>
+
+      {/* Continue Button + bottom indicator */}
+      <View className="px-6 pb-8">
+        <Pressable
+          onPress={handleContinue}
+          disabled={!canContinue}
+          className="w-full h-16 rounded-full flex-row items-center justify-center gap-3"
+          style={{ backgroundColor: canContinue ? colors.sage : '#d1d5db' }}
+          accessible={true}
+          accessibilityRole="button"
+          accessibilityLabel="המשך"
+          accessibilityState={{ disabled: !canContinue }}
+        >
+          <Text className="text-white text-xl font-bold">המשך</Text>
+          <MaterialIcons name="chevron-left" size={24} color="white" />
+        </Pressable>
+
+        {/* Bottom indicator bar — onboarding visual language */}
+        <View className="items-center mt-3">
+          <View
+            style={{
+              width: 40,
+              height: 4,
+              borderRadius: 2,
+              backgroundColor: 'rgba(74, 159, 226, 0.25)',
+            }}
+          />
         </View>
       </View>
     </SafeAreaView>

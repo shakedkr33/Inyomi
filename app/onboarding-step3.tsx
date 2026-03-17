@@ -6,7 +6,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../constants/theme';
 import { useOnboarding } from '../contexts/OnboardingContext';
 
-// רשימת מקורות מעודכנת
 const sources = [
   { id: 'whatsapp', title: 'הודעות וואטסאפ', icon: 'chat' },
   { id: 'mail_sms', title: 'מיילים ו-SMS', icon: 'mail' },
@@ -32,8 +31,8 @@ export default function OnboardingStep3() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: 'white' }}>
-      {/* Header & Progress */}
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#f6f7f8' }}>
+      {/* Header & Progress — consistent with step 1 / step 2 */}
       <View className="pt-4 px-6">
         <View className="flex-row-reverse items-center justify-between mb-4">
           <Pressable onPress={() => router.back()} className="p-2">
@@ -43,12 +42,12 @@ export default function OnboardingStep3() {
               color={colors.slate}
             />
           </Pressable>
-          <Text className="text-gray-400 font-medium text-sm">
+          <Text style={{ color: colors.sage }} className="font-bold">
             שלב 3 מתוך 4
           </Text>
           <View className="w-10" />
         </View>
-        <View className="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden">
+        <View className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
           <View
             className="h-full w-3/4 rounded-full"
             style={{ backgroundColor: colors.sage }}
@@ -56,27 +55,30 @@ export default function OnboardingStep3() {
         </View>
       </View>
 
-      <ScrollView className="flex-1 px-6" showsVerticalScrollIndicator={false}>
-        <View className="py-8">
+      {/* Scrollable content */}
+      <ScrollView
+        className="flex-1 px-6"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 16 }}
+      >
+        {/* Title & subtitle — centered, no explanatory paragraph */}
+        <View className="py-6">
           <Text
             style={{ color: colors.slate }}
-            className="text-[28px] font-bold text-right leading-tight"
+            className="text-[28px] font-extrabold text-center leading-tight"
           >
             מאיפה מגיע רוב המידע שלך?
           </Text>
           <Text
             style={{ color: colors.sage }}
-            className="text-sm font-medium mt-1 text-right"
+            className="text-sm font-bold mt-2 text-center"
           >
             ניתן לבחור יותר מאפשרות אחת
           </Text>
-          <Text className="text-gray-500 text-[15px] leading-relaxed mt-3 text-right">
-            זה עוזר לבינה המלאכותית שלנו להבין איפה נמצא הבלגן שלך, כדי שנוכל
-            לאסוף את הכל ליומן אחד מסודר.
-          </Text>
         </View>
 
-        <View className="gap-3 pb-32">
+        {/* Source cards */}
+        <View className="gap-3 pb-4">
           {sources.map((item) => {
             const isSelected = selected.includes(item.id);
             return (
@@ -114,22 +116,36 @@ export default function OnboardingStep3() {
         </View>
       </ScrollView>
 
-      {/* Floating Bottom Button */}
-      <View className="absolute bottom-0 left-0 right-0 bg-white/90 px-6 py-8">
-        <View className="flex-row items-center justify-center gap-2 mb-6">
-          <View className="h-1.5 w-1.5 rounded-full bg-gray-200" />
-          <View
-            className="h-1.5 w-4 rounded-full"
-            style={{ backgroundColor: colors.sage }}
+      {/* Helper box — anchored above CTA, not scrolling, consistent with step 1 / step 2 */}
+      <View className="px-6 pt-3 pb-3 bg-[#f6f7f8]">
+        <View
+          className="rounded-2xl p-4 flex-row-reverse items-start border"
+          style={{
+            backgroundColor: 'rgba(74, 159, 226, 0.06)',
+            borderColor: 'rgba(74, 159, 226, 0.12)',
+          }}
+        >
+          <MaterialIcons
+            name="auto-awesome"
+            size={20}
+            color={colors.sage}
+            style={{ marginLeft: 12 }}
           />
-          <View className="h-1.5 w-1.5 rounded-full bg-gray-200" />
-          <View className="h-1.5 w-1.5 rounded-full bg-gray-200" />
+          <Text
+            style={{ color: colors.slate }}
+            className="text-sm font-medium flex-1 leading-relaxed text-right"
+          >
+            ספר/י לנו איפה המידע שלך נמצא, כדי שנוכל לעזור לך לרכז אותו במקום אחד
+          </Text>
         </View>
+      </View>
 
+      {/* Footer Button — non-absolute, consistent with step 1 / step 2 */}
+      <View className="px-6 pb-10 pt-2 bg-[#f6f7f8]">
         <Pressable
           onPress={handleContinue}
           disabled={selected.length === 0}
-          className="w-full h-14 rounded-xl flex-row items-center justify-center gap-2 shadow-lg"
+          className="w-full h-16 rounded-3xl flex-row items-center justify-center shadow-lg"
           style={{
             backgroundColor: selected.length > 0 ? colors.sage : '#d1d5db',
           }}
@@ -140,7 +156,7 @@ export default function OnboardingStep3() {
             color="white"
             style={{ transform: [{ scaleX: -1 }] }}
           />
-          <Text className="text-white text-lg font-bold">המשך</Text>
+          <Text className="text-white text-xl font-bold">המשך</Text>
         </Pressable>
       </View>
     </SafeAreaView>

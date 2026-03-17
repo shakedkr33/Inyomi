@@ -31,11 +31,48 @@ import {
   useFamilyProfileEditor,
 } from '../hooks/useFamilyProfileEditor';
 
+// ── Shared progress header ────────────────────────────────────────────────────
+
+function ProgressHeader({
+  onBack,
+  backLabel,
+}: {
+  onBack: () => void;
+  backLabel: string;
+}) {
+  return (
+    <View className="pt-4 px-6">
+      <View className="flex-row-reverse items-center justify-between mb-4">
+        <Pressable
+          onPress={onBack}
+          accessible={true}
+          accessibilityRole="button"
+          accessibilityLabel={backLabel}
+          className="p-2"
+        >
+          <MaterialIcons name="arrow-forward" size={24} color={colors.slate} />
+        </Pressable>
+        <Text style={{ color: colors.sage }} className="font-bold">
+          שלב 4 מתוך 4
+        </Text>
+        <View className="w-10" />
+      </View>
+      <View className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
+        <View
+          className="h-full w-full rounded-full"
+          style={{ backgroundColor: colors.sage }}
+        />
+      </View>
+    </View>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
 export default function OnboardingStep4() {
   const router = useRouter();
   const { data } = useOnboarding();
 
-  // ── Conditional initial view (Step 1 selection) ───────────────────────────
   const initialView: 'personal' | 'family' =
     data.spaceType === 'personal' ? 'personal' : 'family';
   const cameFromPersonal = data.spaceType === 'personal';
@@ -44,11 +81,14 @@ export default function OnboardingStep4() {
     initialView
   );
 
-  // ── All profile state + handlers come from the shared hook ────────────────
   const editor = useFamilyProfileEditor();
   const {
     firstName,
     setFirstName,
+    lastName,
+    setLastName,
+    nickname,
+    setNickname,
     personalColor,
     setPersonalColor,
     ownerFullName,
@@ -85,7 +125,11 @@ export default function OnboardingStep4() {
   // ── Navigation ────────────────────────────────────────────────────────────
 
   const handlePersonalContinue = () => {
-    setOwnerFullName(firstName);
+    // Pre-fill owner name from split fields so the family view is pre-populated
+    const fullName = [firstName.trim(), lastName.trim()]
+      .filter(Boolean)
+      .join(' ');
+    setOwnerFullName(fullName || firstName);
     setCurrentView('family');
   };
 
@@ -102,7 +146,7 @@ export default function OnboardingStep4() {
     router.replace('/(authenticated)');
   };
 
-  // ── Shared edit card renderer ─────────────────────────────────────────────
+  // ── Edit card renderer ────────────────────────────────────────────────────
 
   const renderEditCard = (member: FamilyMember) => {
     if (editingId !== member.id || !pendingMember) return null;
@@ -127,7 +171,7 @@ export default function OnboardingStep4() {
     );
   };
 
-  // ── Render: Personal Space ────────────────────────────────────────────────
+  // ── Render: Personal profile view ─────────────────────────────────────────
 
   if (currentView === 'personal') {
     return (
@@ -136,110 +180,106 @@ export default function OnboardingStep4() {
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{ flex: 1 }}
         >
-          {/* Top bar */}
-          <View className="flex-row items-center justify-between px-5 pt-3 pb-1">
-            <Pressable
-              onPress={() => router.back()}
-              accessible={true}
-              accessibilityRole="button"
-              accessibilityLabel="חזרה"
-              className="p-2"
-            >
-              <MaterialIcons
-                name="arrow-forward"
-                size={24}
-                color={colors.slate}
-              />
-            </Pressable>
-            <Text
-              className="text-base font-bold"
-              style={{ color: colors.primary }}
-            >
-              InYomi
-            </Text>
-            <View className="w-10" />
-          </View>
+          <ProgressHeader onBack={() => router.back()} backLabel="חזרה" />
 
           <ScrollView
             className="flex-1 px-5"
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingTop: 24, paddingBottom: 180 }}
+            contentContainerStyle={{ paddingTop: 20, paddingBottom: 160 }}
             keyboardShouldPersistTaps="handled"
           >
+            {/* Section title */}
             <Text
-              className="text-[26px] font-bold text-right mb-1 leading-tight"
+              className="text-[24px] font-bold text-center mb-1 leading-tight"
               style={{ color: colors.slate }}
             >
-              המרחב האישי שלך ב-InYomi
+              הפרופיל שלך ב-InYomi
             </Text>
-            <Text className="text-sm text-gray-400 text-right mb-6">
-              כרגע את מנהלת את הלו״ז רק לעצמך.
+            <Text className="text-sm text-gray-400 text-center mb-6">
+              כאן נגדיר איך תופיע/י בתוך הלוז
             </Text>
 
-            {/* Personal profile card */}
-            <View
-              className="bg-white rounded-3xl p-5 mb-4"
-              style={shadows.soft}
-            >
-              <View className="items-center mb-5">
-                <View className="relative">
-                  <View
-                    className="w-20 h-20 rounded-full items-center justify-center"
-                    style={{ backgroundColor: '#e9edf0' }}
-                  >
-                    <MaterialIcons name="person" size={40} color="#b0bec5" />
-                  </View>
-                  <View
-                    className="absolute bottom-0 right-0 w-7 h-7 rounded-full items-center justify-center"
-                    style={{ backgroundColor: colors.primary }}
-                  >
-                    <MaterialIcons name="camera-alt" size={14} color="white" />
-                  </View>
-                </View>
+            {/* Profile card */}
+            <View className="bg-white rounded-3xl p-5 mb-4" style={shadows.soft}>
+
+              {/* Name row: first + last on same line */}
+              <Text className="text-sm font-bold text-gray-700 text-right mb-2">
+                שם פרטי ושם משפחה
+              </Text>
+              <View className="flex-row-reverse gap-2 mb-1">
+                <TextInput
+                  value={firstName}
+                  onChangeText={setFirstName}
+                  placeholder="שם פרטי"
+                  placeholderTextColor="#9ca3af"
+                  className="flex-1 bg-[#f6f7f8] rounded-2xl px-3 text-right text-base"
+                  style={{ height: 50 }}
+                  returnKeyType="next"
+                  accessible={true}
+                  accessibilityLabel="שם פרטי"
+                />
+                <TextInput
+                  value={lastName}
+                  onChangeText={setLastName}
+                  placeholder="שם משפחה"
+                  placeholderTextColor="#9ca3af"
+                  className="flex-1 bg-[#f6f7f8] rounded-2xl px-3 text-right text-base"
+                  style={{ height: 50 }}
+                  returnKeyType="next"
+                  accessible={true}
+                  accessibilityLabel="שם משפחה"
+                />
               </View>
 
-              <Text className="text-sm font-bold text-gray-700 text-right mb-2">
-                השם שלך
+              {/* Nickname — optional */}
+              <Text className="text-xs text-gray-400 text-right mb-1 mt-3">
+                כינוי (אופציונלי — לשימוש פנימי)
               </Text>
               <View
-                className="flex-row items-center bg-[#f6f7f8] rounded-2xl overflow-hidden"
-                style={{ minHeight: 56 }}
+                className="flex-row items-center bg-[#f6f7f8] rounded-2xl overflow-hidden mb-1"
+                style={{ minHeight: 50 }}
               >
                 <Pressable
                   onPress={handleSavePersonalName}
                   accessible={true}
                   accessibilityRole="button"
-                  accessibilityLabel="שמור שם"
+                  accessibilityLabel="שמור פרטים"
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 4 }}
                   className="w-14 self-stretch items-center justify-center"
                   style={{ backgroundColor: colors.primary }}
                 >
-                  <MaterialIcons name="check" size={24} color="white" />
+                  <MaterialIcons name="check" size={22} color="white" />
                 </Pressable>
                 <TextInput
-                  value={firstName}
-                  onChangeText={setFirstName}
-                  placeholder="דנה כהן"
+                  value={nickname}
+                  onChangeText={setNickname}
+                  placeholder="למשל: דנה׳לה, אבא, אמא..."
                   placeholderTextColor="#9ca3af"
                   className="flex-1 px-3 text-base text-right"
-                  style={{ height: 56 }}
+                  style={{ height: 50 }}
                   returnKeyType="done"
                   onSubmitEditing={handleSavePersonalName}
+                  accessible={true}
+                  accessibilityLabel="כינוי"
                 />
               </View>
               {personalSaved ? (
                 <Text
-                  className="text-xs text-right mt-1 mb-4"
+                  className="text-xs text-right mt-1 mb-3"
                   style={{ color: colors.primary }}
                 >
                   נשמר ✓
                 </Text>
               ) : (
-                <View className="mb-5" />
+                <View className="mb-4" />
               )}
 
+              {/* Color picker */}
               <Text className="text-sm font-bold text-gray-700 text-right mb-3">
                 בחירת צבע אישי
+              </Text>
+              <Text className="text-xs text-gray-400 text-right mb-3">
+                הצבע שלך יזהה אותך בלוז, במשימות ובאירועים משותפים
               </Text>
               <ColorPicker
                 selectedColor={personalColor}
@@ -247,30 +287,31 @@ export default function OnboardingStep4() {
               />
             </View>
 
-            {/* Family prompt card */}
+            {/* Sharing prompt card */}
             <View className="bg-white rounded-3xl p-5" style={shadows.soft}>
               <Text className="text-base font-bold text-gray-900 text-right mb-1">
-                רוצה לנהל גם לו״ז משפחתי?
+                רוצה לשתף את הלוז עם מישהו?
               </Text>
               <Text className="text-sm text-gray-400 text-right mb-4">
-                הוסיפי ילדים או בני משפחה וניהלי הכל במקום אחד.
+                הוסיפ/י את האנשים שתרצה/י לשתף איתם אירועים, משימות ותזכורות
               </Text>
               <Pressable
                 onPress={handlePersonalContinue}
                 accessible={true}
                 accessibilityRole="link"
-                accessibilityLabel="מעבר למרחב משפחתי"
+                accessibilityLabel="הוסיפי אנשים לשיתוף"
               >
                 <Text
                   className="text-right font-semibold"
                   style={{ color: colors.primary }}
                 >
-                  מעבר למרחב משפחתי ←
+                  הוסיפ/י אנשים לשיתוף ←
                 </Text>
               </Pressable>
             </View>
           </ScrollView>
 
+          {/* Footer CTA */}
           <View
             className="px-5 pb-10 pt-4"
             style={{ backgroundColor: 'rgba(246,247,248,0.97)' }}
@@ -299,7 +340,7 @@ export default function OnboardingStep4() {
     );
   }
 
-  // ── Render: Family Space ──────────────────────────────────────────────────
+  // ── Render: Sharing / family view ─────────────────────────────────────────
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#f6f7f8' }}>
@@ -307,29 +348,7 @@ export default function OnboardingStep4() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
-        {/* Top bar */}
-        <View className="flex-row items-center justify-between px-5 pt-3 pb-1">
-          <Pressable
-            onPress={handleFamilyBack}
-            accessible={true}
-            accessibilityRole="button"
-            accessibilityLabel="חזרה"
-            className="p-2"
-          >
-            <MaterialIcons
-              name="arrow-forward"
-              size={24}
-              color={colors.slate}
-            />
-          </Pressable>
-          <Text
-            className="text-base font-bold text-right"
-            style={{ color: colors.slate }}
-          >
-            המשפחה שלך ב-InYomi
-          </Text>
-          <View className="w-10" />
-        </View>
+        <ProgressHeader onBack={handleFamilyBack} backLabel="חזרה" />
 
         <ScrollView
           className="flex-1 px-5"
@@ -337,9 +356,9 @@ export default function OnboardingStep4() {
           contentContainerStyle={{ paddingTop: 16, paddingBottom: 200 }}
           keyboardShouldPersistTaps="handled"
         >
-          {/* ── Owner card ──────────────────────────────────────────────── */}
+          {/* ── Owner card ─────────────────────────────────────────────────── */}
           <Text className="text-xs font-bold text-gray-400 text-right mb-2 pr-1">
-            השם שלך
+            הפרופיל שלך
           </Text>
           <View className="bg-white rounded-3xl p-5 mb-6" style={shadows.soft}>
             <View className="flex-row-reverse items-center gap-4 mb-4">
@@ -371,7 +390,7 @@ export default function OnboardingStep4() {
                   <TextInput
                     value={ownerFullName}
                     onChangeText={setOwnerFullName}
-                    placeholder="דנה כהן"
+                    placeholder="שם פרטי ושם משפחה"
                     placeholderTextColor="#9ca3af"
                     className="flex-1 px-3 text-right text-base"
                     style={{ height: 44 }}
@@ -390,7 +409,7 @@ export default function OnboardingStep4() {
               </View>
             </View>
             <Text className="text-xs text-gray-400 text-right mb-2">
-              בחירת צבע אישי
+              צבע אישי
             </Text>
             <ColorPicker
               selectedColor={personalColor}
@@ -400,29 +419,50 @@ export default function OnboardingStep4() {
             />
           </View>
 
-          {/* ── People section ───────────────────────────────────────────── */}
+          {/* ── People / sharing section ──────────────────────────────────── */}
           <Text className="text-sm font-bold text-gray-700 text-right mb-1 pr-1">
-            בני משפחה נוספים (עד {MAX_PEOPLE})
+            עם מי תרצה/י לשתף את הלוז? (עד {MAX_PEOPLE})
           </Text>
-          <Text className="text-xs text-gray-400 text-right mb-3 pr-1 leading-relaxed">
-            הוסיפ/י ילדים, בן/בת זוג, הורים – כל מי שחשוב לך.
+          <Text className="text-xs text-gray-400 text-right mb-2 pr-1 leading-relaxed">
+            הוסיפ/י את האנשים שתרצה/י לשתף איתם אירועים, משימות ותזכורות
           </Text>
+
+          {/* Disclaimer */}
+          <View
+            className="rounded-2xl px-4 py-3 mb-4 flex-row-reverse items-start border"
+            style={{
+              backgroundColor: 'rgba(74, 159, 226, 0.05)',
+              borderColor: 'rgba(74, 159, 226, 0.15)',
+            }}
+          >
+            <MaterialIcons
+              name="info-outline"
+              size={16}
+              color={colors.sage}
+              style={{ marginLeft: 8, marginTop: 1 }}
+            />
+            <Text className="flex-1 text-xs text-gray-500 text-right leading-relaxed">
+              האנשים שתוסיף/י כאן לא ישותפו אוטומטית. בכל אירוע, משימה או
+              תזכורת תוכל/י לבחור עם מי לשתף.
+            </Text>
+          </View>
+
           <View className="bg-white rounded-3xl p-5 mb-5" style={shadows.soft}>
             {personMembers.length === 0 && !isAddingNewPerson ? (
               <View className="items-center py-3" style={styles.dashedBorder}>
                 <MaterialIcons name="group" size={38} color="#d1d5db" />
                 <Text className="text-gray-400 font-semibold mt-2 mb-1 text-center">
-                  עדיין לא הוספת בני משפחה
+                  עדיין לא הוספת אנשים
                 </Text>
                 <Text className="text-xs text-gray-300 text-center mb-4 px-4">
-                  הוסיפי ילדים, בן/בת זוג, הורים — כל מי שחשוב לך
+                  הוסיפ/י ילדים, בן/בת זוג, הורים — כל מי שתרצה/י לשתף איתו
                 </Text>
                 {canAddPerson && (
                   <Pressable
                     onPress={openAddPersonSheet}
                     accessible={true}
                     accessibilityRole="button"
-                    accessibilityLabel="הוספת בן משפחה"
+                    accessibilityLabel="הוספת אדם לשיתוף"
                     className="flex-row-reverse items-center gap-2 px-5 py-2.5 rounded-full border border-gray-300"
                   >
                     <MaterialIcons
@@ -434,7 +474,7 @@ export default function OnboardingStep4() {
                       style={{ color: colors.primary }}
                       className="font-semibold"
                     >
-                      הוספת בן משפחה +
+                      הוסיפ/י אדם +
                     </Text>
                   </Pressable>
                 )}
@@ -467,7 +507,7 @@ export default function OnboardingStep4() {
                     }
                     onConfirm={confirmPendingMember}
                     onCancel={cancelPending}
-                    label="הוספת בן משפחה:"
+                    label="הוספת אדם:"
                   />
                 )}
                 {canAddPerson ? (
@@ -475,7 +515,7 @@ export default function OnboardingStep4() {
                     onPress={openAddPersonSheet}
                     accessible={true}
                     accessibilityRole="button"
-                    accessibilityLabel="הוספת בן משפחה נוסף"
+                    accessibilityLabel="הוספת אדם נוסף"
                     className="flex-row-reverse items-center justify-center gap-2 py-3 border border-dashed border-gray-200 rounded-xl mt-1"
                   >
                     <MaterialIcons
@@ -487,24 +527,24 @@ export default function OnboardingStep4() {
                       style={{ color: colors.primary }}
                       className="font-semibold"
                     >
-                      הוספת בן משפחה +
+                      הוסיפ/י אדם נוסף +
                     </Text>
                   </Pressable>
                 ) : (
                   <Text className="text-xs text-gray-300 text-center mt-2">
-                    הגעת למכסה של {MAX_PEOPLE} בני משפחה.
+                    הגעת למכסה של {MAX_PEOPLE} אנשים.
                   </Text>
                 )}
               </>
             )}
           </View>
 
-          {/* ── Pets section ─────────────────────────────────────────────── */}
-          <Text className="text-sm font-bold text-gray-700 text-right mb-1 pr-1">
-            חיות מחמד (עד {MAX_PETS})
+          {/* ── Pets section — secondary ──────────────────────────────────── */}
+          <Text className="text-xs font-bold text-gray-400 text-right mb-1 pr-1">
+            חיות מחמד (אופציונלי, עד {MAX_PETS})
           </Text>
           <Text className="text-xs text-gray-400 text-right mb-3 pr-1">
-            חיות המחמד שלכם — לא נחסיר מהם ימי הולדת 🐾
+            כדי שלא נפספס ימי הולדת 🐾
           </Text>
           <View className="bg-white rounded-3xl p-5 mb-4" style={shadows.soft}>
             {petMembers.length === 0 && !isAddingNewPet ? (
@@ -596,11 +636,11 @@ export default function OnboardingStep4() {
           </View>
 
           <Text className="text-xs text-gray-400 text-center px-4 mt-1">
-            תוכלי לערוך ולהוסיף אנשים גם בהגדרות בהמשך.
+            תוכל/י לערוך ולהוסיף אנשים גם בהגדרות בהמשך.
           </Text>
         </ScrollView>
 
-        {/* Bottom button */}
+        {/* Footer CTA */}
         <View
           className="px-5 pb-10 pt-4"
           style={{ backgroundColor: 'rgba(246,247,248,0.97)' }}

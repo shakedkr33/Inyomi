@@ -55,15 +55,9 @@ export default function OnboardingStep2() {
               color={colors.slate}
             />
           </Pressable>
-          <View className="flex-row items-center">
-            <Text style={{ color: colors.sage }} className="font-bold">
-              שלב 2 מתוך 4
-            </Text>
-            <Text className="text-gray-400 font-medium ml-2">
-              {' '}
-              • התאמה אישית
-            </Text>
-          </View>
+          <Text style={{ color: colors.sage }} className="font-bold">
+            שלב 2 מתוך 4
+          </Text>
           <View className="w-10" />
         </View>
         <View className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
@@ -76,7 +70,7 @@ export default function OnboardingStep2() {
 
       <ScrollView className="flex-1 px-6" showsVerticalScrollIndicator={false}>
         {/* Title & Description */}
-        <View className="py-10">
+        <View className="py-6">
           <Text
             style={{ color: colors.slate }}
             className="text-3xl font-extrabold text-center leading-tight"
@@ -92,7 +86,7 @@ export default function OnboardingStep2() {
         </View>
 
         {/* Challenge Cards */}
-        <View className="gap-6 pb-20">
+        <View className="gap-4 pb-6">
           {challenges.map((item) => {
             const isSelected = selected.includes(item.id);
             return (
@@ -141,8 +135,32 @@ export default function OnboardingStep2() {
         </View>
       </ScrollView>
 
+      {/* Helper Box — consistent with onboarding step 1 */}
+      <View className="px-6 pt-3 pb-3 bg-[#f6f7f8]">
+        <View
+          className="rounded-2xl p-4 flex-row-reverse items-start border"
+          style={{
+            backgroundColor: 'rgba(74, 159, 226, 0.06)',
+            borderColor: 'rgba(74, 159, 226, 0.12)',
+          }}
+        >
+          <MaterialIcons
+            name="auto-awesome"
+            size={20}
+            color={colors.sage}
+            style={{ marginLeft: 12 }}
+          />
+          <Text
+            style={{ color: colors.slate }}
+            className="text-sm font-medium flex-1 leading-relaxed text-right"
+          >
+            ספר/י לנו קצת על עצמך כדי שנוכל להתאים את המערכת בדיוק לצרכים שלך
+          </Text>
+        </View>
+      </View>
+
       {/* Footer Button */}
-      <View className="px-6 pb-10 pt-4 bg-[#f6f7f8]">
+      <View className="px-6 pb-10 pt-2 bg-[#f6f7f8]">
         <Pressable
           onPress={handleContinue}
           disabled={selected.length === 0}

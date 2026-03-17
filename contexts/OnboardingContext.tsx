@@ -25,6 +25,8 @@ interface OnboardingData {
   fullName?: string; // שלב 4 (legacy)
   profileColor?: string; // שלב 4 (legacy)
   firstName?: string; // שלב 4
+  lastName?: string; // שלב 4
+  nickname?: string; // שלב 4 — optional, for internal/family use
   personalColor?: string; // שלב 4
   familyData?: FamilyData; // שלב 4 - מרחב משפחתי
 }
