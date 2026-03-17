@@ -31,7 +31,7 @@ export default function OnboardingStep1() {
       {/* Header & Progress */}
       <View className="pt-4 px-4">
         <View className="flex-row-reverse items-center justify-between mb-4">
-          <Pressable onPress={() => router.back()} className="p-2">
+          <Pressable onPress={() => router.replace('/(auth)/sign-in')} className="p-2">
             <MaterialIcons
               name="arrow-forward"
               size={24}
@@ -52,7 +52,7 @@ export default function OnboardingStep1() {
       </View>
 
       {/* Title */}
-      <View className="pt-10 pb-10 px-6">
+      <View className="pt-6 pb-6 px-6">
         <Text
           style={{ color: colors.slate }}
           className="text-[28px] font-extrabold text-center leading-tight"
@@ -66,10 +66,10 @@ export default function OnboardingStep1() {
         {/* Only Me */}
         <Pressable
           onPress={() => setSelected('personal')}
-          className="items-center mb-8"
+          className="items-center mb-5"
         >
           <View
-            className={`w-28 h-28 rounded-full bg-white items-center justify-center shadow-sm border-2 ${selected === 'personal' ? 'border-[#4A9FE2]' : 'border-gray-100'}`}
+            className={`w-28 h-28 rounded-full items-center justify-center shadow-sm ${selected === 'personal' ? 'border-4 border-[#36a9e2] bg-[#e8f5fd]' : 'border-2 border-gray-200 bg-white'}`}
           >
             <MaterialIcons name="person" size={48} color={colors.sage} />
           </View>
@@ -88,7 +88,7 @@ export default function OnboardingStep1() {
             className="items-center"
           >
             <View
-              className={`w-28 h-28 rounded-full bg-white items-center justify-center shadow-sm border-2 ${selected === 'couple' ? 'border-[#4A9FE2]' : 'border-gray-100'}`}
+              className={`w-28 h-28 rounded-full items-center justify-center shadow-sm ${selected === 'couple' ? 'border-4 border-[#36a9e2] bg-[#e8f5fd]' : 'border-2 border-gray-200 bg-white'}`}
             >
               <MaterialIcons name="group" size={48} color={colors.sage} />
             </View>
@@ -105,7 +105,7 @@ export default function OnboardingStep1() {
             className="items-center"
           >
             <View
-              className={`w-28 h-28 rounded-full bg-white items-center justify-center shadow-sm border-2 ${selected === 'family' ? 'border-[#4A9FE2]' : 'border-gray-100'}`}
+              className={`w-28 h-28 rounded-full items-center justify-center shadow-sm ${selected === 'family' ? 'border-4 border-[#36a9e2] bg-[#e8f5fd]' : 'border-2 border-gray-200 bg-white'}`}
             >
               <MaterialIcons
                 name="family-restroom"
@@ -124,7 +124,7 @@ export default function OnboardingStep1() {
       </View>
 
       {/* AI Tip Box */}
-      <View className="px-6 py-6">
+      <View className="px-6 py-4">
         <View
           className="rounded-2xl p-4 flex-row-reverse items-start border"
           style={{
@@ -142,7 +142,7 @@ export default function OnboardingStep1() {
             style={{ color: colors.slate }}
             className="text-sm font-medium flex-1 leading-relaxed text-right"
           >
-            זה עוזר לבינה המלאכותית להבין אילו אירועים ומשימות הכי חשובים לך.
+            זה יעזור לנו להתאים לך את הלוז בצורה טובה יותר
           </Text>
         </View>
       </View>

@@ -79,7 +79,7 @@ export default function VerifyScreen() {
         await signIn('phone', { phone, code: digits });
         // Navigate to onboarding so new users always start the onboarding flow.
         // router.replace prevents going back to the verify screen.
-        router.replace('/onboarding-hero');
+        router.replace('/onboarding-step1');
       } catch (err) {
         console.error('[Auth] OTP verify failed:', err);
         setError(mapAuthError(err));

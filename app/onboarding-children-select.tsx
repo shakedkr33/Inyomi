@@ -2,7 +2,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { Image, Pressable, Text, TextInput, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../constants/theme';
 
@@ -10,7 +10,8 @@ const COUNTS = [1, 2, 3, 4, '5+'] as const;
 
 export default function OnboardingChildrenSelect() {
   const router = useRouter();
-  const [selected, setSelected] = useState<number | '5+'>(2);
+  // No default — user must make an explicit selection
+  const [selected, setSelected] = useState<number | '5+' | null>(null);
   const [customCount, setCustomCount] = useState('');
 
   const handleSelect = (value: number | '5+') => {
@@ -25,10 +26,17 @@ export default function OnboardingChildrenSelect() {
       const parsed = Number.parseInt(customCount, 10);
       return parsed > 0 && parsed <= 10 ? parsed : 5;
     }
-    return selected;
+    return selected as number;
   };
 
+  // Continue is allowed only when the user has made a real choice,
+  // and if 5+ is chosen a valid custom number must be entered.
+  const canContinue =
+    selected !== null &&
+    (selected !== '5+' || (customCount !== '' && Number.parseInt(customCount, 10) > 0));
+
   const handleContinue = async () => {
+    if (!canContinue) return;
     const count = getFinalCount();
     await AsyncStorage.setItem('childrenCount', count.toString());
     router.push('/onboarding-step2');
@@ -40,11 +48,11 @@ export default function OnboardingChildrenSelect() {
       <View className="pt-4 px-6">
         <View className="flex-row-reverse items-center justify-between mb-2">
           <Pressable
-            onPress={() => router.back()}
+            onPress={() => router.replace('/onboarding-step1')}
             className="p-2"
             accessible={true}
             accessibilityRole="button"
-            accessibilityLabel="חזור"
+            accessibilityLabel="חזור לשלב הקודם"
           >
             <MaterialIcons
               name="arrow-forward"
@@ -60,14 +68,8 @@ export default function OnboardingChildrenSelect() {
       </View>
 
       <View className="flex-1 justify-between pb-10 pt-4">
-        {/* Icon & Title */}
+        {/* Title */}
         <View className="items-center px-8">
-          <Image
-            source={require('@/assets/images/icon.png')}
-            style={{ width: 56, height: 56, marginBottom: 20 }}
-            resizeMode="contain"
-            accessibilityLabel="InYomi"
-          />
           <Text
             style={{ color: colors.slate }}
             className="text-[26px] font-extrabold text-center leading-tight mb-2"
@@ -78,7 +80,7 @@ export default function OnboardingChildrenSelect() {
             style={{ color: colors.slateLight }}
             className="text-[15px] text-center leading-relaxed"
           >
-            כדי שנתאים את הלוח והתזכורות בדיוק למשפחה שלכם
+            זה יעזור לנו להתאים את הלוז והתזכורות למשפחה שלכם
           </Text>
         </View>
 
@@ -100,8 +102,8 @@ export default function OnboardingChildrenSelect() {
                     className="w-16 h-16 rounded-full items-center justify-center"
                     style={{
                       backgroundColor: isActive ? colors.sage : colors.white,
-                      borderWidth: 2,
-                      borderColor: isActive ? colors.sage : '#E8E4DD',
+                      borderWidth: isActive ? 3 : 2,
+                      borderColor: isActive ? '#36a9e2' : '#E8E4DD',
                     }}
                   >
                     <Text
@@ -149,26 +151,41 @@ export default function OnboardingChildrenSelect() {
           )}
         </View>
 
-        {/* Helper Text */}
-        <View className="px-8">
-          <Text
-            style={{ color: colors.slateMuted }}
-            className="text-[13px] text-center leading-relaxed"
+        {/* Helper Box — consistent with onboarding step 1 */}
+        <View className="px-6">
+          <View
+            className="rounded-2xl p-4 flex-row-reverse items-start border"
+            style={{
+              backgroundColor: 'rgba(74, 159, 226, 0.06)',
+              borderColor: 'rgba(74, 159, 226, 0.12)',
+            }}
           >
-            בשלב הבא תוכלי לספר לנו עוד על האתגרים שלך, כדי שנתאים הכל בדיוק
-            בשבילך
-          </Text>
+            <MaterialIcons
+              name="auto-awesome"
+              size={20}
+              color={colors.sage}
+              style={{ marginLeft: 12 }}
+            />
+            <Text
+              style={{ color: colors.slate }}
+              className="text-sm font-medium flex-1 leading-relaxed text-right"
+            >
+              זה יעזור לנו להתאים את הלוז בצורה טובה יותר למשפחה שלכם
+            </Text>
+          </View>
         </View>
 
         {/* Continue Button */}
         <View className="px-6">
           <Pressable
             onPress={handleContinue}
+            disabled={!canContinue}
             className="w-full h-16 rounded-full flex-row items-center justify-center gap-3"
-            style={{ backgroundColor: colors.sage }}
+            style={{ backgroundColor: canContinue ? colors.sage : '#d1d5db' }}
             accessible={true}
             accessibilityRole="button"
             accessibilityLabel="המשך"
+            accessibilityState={{ disabled: !canContinue }}
           >
             <Text className="text-white text-xl font-bold">המשך</Text>
             <MaterialIcons name="chevron-left" size={24} color="white" />
