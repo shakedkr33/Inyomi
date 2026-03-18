@@ -134,32 +134,28 @@ export default function CommunityMembersScreen() {
   };
 
   const handleLeave = () => {
-    Alert.alert(
-      'עזיבת הקהילה',
-      'האם אתה בטוח שברצונך לעזוב את הקהילה?',
-      [
-        { text: 'ביטול', style: 'cancel' },
-        {
-          text: 'עזוב',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await leaveCommunity({ communityId });
-              router.replace(
-                '/(authenticated)/communities' as Parameters<
-                  typeof router.replace
-                >[0]
-              );
-            } catch (err) {
-              Alert.alert(
-                'שגיאה',
-                err instanceof Error ? err.message : 'לא ניתן לעזוב את הקהילה'
-              );
-            }
-          },
+    Alert.alert('עזיבת הקהילה', 'האם אתה בטוח שברצונך לעזוב את הקהילה?', [
+      { text: 'ביטול', style: 'cancel' },
+      {
+        text: 'עזוב',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await leaveCommunity({ communityId });
+            router.replace(
+              '/(authenticated)/communities' as Parameters<
+                typeof router.replace
+              >[0]
+            );
+          } catch (err) {
+            Alert.alert(
+              'שגיאה',
+              err instanceof Error ? err.message : 'לא ניתן לעזוב את הקהילה'
+            );
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
   const handleRemove = (member: MemberInfo) => {

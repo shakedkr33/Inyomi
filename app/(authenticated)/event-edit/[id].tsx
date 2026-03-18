@@ -59,10 +59,17 @@ export default function EditEventScreen(): React.JSX.Element {
   const communityMembers = communityMembersData?.members ?? [];
 
   const [tasks, setTasks] = useState<
-    { id: string; title: string; isNew: boolean; assignee?: LocalAssignee | null }[]
+    {
+      id: string;
+      title: string;
+      isNew: boolean;
+      assignee?: LocalAssignee | null;
+    }[]
   >([]);
   const [newTaskText, setNewTaskText] = useState('');
-  const [assigneeSheetTaskId, setAssigneeSheetTaskId] = useState<string | null>(null);
+  const [assigneeSheetTaskId, setAssigneeSheetTaskId] = useState<string | null>(
+    null
+  );
   const [manualAssigneeName, setManualAssigneeName] = useState('');
 
   // ── Form state
@@ -125,10 +132,14 @@ export default function EditEventScreen(): React.JSX.Element {
       (eventTasks ?? []).map((t) => {
         const enriched = t as typeof t & { assigneeDisplay?: string };
         const assignee: LocalAssignee | undefined = t.assignedToUserId
-          ? { type: 'user', userId: t.assignedToUserId, display: enriched.assigneeDisplay ?? '' }
+          ? {
+              type: 'user',
+              userId: t.assignedToUserId,
+              display: enriched.assigneeDisplay ?? '',
+            }
           : t.assignedToManual?.trim()
-          ? { type: 'manual', name: t.assignedToManual.trim() }
-          : undefined;
+            ? { type: 'manual', name: t.assignedToManual.trim() }
+            : undefined;
         return { id: t._id, title: t.title, isNew: false, assignee };
       })
     );
@@ -184,7 +195,10 @@ export default function EditEventScreen(): React.JSX.Element {
               id: taskId as Id<'eventTasks'>,
               assignee:
                 task.assignee.type === 'user'
-                  ? { type: 'user', userId: task.assignee.userId as Id<'users'> }
+                  ? {
+                      type: 'user',
+                      userId: task.assignee.userId as Id<'users'>,
+                    }
                   : { type: 'manual', name: task.assignee.name },
             }).catch(() => {});
           }
@@ -205,17 +219,27 @@ export default function EditEventScreen(): React.JSX.Element {
             const origAssignee: LocalAssignee | null = orig.assignedToUserId
               ? { type: 'user', userId: orig.assignedToUserId, display: '' }
               : orig.assignedToManual?.trim()
-              ? { type: 'manual', name: orig.assignedToManual.trim() }
-              : null;
+                ? { type: 'manual', name: orig.assignedToManual.trim() }
+                : null;
             const localAssignee = t.assignee ?? null;
             const changed =
               JSON.stringify({
                 type: origAssignee?.type,
-                id: origAssignee?.type === 'user' ? origAssignee.userId : origAssignee?.type === 'manual' ? origAssignee.name : null,
+                id:
+                  origAssignee?.type === 'user'
+                    ? origAssignee.userId
+                    : origAssignee?.type === 'manual'
+                      ? origAssignee.name
+                      : null,
               }) !==
               JSON.stringify({
                 type: localAssignee?.type,
-                id: localAssignee?.type === 'user' ? localAssignee.userId : localAssignee?.type === 'manual' ? localAssignee.name : null,
+                id:
+                  localAssignee?.type === 'user'
+                    ? localAssignee.userId
+                    : localAssignee?.type === 'manual'
+                      ? localAssignee.name
+                      : null,
               });
             if (changed) {
               await setTaskAssignee({
@@ -224,8 +248,11 @@ export default function EditEventScreen(): React.JSX.Element {
                   localAssignee === null
                     ? null
                     : localAssignee.type === 'user'
-                    ? { type: 'user', userId: localAssignee.userId as Id<'users'> }
-                    : { type: 'manual', name: localAssignee.name },
+                      ? {
+                          type: 'user',
+                          userId: localAssignee.userId as Id<'users'>,
+                        }
+                      : { type: 'manual', name: localAssignee.name },
               }).catch(() => {});
             }
           }
@@ -917,9 +944,7 @@ export default function EditEventScreen(): React.JSX.Element {
           if (!assigneeSheetTaskId) return;
           setTasks((prev) =>
             prev.map((t) =>
-              t.id === assigneeSheetTaskId
-                ? { ...t, assignee: null }
-                : t
+              t.id === assigneeSheetTaskId ? { ...t, assignee: null } : t
             )
           );
           setAssigneeSheetTaskId(null);

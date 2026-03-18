@@ -8,7 +8,7 @@
  */
 export function normalizeIsraeliPhone(raw: string): string | null {
   // Strip all spaces, dashes, and parentheses
-  const stripped = raw.replace(/[\s\-\(\)]/g, '');
+  const stripped = raw.replace(/[\s\-()]/g, '');
 
   if (stripped.startsWith('+972')) {
     return stripped;

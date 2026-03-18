@@ -66,7 +66,8 @@ export const listByEvent = query({
         let assigneeDisplay: string | undefined;
         if (t.assignedToUserId) {
           const user = await ctx.db.get(t.assignedToUserId);
-          assigneeDisplay = (user as { fullName?: string } | null)?.fullName ?? undefined;
+          assigneeDisplay =
+            (user as { fullName?: string } | null)?.fullName ?? undefined;
         } else if (t.assignedToManual?.trim()) {
           assigneeDisplay = t.assignedToManual.trim();
         }
@@ -244,8 +245,7 @@ export const setAssignee = mutation({
     }
 
     if (assignee.type === 'manual') {
-      if (!isCreator)
-        throw new Error('רק יוצר האירוע יכול להקצות שם ידני');
+      if (!isCreator) throw new Error('רק יוצר האירוע יכול להקצות שם ידני');
       await ctx.db.patch(id, {
         assignedToUserId: undefined,
         assignedToManual: assignee.name.trim() || undefined,
@@ -290,7 +290,10 @@ export const listMyAssignedEventTasksForDate = query({
         const events = await ctx.db
           .query('events')
           .withIndex('by_community_date', (q) =>
-            q.eq('communityId', communityId).gte('startTime', from).lte('startTime', to)
+            q
+              .eq('communityId', communityId)
+              .gte('startTime', from)
+              .lte('startTime', to)
           )
           .collect();
 

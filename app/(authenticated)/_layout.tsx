@@ -180,7 +180,12 @@ export default function AuthenticatedLayout() {
   // Wait for: navigation tree, auth state, RevenueCat, and user profile to resolve
   const isUserStatusLoading = isAuthenticated && userStatus === undefined;
 
-  if (!navigationState?.key || isLoading || isRevenueCatLoading || isUserStatusLoading) {
+  if (
+    !navigationState?.key ||
+    isLoading ||
+    isRevenueCatLoading ||
+    isUserStatusLoading
+  ) {
     return (
       <View className="flex-1 bg-white items-center justify-center">
         <ActivityIndicator size="large" color="#4A9FE2" />

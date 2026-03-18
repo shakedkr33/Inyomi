@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Platform } from 'react-native';
 import {
   KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -91,7 +91,11 @@ export function TaskAssigneeSheet({
                 accessibilityRole="button"
                 accessibilityLabel="בטל הקצאה"
               >
-                <Ionicons name="person-remove-outline" size={18} color="#ef4444" />
+                <Ionicons
+                  name="person-remove-outline"
+                  size={18}
+                  color="#ef4444"
+                />
                 <Text style={s.unassignText}>בטל הקצאה</Text>
               </TouchableOpacity>
             ) : null}
@@ -126,7 +130,10 @@ export function TaskAssigneeSheet({
                 <View style={s.manualRow}>
                   <TouchableOpacity
                     onPress={onSelectManual}
-                    style={[s.manualBtn, !manualName.trim() && s.manualBtnDisabled]}
+                    style={[
+                      s.manualBtn,
+                      !manualName.trim() && s.manualBtnDisabled,
+                    ]}
                     disabled={!manualName.trim()}
                     accessible
                     accessibilityRole="button"

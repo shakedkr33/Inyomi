@@ -303,16 +303,18 @@ export default function EventDetailScreen() {
   const _assigneeSheetTask = assigneeSheetTaskId
     ? (eventTasks?.find((t) => t._id === assigneeSheetTaskId) ?? null)
     : null;
-  const currentAssigneeForSheet: LocalAssignee | null = _assigneeSheetTask?.assignedToUserId
-    ? {
-        type: 'user',
-        userId: _assigneeSheetTask.assignedToUserId,
-        display:
-          (_assigneeSheetTask as { assigneeDisplay?: string }).assigneeDisplay ?? '',
-      }
-    : _assigneeSheetTask?.assignedToManual?.trim()
-    ? { type: 'manual', name: _assigneeSheetTask.assignedToManual.trim() }
-    : null;
+  const currentAssigneeForSheet: LocalAssignee | null =
+    _assigneeSheetTask?.assignedToUserId
+      ? {
+          type: 'user',
+          userId: _assigneeSheetTask.assignedToUserId,
+          display:
+            (_assigneeSheetTask as { assigneeDisplay?: string })
+              .assigneeDisplay ?? '',
+        }
+      : _assigneeSheetTask?.assignedToManual?.trim()
+        ? { type: 'manual', name: _assigneeSheetTask.assignedToManual.trim() }
+        : null;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -565,26 +567,22 @@ export default function EventDetailScreen() {
                           </TouchableOpacity>
                           <TouchableOpacity
                             onPress={() => {
-                              Alert.alert(
-                                'מחק משימה',
-                                'האם למחוק את המשימה?',
-                                [
-                                  { text: 'ביטול', style: 'cancel' },
-                                  {
-                                    text: 'מחק',
-                                    style: 'destructive',
-                                    onPress: () =>
-                                      removeEventTask({
-                                        id: task._id,
-                                      }).catch(() =>
-                                        Alert.alert(
-                                          'שגיאה',
-                                          'לא ניתן למחוק משימה'
-                                        )
-                                      ),
-                                  },
-                                ]
-                              );
+                              Alert.alert('מחק משימה', 'האם למחוק את המשימה?', [
+                                { text: 'ביטול', style: 'cancel' },
+                                {
+                                  text: 'מחק',
+                                  style: 'destructive',
+                                  onPress: () =>
+                                    removeEventTask({
+                                      id: task._id,
+                                    }).catch(() =>
+                                      Alert.alert(
+                                        'שגיאה',
+                                        'לא ניתן למחוק משימה'
+                                      )
+                                    ),
+                                },
+                              ]);
                             }}
                             style={styles.taskActionBtn}
                             accessible
@@ -688,9 +686,7 @@ export default function EventDetailScreen() {
           setTaskAssignee({
             id: assigneeSheetTaskId as Id<'eventTasks'>,
             assignee: { type: 'user', userId },
-          }).catch(() =>
-            Alert.alert('שגיאה', 'לא ניתן להקצות משימה')
-          );
+          }).catch(() => Alert.alert('שגיאה', 'לא ניתן להקצות משימה'));
           setAssigneeSheetTaskId(null);
         }}
         onSelectManual={() => {
@@ -698,9 +694,7 @@ export default function EventDetailScreen() {
           setTaskAssignee({
             id: assigneeSheetTaskId as Id<'eventTasks'>,
             assignee: { type: 'manual', name: manualAssigneeName.trim() },
-          }).catch(() =>
-            Alert.alert('שגיאה', 'לא ניתן להקצות משימה')
-          );
+          }).catch(() => Alert.alert('שגיאה', 'לא ניתן להקצות משימה'));
           setAssigneeSheetTaskId(null);
           setManualAssigneeName('');
         }}
@@ -709,9 +703,7 @@ export default function EventDetailScreen() {
           setTaskAssignee({
             id: assigneeSheetTaskId as Id<'eventTasks'>,
             assignee: null,
-          }).catch(() =>
-            Alert.alert('שגיאה', 'לא ניתן לבטל הקצאה')
-          );
+          }).catch(() => Alert.alert('שגיאה', 'לא ניתן לבטל הקצאה'));
           setAssigneeSheetTaskId(null);
         }}
         onClose={() => {
@@ -1136,5 +1128,4 @@ const styles = StyleSheet.create({
   },
   popoverLabel: { fontSize: 15, color: '#374151', textAlign: 'right', flex: 1 },
   popoverDanger: { color: '#ef4444' },
-
 });

@@ -381,9 +381,7 @@ export const leaveCommunity = mutation({
     if (!membership) throw new Error('המשתמש אינו חבר בקהילה זו');
 
     if (membership.role === 'owner') {
-      throw new Error(
-        'בעל הקהילה לא יכול לעזוב. יש להעביר בעלות תחילה.'
-      );
+      throw new Error('בעל הקהילה לא יכול לעזוב. יש להעביר בעלות תחילה.');
     }
 
     await ctx.db.delete(membership._id);

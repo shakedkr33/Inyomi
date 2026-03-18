@@ -436,8 +436,8 @@ export default function OnboardingStep4() {
                 עם מי תרצה/י לשתף לעיתים קרובות?
               </Text>
               <Text className="text-sm text-gray-400 text-right mb-3 leading-relaxed">
-                האנשים שתוסיף/י כאן יופיעו לך אחר כך בלחיצה אחת כשתיצור/י
-                אירוע, משימה או תזכורת.
+                האנשים שתוסיף/י כאן יופיעו לך אחר כך בלחיצה אחת כשתיצור/י אירוע,
+                משימה או תזכורת.
               </Text>
               <Text className="text-xs text-gray-300 text-right mb-4 leading-relaxed">
                 האנשים שתוסיף/י כאן לא ישותפו אוטומטית. בכל אירוע, משימה או
@@ -524,7 +524,10 @@ export default function OnboardingStep4() {
               onEdit={() => setProfileSaved(false)}
             />
           ) : (
-            <View className="bg-white rounded-3xl p-5 mb-6" style={shadows.soft}>
+            <View
+              className="bg-white rounded-3xl p-5 mb-6"
+              style={shadows.soft}
+            >
               {/* Name fields — use wrapped handlers so any edit resets saved state */}
               <NameFields
                 firstName={firstName}
@@ -593,8 +596,8 @@ export default function OnboardingStep4() {
               style={{ marginLeft: 8, marginTop: 1 }}
             />
             <Text className="flex-1 text-xs text-gray-500 text-right leading-relaxed">
-              האנשים שתוסיף/י כאן לא ישותפו אוטומטית. בכל אירוע, משימה או
-              תזכורת תוכל/י לבחור עם מי לשתף.
+              האנשים שתוסיף/י כאן לא ישותפו אוטומטית. בכל אירוע, משימה או תזכורת
+              תוכל/י לבחור עם מי לשתף.
             </Text>
           </View>
 

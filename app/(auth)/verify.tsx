@@ -21,16 +21,28 @@ const RESEND_COOLDOWN_SECONDS = 60;
 // Maps @convex-dev/auth error messages to human Hebrew copy
 function mapAuthError(err: unknown): string {
   const msg = err instanceof Error ? err.message.toLowerCase() : '';
-  if (msg.includes('invalid') || msg.includes('incorrect') || msg.includes('wrong')) {
+  if (
+    msg.includes('invalid') ||
+    msg.includes('incorrect') ||
+    msg.includes('wrong')
+  ) {
     return 'הקוד שגוי. בדקי ונסי שוב.';
   }
   if (msg.includes('expired')) {
     return 'הקוד פג תוקף. לחצי על "שלח קוד חדש".';
   }
-  if (msg.includes('rate') || msg.includes('too many') || msg.includes('limit')) {
+  if (
+    msg.includes('rate') ||
+    msg.includes('too many') ||
+    msg.includes('limit')
+  ) {
     return 'יותר מדי ניסיונות. המתיני כמה דקות ונסי שוב.';
   }
-  if (msg.includes('network') || msg.includes('fetch') || msg.includes('connection')) {
+  if (
+    msg.includes('network') ||
+    msg.includes('fetch') ||
+    msg.includes('connection')
+  ) {
     return 'בעיית חיבור. בדקי את האינטרנט ונסי שוב.';
   }
   return 'משהו השתבש. בדקי את החיבור ונסי שוב.';
@@ -233,13 +245,16 @@ export default function VerifyScreen() {
             onPress={() => verify(code)}
             style={[
               styles.confirmBtn,
-              (code.length < CODE_LENGTH || isSubmitting) && styles.confirmBtnDisabled,
+              (code.length < CODE_LENGTH || isSubmitting) &&
+                styles.confirmBtnDisabled,
             ]}
             disabled={code.length < CODE_LENGTH || isSubmitting}
             accessible={true}
             accessibilityRole="button"
             accessibilityLabel="אמתי קוד"
-            accessibilityState={{ disabled: code.length < CODE_LENGTH || isSubmitting }}
+            accessibilityState={{
+              disabled: code.length < CODE_LENGTH || isSubmitting,
+            }}
           >
             {isVerifying ? (
               <ActivityIndicator color="#fff" />

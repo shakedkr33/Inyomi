@@ -31,7 +31,10 @@ export default function OnboardingStep1() {
       {/* Header & Progress */}
       <View className="pt-4 px-4">
         <View className="flex-row-reverse items-center justify-between mb-4">
-          <Pressable onPress={() => router.replace('/(auth)/sign-in')} className="p-2">
+          <Pressable
+            onPress={() => router.replace('/(auth)/sign-in')}
+            className="p-2"
+          >
             <MaterialIcons
               name="arrow-forward"
               size={24}

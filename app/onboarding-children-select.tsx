@@ -19,7 +19,8 @@ export default function OnboardingChildrenSelect() {
     return data.childCount >= 5 ? '5+' : (data.childCount as number);
   });
   const [customCount, setCustomCount] = useState(() => {
-    if (data.childCount && data.childCount >= 5) return data.childCount.toString();
+    if (data.childCount && data.childCount >= 5)
+      return data.childCount.toString();
     return '';
   });
 
@@ -46,7 +47,8 @@ export default function OnboardingChildrenSelect() {
   // and if 5+ is chosen a valid custom number must be entered.
   const canContinue =
     selected !== null &&
-    (selected !== '5+' || (customCount !== '' && Number.parseInt(customCount, 10) > 0));
+    (selected !== '5+' ||
+      (customCount !== '' && Number.parseInt(customCount, 10) > 0));
 
   const handleContinue = async () => {
     if (!canContinue) return;
@@ -79,7 +81,6 @@ export default function OnboardingChildrenSelect() {
 
       {/* Scrollable middle — title, circles, illustration */}
       <View className="flex-1 justify-between pt-2 pb-4">
-
         {/* Title — no subtitle */}
         <View className="items-center px-8">
           <Text
@@ -160,7 +161,10 @@ export default function OnboardingChildrenSelect() {
         </View>
 
         {/* Illustration area — soft family icon in a light blue dashed circle */}
-        <View className="items-center" style={{ marginTop: 40, marginBottom: 40 }}>
+        <View
+          className="items-center"
+          style={{ marginTop: 40, marginBottom: 40 }}
+        >
           <View
             style={{
               width: 100,
@@ -181,7 +185,6 @@ export default function OnboardingChildrenSelect() {
             />
           </View>
         </View>
-
       </View>
 
       {/* Bottom section — helper box anchored directly above CTA, matches step 1 */}

@@ -82,7 +82,9 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
     { id: string; title: string; assignee?: LocalAssignee }[]
   >([]);
   const [newTaskText, setNewTaskText] = useState('');
-  const [assigneeSheetTaskId, setAssigneeSheetTaskId] = useState<string | null>(null);
+  const [assigneeSheetTaskId, setAssigneeSheetTaskId] = useState<string | null>(
+    null
+  );
   const [manualAssigneeName, setManualAssigneeName] = useState('');
 
   const handleSave = useCallback(async () => {
@@ -134,7 +136,10 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
               id: taskId as Id<'eventTasks'>,
               assignee:
                 task.assignee.type === 'user'
-                  ? { type: 'user', userId: task.assignee.userId as Id<'users'> }
+                  ? {
+                      type: 'user',
+                      userId: task.assignee.userId as Id<'users'>,
+                    }
                   : { type: 'manual', name: task.assignee.name },
             }).catch(() => {});
           }
@@ -730,9 +735,7 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
           if (!assigneeSheetTaskId) return;
           setTasks((prev) =>
             prev.map((t) =>
-              t.id === assigneeSheetTaskId
-                ? { ...t, assignee: undefined }
-                : t
+              t.id === assigneeSheetTaskId ? { ...t, assignee: undefined } : t
             )
           );
           setAssigneeSheetTaskId(null);

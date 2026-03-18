@@ -1,4 +1,3 @@
-import { parseIsraeliPhone } from '@/lib/phoneUtils';
 import { useAuthActions } from '@convex-dev/auth/react';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
@@ -15,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { parseIsraeliPhone } from '@/lib/phoneUtils';
 
 export default function PhoneInputScreen() {
   const { signIn } = useAuthActions();
@@ -30,7 +30,9 @@ export default function PhoneInputScreen() {
 
     const normalized = parseIsraeliPhone(phone.trim());
     if (!normalized) {
-      setError('מספר הטלפון לא תקין. אנא הזן/י מספר ישראלי בפורמט 05X-XXXXXXX.');
+      setError(
+        'מספר הטלפון לא תקין. אנא הזן/י מספר ישראלי בפורמט 05X-XXXXXXX.'
+      );
       return;
     }
 
@@ -81,7 +83,9 @@ export default function PhoneInputScreen() {
 
             <Text style={styles.fieldLabel}>מספר טלפון</Text>
 
-            <View style={[styles.phoneRow, error ? styles.phoneRowError : null]}>
+            <View
+              style={[styles.phoneRow, error ? styles.phoneRowError : null]}
+            >
               <View style={styles.prefix}>
                 <Text style={styles.prefixText}>+972</Text>
               </View>

@@ -135,7 +135,8 @@ export default function OnboardingStep3() {
             style={{ color: colors.slate }}
             className="text-sm font-medium flex-1 leading-relaxed text-right"
           >
-            ספר/י לנו איפה המידע שלך נמצא, כדי שנוכל לעזור לך לרכז אותו במקום אחד
+            ספר/י לנו איפה המידע שלך נמצא, כדי שנוכל לעזור לך לרכז אותו במקום
+            אחד
           </Text>
         </View>
       </View>

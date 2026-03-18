@@ -248,7 +248,10 @@ export const listCommunityEventsForDate = query({
         const events = await ctx.db
           .query('events')
           .withIndex('by_community_date', (q) =>
-            q.eq('communityId', communityId).gte('startTime', from).lte('startTime', to)
+            q
+              .eq('communityId', communityId)
+              .gte('startTime', from)
+              .lte('startTime', to)
           )
           .collect();
 
