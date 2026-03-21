@@ -83,6 +83,108 @@ type UndatedTask = {
   completed: boolean;
 };
 
+// ─── Inline face mood (cream/boho tone — emoji cannot be recolored) ─────────
+
+function FaceMood({ value }: { value: 0 | 1 | 2 }) {
+  return (
+    <View
+      style={{
+        width: 46,
+        height: 46,
+        borderRadius: 23,
+        backgroundColor: '#F5E6C8',
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Eyes */}
+      <View
+        style={{
+          flexDirection: 'row',
+          gap: 7,
+          marginTop: -4,
+          alignItems: 'center',
+        }}
+      >
+        <View
+          style={{
+            width: 4,
+            height: 4,
+            borderRadius: 2,
+            backgroundColor: '#4a3728',
+          }}
+        />
+        <View
+          style={{
+            width: 4,
+            height: 4,
+            borderRadius: 2,
+            backgroundColor: '#4a3728',
+          }}
+        />
+      </View>
+      {/* Mouth — happy */}
+      {value === 2 && (
+        <View
+          style={{
+            width: 18,
+            height: 9,
+            borderBottomLeftRadius: 9,
+            borderBottomRightRadius: 9,
+            borderWidth: 2,
+            borderColor: '#4a3728',
+            borderTopWidth: 0,
+            marginTop: 5,
+          }}
+        />
+      )}
+      {/* Mouth — neutral */}
+      {value === 1 && (
+        <View
+          style={{
+            width: 14,
+            height: 2,
+            backgroundColor: '#4a3728',
+            borderRadius: 1,
+            marginTop: 7,
+          }}
+        />
+      )}
+      {/* Mouth — stressed: small open oval (anxious, not sad) */}
+      {value === 0 && (
+        <View
+          style={{
+            width: 13,
+            height: 9,
+            borderRadius: 6,
+            borderWidth: 2,
+            borderColor: '#4a3728',
+            marginTop: 6,
+          }}
+        />
+      )}
+      {/* Sweat drop for עמוס — teardrop shape */}
+      {value === 0 && (
+        <View
+          style={{
+            position: 'absolute',
+            top: 5,
+            right: 7,
+            width: 5,
+            height: 9,
+            borderTopLeftRadius: 2,
+            borderTopRightRadius: 2,
+            borderBottomLeftRadius: 5,
+            borderBottomRightRadius: 5,
+            backgroundColor: 'rgba(100,160,220,0.7)',
+          }}
+        />
+      )}
+    </View>
+  );
+}
+
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function HomeScreen() {
@@ -1167,7 +1269,7 @@ export default function HomeScreen() {
         {/* ── Timeline ───────────────────────────────────────────────────────── */}
         {hasDayData && (
           <>
-            {!isSummaryMode && (
+            {!isSummaryMode && !isEndOfDay && (
               <View style={styles.sectionHeader}>
                 <Text style={styles.timelineTitle}>המשך היום</Text>
               </View>
@@ -1230,69 +1332,155 @@ export default function HomeScreen() {
 
             {/* Timeline — branched: summary-mode compact cards vs active-day timeline */}
             {isSummaryMode ? (
-              /* ── Summary-mode: compact full-width recap cards ── */
+              /* ── Summary-mode: compact recap cards, fully interactive ── */
               <View style={{ paddingHorizontal: 24, paddingBottom: 8, gap: 8 }}>
                 {visibleItems
                   .filter((i) => !i.allDay)
                   .map((item) => (
-                    <Pressable
+                    <Swipeable
                       key={item.id}
-                      onPress={() => handleCardPress(item)}
-                      style={[
-                        styles.summaryCard,
-                        item.completed && styles.summaryCardMuted,
-                      ]}
-                      accessible={true}
-                      accessibilityRole="button"
-                      accessibilityLabel={item.title}
-                    >
-                      <View
-                        style={[
-                          styles.timelineAccent,
-                          {
-                            backgroundColor: item.completed
-                              ? '#d1d5db'
-                              : item.iconColor,
-                          },
-                        ]}
-                      />
-                      <View style={{ flex: 1 }}>
-                        {item.time ? (
-                          <Text style={styles.summaryCardTime}>
-                            {item.time}
-                            {item.endTime ? ` – ${item.endTime}` : ''}
-                          </Text>
-                        ) : null}
-                        <Text
-                          style={[
-                            styles.taskTitle,
-                            item.completed && styles.completedText,
-                          ]}
+                      renderRightActions={() => (
+                        <Pressable
+                          style={styles.deleteAction}
+                          onPress={() => confirmDelete(item)}
+                          accessible={true}
+                          accessibilityRole="button"
+                          accessibilityLabel="מחק פריט"
                         >
-                          {item.title}
-                        </Text>
-                        {item.location ? (
-                          <Text style={styles.itemLocation}>
-                            {item.location}
-                          </Text>
-                        ) : null}
-                        {item.groupName ? (
-                          <View style={styles.groupRow}>
-                            <MaterialIcons
-                              name="group"
-                              size={12}
-                              color="#64748b"
+                          <MaterialIcons
+                            name="delete-outline"
+                            size={26}
+                            color="white"
+                          />
+                        </Pressable>
+                      )}
+                    >
+                      <Pressable
+                        onPress={() => handleCardPress(item)}
+                        style={[
+                          styles.summaryCard,
+                          item.completed && styles.summaryCardMuted,
+                        ]}
+                        accessible={true}
+                        accessibilityRole="button"
+                        accessibilityLabel={item.title}
+                      >
+                        <View
+                          style={[
+                            styles.timelineAccent,
+                            {
+                              backgroundColor: item.completed
+                                ? '#d1d5db'
+                                : item.iconColor,
+                            },
+                          ]}
+                        />
+                        <View
+                          style={{
+                            flexDirection: 'row-reverse',
+                            alignItems: 'flex-start',
+                            gap: 10,
+                            flex: 1,
+                          }}
+                        >
+                          {item.type === 'task' && (
+                            <TaskCheckbox
+                              checked={item.completed}
+                              onToggle={() => toggleTask(item.id)}
                             />
-                            <Text style={styles.groupText}>
-                              {item.groupName}
-                            </Text>
+                          )}
+                          <View style={{ flex: 1 }}>
+                            {item.time ? (
+                              <Text style={styles.summaryCardTime}>
+                                {item.time}
+                                {item.endTime ? ` – ${item.endTime}` : ''}
+                              </Text>
+                            ) : null}
+                            {/* Title + assignee circle */}
+                            <View
+                              style={{
+                                flexDirection: 'row-reverse',
+                                alignItems: 'center',
+                                gap: 6,
+                              }}
+                            >
+                              <Text
+                                style={[
+                                  styles.taskTitle,
+                                  item.completed && styles.completedText,
+                                ]}
+                              >
+                                {item.title}
+                              </Text>
+                              <View
+                                style={[
+                                  styles.assigneeCircle,
+                                  { backgroundColor: item.assigneeColor },
+                                ]}
+                              />
+                            </View>
+                            {item.location ? (
+                              <Text style={styles.itemLocation}>
+                                {item.location}
+                              </Text>
+                            ) : null}
+                            {item.groupName ? (
+                              <View style={styles.groupRow}>
+                                <MaterialIcons
+                                  name="group"
+                                  size={12}
+                                  color="#64748b"
+                                />
+                                <Text style={styles.groupText}>
+                                  {item.groupName}
+                                </Text>
+                              </View>
+                            ) : null}
+                            {/* Nav button — warm brown, same as active-day */}
+                            {item.location ? (
+                              <Pressable
+                                onPress={(e) => {
+                                  e.stopPropagation?.();
+                                  handleOpenNavPicker(item.location);
+                                }}
+                                style={{
+                                  alignSelf: 'flex-start',
+                                  marginTop: 6,
+                                  backgroundColor: 'rgba(141,110,99,0.1)',
+                                  borderRadius: 12,
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 4,
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                }}
+                                accessible={true}
+                                accessibilityRole="button"
+                                accessibilityLabel="נווט"
+                              >
+                                <MaterialIcons
+                                  name="near-me"
+                                  size={13}
+                                  color="#8d6e63"
+                                />
+                                <Text
+                                  style={{
+                                    color: '#8d6e63',
+                                    fontSize: 12,
+                                    fontWeight: '700',
+                                  }}
+                                >
+                                  נווט
+                                </Text>
+                              </Pressable>
+                            ) : null}
                           </View>
-                        ) : null}
-                      </View>
-                    </Pressable>
+                        </View>
+                      </Pressable>
+                    </Swipeable>
                   ))}
               </View>
-            ) : (
+            ) : !isEndOfDay ? (
               /* ── Active-day timeline with time column + swipe ── */
               <View style={{ paddingHorizontal: 24, paddingBottom: 8 }}>
                 {visibleItems
@@ -1662,7 +1850,7 @@ export default function HomeScreen() {
                     </Swipeable>
                   ))}
               </View>
-            )}
+            ) : null}
           </>
         )}
 
@@ -1848,7 +2036,7 @@ export default function HomeScreen() {
                     accessibilityRole="button"
                     accessibilityLabel={mood.label}
                   >
-                    <Text style={{ fontSize: 26 }}>{mood.emoji}</Text>
+                    <FaceMood value={mood.value} />
                     <Text
                       style={{
                         fontSize: 13,
@@ -1876,9 +2064,9 @@ export default function HomeScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="שנה את הרגש שנבחר"
               >
-                <Text style={{ fontSize: 24 }}>
-                  {MOODS.find((m) => m.value === currentDayMood)?.emoji}
-                </Text>
+                {currentDayMood !== null && (
+                  <FaceMood value={currentDayMood as 0 | 1 | 2} />
+                )}
                 <Text
                   style={{ fontSize: 14, fontWeight: '700', color: '#111517' }}
                 >

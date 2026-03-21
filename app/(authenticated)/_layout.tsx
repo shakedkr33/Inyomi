@@ -25,7 +25,8 @@ type TabBtnProps = {
   label: string;
   onPress?: ((e: unknown) => void) | null;
   onLongPress?: ((e: unknown) => void) | null;
-  accessibilityState?: { selected?: boolean };
+  // React Navigation passes focused state as aria-selected, not accessibilityState
+  'aria-selected'?: boolean;
 };
 
 function RegularTabButton({
@@ -33,9 +34,9 @@ function RegularTabButton({
   label,
   onPress,
   onLongPress,
-  accessibilityState,
+  'aria-selected': ariaSelected,
 }: TabBtnProps) {
-  const focused = accessibilityState?.selected === true;
+  const focused = ariaSelected === true;
   const color = focused ? '#36a9e2' : '#94a3b8';
   return (
     <Pressable
@@ -44,7 +45,7 @@ function RegularTabButton({
       style={styles.tabButtonBase}
       accessible={true}
       accessibilityRole="tab"
-      accessibilityState={{ selected: focused }}
+      aria-selected={focused}
     >
       <View style={focused ? styles.activeTabPill : styles.inactiveTabItem}>
         <MaterialIcons name={iconName as never} size={22} color={color} />
@@ -327,18 +328,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   activeTabPill: {
-    backgroundColor: 'rgba(54,169,226,0.12)',
-    borderRadius: 20,
+    backgroundColor: 'rgba(54,169,226,0.16)',
+    borderRadius: 16,
     paddingHorizontal: 14,
-    paddingVertical: 6,
-    flexDirection: 'row',
+    paddingVertical: 5,
     alignItems: 'center',
-    gap: 4,
+    gap: 2,
   },
   inactiveTabItem: {
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 5,
     gap: 2,
   },
   tabLabel: {

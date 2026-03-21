@@ -2,7 +2,8 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import type { ReminderType } from '@/lib/types/event';
 
-const PRIMARY = '#30c9e8';
+const PRIMARY = '#36a9e2';
+const TINT = '#e8f5fd';
 
 const REMINDER_OPTIONS: { type: ReminderType; label: string }[] = [
   { type: 'hour_before', label: 'שעה לפני האירוע' },
@@ -30,20 +31,8 @@ export function RemindersCard({
 
   return (
     <View style={s.card}>
+      {/* Header row */}
       <View style={s.headerRow}>
-        <View style={[s.iconCircle, { backgroundColor: `${PRIMARY}15` }]}>
-          <MaterialIcons
-            name="notifications-active"
-            size={24}
-            color={PRIMARY}
-          />
-        </View>
-        <View style={s.headerContent}>
-          <Text style={[s.label, { color: PRIMARY }]}>תזכורות</Text>
-          <Text style={s.statusText}>
-            {enabled ? 'תזכורות חכמות מופעלות' : 'תזכורות כבויות'}
-          </Text>
-        </View>
         <Switch
           value={enabled}
           onValueChange={(v) => onChange(v, types)}
@@ -52,6 +41,19 @@ export function RemindersCard({
           accessible={true}
           accessibilityLabel="הפעל תזכורות"
         />
+        <View style={s.headerContent}>
+          <Text style={s.label}>תזכורות</Text>
+          <Text style={s.statusText}>
+            {enabled ? 'תזכורות חכמות מופעלות' : 'תזכורות כבויות'}
+          </Text>
+        </View>
+        <View style={[s.iconCircle, { backgroundColor: TINT }]}>
+          <MaterialIcons
+            name="notifications-active"
+            size={20}
+            color={PRIMARY}
+          />
+        </View>
       </View>
 
       {enabled && (
@@ -70,7 +72,7 @@ export function RemindersCard({
               >
                 <View style={[s.checkbox, active && s.checkboxActive]}>
                   {active && (
-                    <MaterialIcons name="check" size={14} color="#fff" />
+                    <MaterialIcons name="check" size={13} color="#fff" />
                   )}
                 </View>
                 <Text style={[s.optionText, active && s.optionTextActive]}>
@@ -88,9 +90,9 @@ export function RemindersCard({
 const s = StyleSheet.create({
   card: {
     backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
     shadowColor: '#000',
     shadowOpacity: 0.04,
     shadowRadius: 8,
@@ -99,32 +101,35 @@ const s = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   iconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerContent: { flex: 1 },
-  label: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    marginBottom: 2,
+  headerContent: {
+    flex: 1,
   },
-  statusText: {
-    fontSize: 15,
-    fontWeight: '500',
+  label: {
+    fontSize: 14,
+    fontWeight: '700',
     color: '#334155',
     textAlign: 'right',
   },
+  statusText: {
+    fontSize: 12,
+    color: '#94a3b8',
+    textAlign: 'right',
+  },
   optionsList: {
-    marginTop: 14,
-    gap: 10,
-    paddingLeft: 60,
+    marginTop: 10,
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    paddingTop: 10,
   },
   optionRow: {
     flexDirection: 'row',
@@ -132,8 +137,8 @@ const s = StyleSheet.create({
     gap: 10,
   },
   checkbox: {
-    width: 22,
-    height: 22,
+    width: 20,
+    height: 20,
     borderRadius: 6,
     borderWidth: 2,
     borderColor: '#cbd5e1',

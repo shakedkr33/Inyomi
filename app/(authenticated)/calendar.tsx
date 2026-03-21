@@ -5,7 +5,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
-  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -437,8 +436,17 @@ export default function CalendarScreen(): React.JSX.Element {
     communityId ? { communityId: communityId as Id<'communities'> } : 'skip'
   );
 
+  const currentUser = useQuery(api.users.getCurrentUser);
+  const userFirstName = currentUser?.fullName?.split(' ')[0] ?? null;
+
   const [viewMode, setViewMode] = useState<'timeline' | 'monthly'>('timeline');
   const [slideAnim] = useState(new Animated.Value(0));
+  const [segmentContainerWidth, setSegmentContainerWidth] = useState(0);
+  const SEGMENT_PAD = 4;
+  const pillWidth =
+    segmentContainerWidth > 0
+      ? (segmentContainerWidth - SEGMENT_PAD * 2) / 2
+      : 0;
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const {
     unseenCount,
@@ -781,18 +789,33 @@ export default function CalendarScreen(): React.JSX.Element {
 
         {/* Header */}
         <View style={styles.header}>
-          {/* Top Row: Profile + Title + Bell */}
+          {/* Top Row: Bell (left) + Title (center) + Profile (right) */}
           <View style={styles.headerTop}>
-            {/* Profile Picture */}
-            <View style={styles.profileContainer}>
-              <Image
-                source={require('@/assets/images/icon.png')}
-                style={styles.profileImage}
-                accessibilityLabel="תמונת פרופיל"
+            {/* Bell — left */}
+            <Pressable
+              style={styles.bellButton}
+              onPress={handleBellPress}
+              accessible={true}
+              accessibilityRole="button"
+              accessibilityLabel={
+                unseenCount > 0 ? `התראות, ${unseenCount} חדשות` : 'התראות'
+              }
+            >
+              <MaterialIcons
+                name={unseenCount > 0 ? 'notifications' : 'notifications-none'}
+                size={24}
+                color="#111517"
               />
-            </View>
+              {unseenCount > 0 && (
+                <View style={styles.bellBadge}>
+                  <Text style={styles.bellBadgeText}>
+                    {unseenCount > 9 ? '9+' : unseenCount}
+                  </Text>
+                </View>
+              )}
+            </Pressable>
 
-            {/* Month Title with optional navigation */}
+            {/* Month Title with optional navigation — center */}
             <View style={styles.monthNavRow}>
               {viewMode === 'monthly' ? (
                 <>
@@ -836,64 +859,68 @@ export default function CalendarScreen(): React.JSX.Element {
               )}
             </View>
 
-            {/* Bell Button */}
+            {/* Profile / settings — right, matches Home screen avatar exactly */}
             <Pressable
-              style={styles.bellButton}
-              onPress={handleBellPress}
+              onPress={() => router.push('/(authenticated)/profile')}
               accessible={true}
               accessibilityRole="button"
-              accessibilityLabel={
-                unseenCount > 0 ? `התראות, ${unseenCount} חדשות` : 'התראות'
-              }
+              accessibilityLabel="פתח פרופיל"
             >
-              <MaterialIcons
-                name={unseenCount > 0 ? 'notifications' : 'notifications-none'}
-                size={24}
-                color="#111517"
-              />
-              {unseenCount > 0 && (
-                <View style={styles.bellBadge}>
-                  <Text style={styles.bellBadgeText}>
-                    {unseenCount > 9 ? '9+' : unseenCount}
-                  </Text>
-                </View>
-              )}
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {userFirstName ? userFirstName[0].toUpperCase() : '?'}
+                </Text>
+              </View>
             </Pressable>
           </View>
 
-          {/* View Toggle */}
-          <View style={styles.segmentedControl}>
-            <Animated.View
-              style={[
-                styles.segmentedSlider,
-                {
-                  transform: [
-                    {
-                      translateX: slideAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0, 160],
-                      }),
-                    },
-                  ],
-                },
-              ]}
-            />
+          {/* View Toggle — RTL order: חודשי on right, ציר זמן on left */}
+          <View
+            style={[styles.segmentedControl, { flexDirection: rtl.flexDirection }]}
+            onLayout={(e) => setSegmentContainerWidth(e.nativeEvent.layout.width)}
+          >
+            {pillWidth > 0 && (
+              <Animated.View
+                style={[
+                  styles.segmentedSlider,
+                  {
+                    width: pillWidth,
+                    transform: [
+                      {
+                        translateX: slideAnim.interpolate({
+                          inputRange: [0, 1],
+                          // 0 = monthly → pill at right (over חודשי, translateX 0)
+                          // 1 = timeline → pill moves exactly one pill-width to the left
+                          outputRange: [0, -pillWidth],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              />
+            )}
+            {/* חודשי — first child = right side in row-reverse */}
             <Pressable
               style={styles.segmentButton}
               onPress={() => handleViewModeChange('monthly')}
               accessible={true}
               accessibilityRole="button"
-              accessibilityLabel="תצוגה חודשית"
+              accessibilityLabel={
+                isFiltered ? 'תצוגה חודשית (לא זמינה בסינון קהילה)' : 'תצוגה חודשית'
+              }
+              accessibilityState={{ disabled: isFiltered }}
             >
               <Text
                 style={[
                   styles.segmentText,
                   viewMode === 'monthly' && styles.segmentTextActive,
+                  isFiltered && styles.segmentTextDisabled,
                 ]}
               >
                 חודשי
               </Text>
             </Pressable>
+            {/* ציר זמן — second child = left side in row-reverse */}
             <Pressable
               style={styles.segmentButton}
               onPress={() => handleViewModeChange('timeline')}
@@ -960,16 +987,6 @@ export default function CalendarScreen(): React.JSX.Element {
           </View>
         )}
 
-        {/* FAB */}
-        <Pressable
-          style={styles.fab}
-          onPress={() => router.push('/(authenticated)/event/new' as never)}
-          accessible={true}
-          accessibilityRole="button"
-          accessibilityLabel="הוספת אירוע חדש"
-        >
-          <MaterialIcons name="add" size={32} color="white" />
-        </Pressable>
         {/* Notifications Drawer */}
         <NotificationsDrawer
           isOpen={isNotificationsOpen}
@@ -1241,7 +1258,6 @@ function DayEventsList({
           style={dStyles.addBtn}
           onPress={() => router.push('/(authenticated)/event/new' as never)}
           accessible={true}
-          accessibilityRole="button"
           accessibilityLabel="הוסף אירוע חדש"
         >
           <Text style={dStyles.addBtnText}>+ הוסף אירוע</Text>
@@ -1573,17 +1589,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
-  profileContainer: {
-    width: 40,
-    height: 40,
+  avatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#36a9e2',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  profileImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#ffffff',
-  },
+  avatarText: { fontSize: 16, fontWeight: '700', color: '#fff' },
   monthNavRow: {
     flex: 1,
     flexDirection: 'row',
@@ -1665,6 +1679,10 @@ const styles = StyleSheet.create({
   segmentTextActive: {
     color: PRIMARY_BLUE,
     fontWeight: '700',
+  },
+  segmentTextDisabled: {
+    color: '#b0bec5',
+    fontWeight: '600',
   },
 
   /* Content */
@@ -1856,22 +1874,6 @@ const styles = StyleSheet.create({
   },
 
   /* FAB */
-  fab: {
-    position: 'absolute',
-    bottom: 100,
-    left: 16,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: PRIMARY_BLUE,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: PRIMARY_BLUE,
-    shadowOpacity: 0.4,
-    shadowRadius: 16,
-    elevation: 8,
-    zIndex: 100,
-  },
 });
 
 // ===== Monthly View Styles =====

@@ -23,7 +23,7 @@ import type {
   ReminderType,
 } from '@/lib/types/event';
 
-const PRIMARY = '#30c9e8';
+const PRIMARY = '#36a9e2';
 
 const EMPTY_EVENT: EventData = {
   title: '',
@@ -167,7 +167,7 @@ export default function EventScreen({
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Event Title */}
+        {/* Event Title — compact field */}
         <View style={s.titleSection}>
           <TextInput
             style={[s.titleInput, titleError && s.titleInputError]}
@@ -176,9 +176,8 @@ export default function EventScreen({
               setTitleError(false);
               updateEvent({ title: text });
             }}
-            placeholder={isCreate ? 'שם האירוע (לדוגמה: פגישה עם המורה)' : ''}
+            placeholder="שם האירוע"
             placeholderTextColor="#94a3b8"
-            multiline
             textAlign="right"
             autoFocus={isCreate}
             accessible={true}
@@ -204,16 +203,16 @@ export default function EventScreen({
           onChange={(val) => updateEvent({ recurrence: val })}
         />
 
+        {/* Participants */}
+        <ParticipantsCard
+          participants={event.participants}
+          onChange={(p) => updateEvent({ participants: p })}
+        />
+
         {/* Location */}
         <LocationCard
           location={event.location}
           onChange={(loc) => updateEvent({ location: loc })}
-        />
-
-        {/* Notes */}
-        <NotesCard
-          notes={event.notes}
-          onChange={(notes) => updateEvent({ notes })}
         />
 
         {/* Reminders */}
@@ -223,12 +222,6 @@ export default function EventScreen({
           onChange={(enabled: boolean, types: ReminderType[]) =>
             updateEvent({ remindersEnabled: enabled, reminderTypes: types })
           }
-        />
-
-        {/* Participants */}
-        <ParticipantsCard
-          participants={event.participants}
-          onChange={(p) => updateEvent({ participants: p })}
         />
 
         {/* Related Tasks */}
@@ -242,7 +235,13 @@ export default function EventScreen({
           onToggleVisibility={(val) => updateEvent({ showAllTasksToAll: val })}
         />
 
-        <View style={{ height: 100 }} />
+        {/* Notes */}
+        <NotesCard
+          notes={event.notes}
+          onChange={(notes) => updateEvent({ notes })}
+        />
+
+        <View style={{ height: 60 }} />
       </ScrollView>
 
       {/* Share FAB */}
@@ -372,19 +371,25 @@ const s = StyleSheet.create({
     fontSize: 14,
   },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: 20, paddingTop: 8 },
-  titleSection: { marginBottom: 16 },
+  scrollContent: { paddingHorizontal: 16, paddingTop: 4 },
+  titleSection: { marginBottom: 10 },
   titleInput: {
-    fontSize: 28,
-    fontWeight: '700',
+    fontSize: 17,
+    fontWeight: '500',
     color: '#0f172a',
     textAlign: 'right',
-    lineHeight: 36,
-    paddingVertical: 4,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
   },
   titleInputError: {
-    borderBottomWidth: 2,
-    borderBottomColor: '#ef4444',
+    borderWidth: 1.5,
+    borderColor: '#ef4444',
   },
   errorText: {
     fontSize: 12,
@@ -394,9 +399,9 @@ const s = StyleSheet.create({
   },
   card: {
     backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
     shadowColor: '#000',
     shadowOpacity: 0.04,
     shadowRadius: 8,
@@ -408,21 +413,22 @@ const s = StyleSheet.create({
     justifyContent: 'space-between',
   },
   recurrenceText: {
-    fontSize: 17,
+    fontSize: 14,
     fontWeight: '500',
-    color: '#0f172a',
+    color: '#334155',
+    textAlign: 'right',
   },
   recurrenceOptions: {
-    marginTop: 12,
-    gap: 4,
+    marginTop: 10,
+    gap: 2,
   },
   recurrenceOption: {
-    paddingVertical: 10,
+    paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 10,
   },
   recurrenceOptionActive: {
-    backgroundColor: `${PRIMARY}15`,
+    backgroundColor: '#e8f5fd',
   },
   recurrenceOptionText: {
     fontSize: 15,

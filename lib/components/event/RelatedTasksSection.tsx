@@ -2,7 +2,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import type { EventTask, Participant } from '@/lib/types/event';
 
-const PRIMARY = '#30c9e8';
+const PRIMARY = '#36a9e2';
 
 interface RelatedTasksSectionProps {
   tasks: EventTask[];
@@ -154,9 +154,9 @@ export function RelatedTasksSection({
 const s = StyleSheet.create({
   section: {
     backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
     shadowColor: '#000',
     shadowOpacity: 0.04,
     shadowRadius: 8,
@@ -165,13 +165,13 @@ const s = StyleSheet.create({
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 12,
+    gap: 10,
+    marginBottom: 10,
   },
   iconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -203,7 +203,7 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#f8fafc',
   },
