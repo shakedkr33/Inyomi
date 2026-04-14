@@ -16,6 +16,7 @@ import type * as eventRsvps from "../eventRsvps.js";
 import type * as eventTasks from "../eventTasks.js";
 import type * as events from "../events.js";
 import type * as http from "../http.js";
+import type * as members from "../members.js";
 import type * as onboarding from "../onboarding.js";
 import type * as tasks from "../tasks.js";
 import type * as users from "../users.js";
@@ -35,6 +36,7 @@ declare const fullApi: ApiFromModules<{
   eventTasks: typeof eventTasks;
   events: typeof events;
   http: typeof http;
+  members: typeof members;
   onboarding: typeof onboarding;
   tasks: typeof tasks;
   users: typeof users;

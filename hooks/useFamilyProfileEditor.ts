@@ -44,6 +44,8 @@ export function useFamilyProfileEditor(
   const { data, updateData } = useOnboarding();
   const finishOnboarding = useMutation(api.onboarding.finishOnboarding);
   const updateMyProfile = useMutation(api.users.updateMyProfile);
+  // FIXED: removeMember now deletes from Convex members table, propagates to all devices
+  const removeEntityMember = useMutation(api.members.removeEntityMember);
 
   // ── Core profile state ────────────────────────────────────────────────────
   // FIXED: added owner personal field hydration — reads firstName/lastName/nickname/personalColor from context
@@ -60,8 +62,12 @@ export function useFamilyProfileEditor(
       ? [data.firstName, data.lastName].filter(Boolean).join(' ')
       : ''
   );
-  const [familyMembers, setFamilyMembers] =
-    useState<FamilyMember[]>(initialFamilyMembers);
+  // FIXED: deduplicated family members on initialization to prevent false canAddPerson
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>(() =>
+    (initialFamilyMembers ?? []).filter(
+      (m, i, arr) => arr.findIndex((x) => x.id === m.id) === i
+    )
+  );
 
   // ── Save-confirmation flash ───────────────────────────────────────────────
   const [ownerSaved, setOwnerSaved] = useState(false);
@@ -199,11 +205,20 @@ export function useFamilyProfileEditor(
       matchedUserId: pendingMember.matchedUserId,
     };
     if (editingId) {
-      setFamilyMembers((prev) =>
-        prev.map((m) => (m.id === editingId ? newMember : m))
-      );
+      setFamilyMembers((prev) => {
+        const updated = prev.map((m) => (m.id === editingId ? newMember : m));
+        updateMyProfile({ familyContacts: updated }).catch((e) => console.error('[CONFIRM] updateMyProfile error:', e));
+        return updated;
+      });
     } else {
-      setFamilyMembers((prev) => [...prev, newMember]);
+      setFamilyMembers((prev) => {
+        const updated = [...prev, newMember];
+        console.log('[CONFIRM] calling updateMyProfile with', updated.length, 'contacts:', JSON.stringify(updated.map(m => ({ name: (m as any).name, selectedPhoneNumber: (m as any).selectedPhoneNumber }))));
+        updateMyProfile({ familyContacts: updated })
+          .then(() => console.log('[CONFIRM] updateMyProfile success'))
+          .catch((e) => console.error('[CONFIRM] updateMyProfile error:', e));
+        return updated;
+      });
     }
     cancelPending();
   };
@@ -232,16 +247,37 @@ export function useFamilyProfileEditor(
     });
   };
 
-  const removeMember = (id: string) => {
-    setFamilyMembers((prev) => prev.filter((m) => m.id !== id));
+  // FIXED: removeMember now deletes from Convex members table, propagates to all devices
+  // Two-pronged: removes from local state AND from the Convex members table.
+  // removeEntityMember uses the member's id as the Convex _id (valid for members that
+  // were hydrated from the server where id === members._id).
+  // updateMyProfile syncs the remaining contacts blob so newly-added (Date.now id) members
+  // are also removed from the server on next save.
+  // convexEntityId: the real Convex _id from the members table for this entity row.
+  // Callers who have access to serverFamilyContacts (family-profile.tsx) should look it
+  // up and pass it so the entity row is deleted immediately, propagating to all devices.
+  const removeMember = (id: string, convexEntityId?: string) => {
+    console.log('[REMOVE] localId:', id, 'convexEntityId:', convexEntityId);
+    const updated = familyMembers.filter((m) => m.id !== id);
+    setFamilyMembers(updated);
+    // Prefer the explicit convexEntityId; fall back to id if it looks like a Convex ID
+    const entityIdToDelete = convexEntityId ?? (!/^\d+$/.test(id) ? id : undefined);
+    console.log('[REMOVE] calling removeEntityMember?', !!entityIdToDelete, 'id:', entityIdToDelete);
+    if (entityIdToDelete) {
+      removeEntityMember({ memberId: entityIdToDelete as any }).catch((e) => console.error('[REMOVE] removeEntityMember error:', e));
+    }
+    updateMyProfile({ familyContacts: updated }).catch((e) => console.error('[REMOVE] updateMyProfile error:', e));
   };
 
-  // FIXED: share-sheet invitation — marks inviteStatus as 'invited' after share is initiated.
-  // Changes visible status from "שלח הזמנה" → "שלח שוב".
+  // FIXED: markMemberInvited now persists inviteStatus=invited to Convex immediately
+  // Previously only updated local state — the members table row stayed 'none' forever.
+  // Now computes the updated array first, then calls both setFamilyMembers and updateMyProfile.
   const markMemberInvited = (id: string) => {
-    setFamilyMembers((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, inviteStatus: 'invited' as const } : m))
+    const updated = familyMembers.map((m) =>
+      m.id === id ? { ...m, inviteStatus: 'invited' as const } : m
     );
+    setFamilyMembers(updated);
+    updateMyProfile({ familyContacts: updated }).catch(() => {});
   };
 
   // FIXED: "הפוך לאיש קשר" — opens the contact sheet targeting an existing member.
@@ -399,10 +435,14 @@ export function useFamilyProfileEditor(
       },
     });
 
+    // FIXED: deduplicated members before persisting to prevent future duplicates
+    const deduped = familyMembers.filter(
+      (m, i, arr) => arr.findIndex((x) => x.id === m.id) === i
+    );
     return updateMyProfile({
       fullName: nameSource,
       profileColor: personalColor,
-      familyContacts: familyMembers,
+      familyContacts: deduped,
     });
   };
 

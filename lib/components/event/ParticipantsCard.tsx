@@ -1,3 +1,4 @@
+// FIXED: added family sharing section to participants bottom sheet
 import { Ionicons } from '@expo/vector-icons';
 import * as Contacts from 'expo-contacts';
 import { useCallback, useState } from 'react';
@@ -26,6 +27,13 @@ import {
   normalizePhone,
 } from '@/lib/utils/contactPhone';
 
+// ─── Family member type (from listMyFamilyContacts) ───────────────────────────
+export interface FamilyMemberChip {
+  _id: string;
+  displayName?: string;
+  color?: string;
+}
+
 const PRIMARY = '#36a9e2';
 const TINT = '#e8f5fd';
 
@@ -53,6 +61,11 @@ function parseEmails(raw: string): string[] {
 interface ParticipantsCardProps {
   participants: Participant[];
   onChange: (participants: Participant[]) => void;
+  // FIXED: family sharing props — optional so existing usages without family data still compile
+  familyMembers?: FamilyMemberChip[];
+  allFamily?: boolean;
+  sharedWithFamilyMemberIds?: string[];
+  onFamilyChange?: (allFamily: boolean, selectedIds: string[]) => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -60,6 +73,10 @@ interface ParticipantsCardProps {
 export function ParticipantsCard({
   participants,
   onChange,
+  familyMembers = [],
+  allFamily = false,
+  sharedWithFamilyMemberIds = [],
+  onFamilyChange,
 }: ParticipantsCardProps): React.JSX.Element {
   // 'main' = contacts button + email input; 'contacts' = contact list; 'phone-disambig' = multi-phone resolution
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -613,6 +630,92 @@ export function ParticipantsCard({
                 <>
                   <Text style={s.sheetTitle}>הוסף משתתף</Text>
 
+                  {/* ── Family sharing section — hidden when no family members ── */}
+                  {familyMembers.length > 0 && onFamilyChange && (
+                    <>
+                      <Text style={s.familySectionTitle}>שיתוף עם המשפחה</Text>
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={s.familyChipsRow}
+                        style={{ direction: 'rtl' }}
+                      >
+                        {/* "כולם" chip */}
+                        <Pressable
+                          style={[s.allChip, allFamily && s.allChipSelected]}
+                          onPress={() => {
+                            if (allFamily) {
+                              // Deselect all
+                              onFamilyChange(false, []);
+                            } else {
+                              // Select all family
+                              onFamilyChange(true, familyMembers.map((m) => m._id));
+                            }
+                          }}
+                          accessible={true}
+                          accessibilityRole="button"
+                          accessibilityLabel="כולם"
+                          accessibilityState={{ selected: allFamily }}
+                        >
+                          <Text style={[s.allChipText, allFamily && s.allChipTextSelected]}>
+                            כולם
+                          </Text>
+                        </Pressable>
+
+                        {/* Individual member chips */}
+                        {familyMembers.map((member) => {
+                          const isSelected = allFamily || sharedWithFamilyMemberIds.includes(member._id);
+                          const initials = (member.displayName ?? '?').trim().substring(0, 2);
+                          const color = member.color ?? PRIMARY;
+                          return (
+                            <Pressable
+                              key={member._id}
+                              style={s.memberChipWrap}
+                              onPress={() => {
+                                if (allFamily) {
+                                  // Deselect "כולם", keep others except this one
+                                  const rest = familyMembers
+                                    .map((m) => m._id)
+                                    .filter((id) => id !== member._id);
+                                  onFamilyChange(false, rest);
+                                } else {
+                                  const next = isSelected
+                                    ? sharedWithFamilyMemberIds.filter((id) => id !== member._id)
+                                    : [...sharedWithFamilyMemberIds, member._id];
+                                  onFamilyChange(false, next);
+                                }
+                              }}
+                              accessible={true}
+                              accessibilityRole="button"
+                              accessibilityLabel={member.displayName ?? 'חבר משפחה'}
+                              accessibilityState={{ selected: isSelected }}
+                            >
+                              <View style={[
+                                s.memberCircle,
+                                { backgroundColor: color },
+                                isSelected && { borderColor: color, borderWidth: 3, opacity: 1 },
+                                !isSelected && { opacity: 0.45 },
+                              ]}>
+                                <Text style={s.memberInitials}>{initials}</Text>
+                              </View>
+                              <Text style={s.memberName} numberOfLines={1}>
+                                {member.displayName ?? ''}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+                      <Text style={s.familyHelperText}>האירוע תמיד נשמר גם אצלך</Text>
+
+                      {/* Separator between family and external sections */}
+                      <View style={s.sectionDivider}>
+                        <View style={s.separatorLine} />
+                        <Text style={s.sectionDividerLabel}>או הוסף משתתפים חיצוניים</Text>
+                        <View style={s.separatorLine} />
+                      </View>
+                    </>
+                  )}
+
                   <Pressable
                     style={s.contactsBtn}
                     onPress={openContactsPicker}
@@ -1025,6 +1128,84 @@ const s = StyleSheet.create({
     color: '#9ca3af',
     textAlign: 'center',
     paddingVertical: 24,
+  },
+  // ── Family sharing section ────────────────────────────────────────────────
+  familySectionTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#9ca3af',
+    textAlign: 'right',
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  familyChipsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    paddingBottom: 4,
+    paddingHorizontal: 2,
+  },
+  allChip: {
+    borderWidth: 1.5,
+    borderColor: PRIMARY,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: 'transparent',
+  },
+  allChipSelected: {
+    backgroundColor: PRIMARY,
+  },
+  allChipText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: PRIMARY,
+  },
+  allChipTextSelected: {
+    color: '#fff',
+  },
+  memberChipWrap: {
+    alignItems: 'center',
+    gap: 4,
+    maxWidth: 56,
+  },
+  memberCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  memberInitials: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  memberName: {
+    fontSize: 10,
+    fontWeight: '500',
+    color: '#374151',
+    textAlign: 'center',
+    maxWidth: 52,
+  },
+  familyHelperText: {
+    fontSize: 11,
+    color: '#9ca3af',
+    textAlign: 'right',
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  sectionDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginVertical: 14,
+  },
+  sectionDividerLabel: {
+    fontSize: 12,
+    color: '#9ca3af',
+    textAlign: 'center',
+    flexShrink: 1,
   },
   // ── Phone disambiguation view ─────────────────────────────────────────────
   phoneDisambigHint: {

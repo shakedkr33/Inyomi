@@ -1,5 +1,6 @@
 import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
+import type { Id } from './_generated/dataModel';
 import { mutation } from './_generated/server';
 
 // ── Phone normalization ───────────────────────────────────────────────────────
@@ -17,7 +18,10 @@ function normalizeToE164(phone: string): string | null {
 
 type FamilyContactEntry = {
   id: string;
+  name?: string;
+  color?: string;
   selectedPhoneNumber?: string;
+  inviteStatus?: 'none' | 'invited' | 'joined';
   matchedUserId?: string;
   [key: string]: unknown;
 };
@@ -89,12 +93,49 @@ export const finishOnboarding = mutation({
     });
 
     // 5. הוספת המשתמש כ-Admin במרחב החדש
+    // FIXED: kind: 'access' stamped on all owner/access rows from creation
     await ctx.db.insert('members', {
       userId,
       spaceId,
       role: 'admin',
+      kind: 'access',
       joinedAt: Date.now(),
     });
+
+    // FIXED: kind: 'entity' stamped on all family member inserts from creation
+    // All family members are written — manual members (no phone) are no longer skipped.
+    if (resolvedFamilyContacts && Array.isArray(resolvedFamilyContacts)) {
+      const now = Date.now();
+      for (const contact of resolvedFamilyContacts as FamilyContactEntry[]) {
+        if (!contact.selectedPhoneNumber) {
+          await ctx.db.insert('members', {
+            spaceId,
+            role: 'member',
+            kind: 'entity',
+            joinedAt: now,
+            displayName: contact.name,
+            color: contact.color,
+            inviteStatus: 'none',
+          });
+          continue;
+        }
+        const normalizedPhone = normalizeToE164(contact.selectedPhoneNumber);
+        if (!normalizedPhone) continue;
+        const matchedId = contact.matchedUserId as Id<'users'> | undefined;
+        await ctx.db.insert('members', {
+          spaceId,
+          role: 'member',
+          kind: 'entity',
+          joinedAt: now,
+          displayName: contact.name,
+          color: contact.color,
+          selectedPhoneNumber: normalizedPhone,
+          inviteStatus: contact.inviteStatus ?? 'none',
+          matchedUserId: matchedId,
+          userId: matchedId,
+        });
+      }
+    }
 
     // 6. סימון האונבורדינג כהושלם ושמירת ה-Space הראשי
     await ctx.db.patch(userId, {

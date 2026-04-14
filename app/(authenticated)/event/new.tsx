@@ -804,6 +804,7 @@ export default function NewEventScreen(): React.JSX.Element {
         endMs = startMs + 60 * 60 * 1000; // default +1 hour
       }
 
+      // FIXED: family sharing saved to event on creation
       // Let any Convex errors propagate — EventScreen.handleSave catches them
       await createEvent({
         title: data.title,
@@ -813,6 +814,11 @@ export default function NewEventScreen(): React.JSX.Element {
         spaceId: resolvedSpaceId,
         location: data.location?.trim() || undefined,
         onlineUrl: data.onlineUrl?.trim() || undefined,
+        allFamily: data.allFamily || undefined,
+        sharedWithFamilyMemberIds:
+          data.sharedWithFamilyMemberIds && data.sharedWithFamilyMemberIds.length > 0
+            ? data.sharedWithFamilyMemberIds
+            : undefined,
       });
     },
     [createEvent, spaceId]

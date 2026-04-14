@@ -1,6 +1,9 @@
 import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
+import type { Id } from './_generated/dataModel';
 import { mutation, query } from './_generated/server';
+// FIXED: updateMyProfile and listMyFamilyContacts now use identical spaceId resolution
+import { resolveMySpaceId } from './members';
 
 // ── Phone normalization ───────────────────────────────────────────────────────
 // FIXED: retroactive phone-based family member matching when contacts are saved
@@ -17,7 +20,10 @@ function normalizeToE164(phone: string): string | null {
 
 type FamilyContactEntry = {
   id: string;
+  name?: string;
+  color?: string;
   selectedPhoneNumber?: string;
+  inviteStatus?: 'none' | 'invited' | 'joined';
   matchedUserId?: string;
   [key: string]: unknown;
 };
@@ -307,6 +313,130 @@ export const updateMyProfile = mutation({
     }
 
     await ctx.db.patch(userId, patch);
+
+    // FIXED: selectedPhoneNumber and inviteStatus now persisted to members table
+    // Sync resolved family contacts into the members table so the by_phone index
+    // supports O(1) matching when an invited person registers via OTP.
+    const resolvedContacts = Array.isArray(patch.familyContacts)
+      ? (patch.familyContacts as FamilyContactEntry[])
+      : Array.isArray(args.familyContacts)
+        ? (args.familyContacts as FamilyContactEntry[])
+        : null;
+
+    if (resolvedContacts) {
+      // FIXED: use shared resolveMySpaceId — identical logic to listMyFamilyContacts.
+      // Previously used defaultSpaceId which resolved a different space than the one
+      // listMyFamilyContacts reads from, causing entity rows to land in the wrong space.
+      const spaceId = await resolveMySpaceId(ctx, userId);
+      console.log('[PROFILE SYNC] resolveMySpaceId result:', spaceId, 'contacts count:', resolvedContacts.length);
+      if (spaceId) {
+        // Fetch all current members rows for this space to detect existing phone entries
+        const existingMembers = await ctx.db
+          .query('members')
+          .withIndex('by_space', (q) => q.eq('spaceId', spaceId))
+          .collect();
+
+        // FIXED: kind: 'entity' stamped on all family member inserts and updates
+        // (rows without kind field are handled by resolveKind() for backward-compat)
+        const now = Date.now();
+        // Track which entity row _ids were touched so orphaned rows can be deleted below.
+        const touchedEntityIds = new Set<string>();
+
+        for (const contact of resolvedContacts) {
+          const isManual = !contact.selectedPhoneNumber;
+          console.log('[PROFILE SYNC] processing contact:', contact.name, 'isManual:', isManual);
+
+          if (isManual) {
+            // Manual member — no phone, dedup by displayName within this space.
+            const existing = existingMembers.find(
+              (m) => !m.selectedPhoneNumber && m.displayName === contact.name
+            );
+            console.log('[PROFILE SYNC] manual member existing row:', existing?._id ?? 'none');
+            if (existing) {
+              await ctx.db.patch(existing._id, {
+                kind: 'entity', // stamp kind on pre-existing rows opportunistically
+                displayName: contact.name ?? existing.displayName,
+                color: contact.color ?? existing.color,
+              });
+              touchedEntityIds.add(existing._id);
+            } else {
+              const newId = await ctx.db.insert('members', {
+                spaceId,
+                role: 'member',
+                kind: 'entity',
+                joinedAt: now,
+                displayName: contact.name,
+                color: contact.color,
+                inviteStatus: 'none',
+              });
+              touchedEntityIds.add(newId);
+            }
+            continue;
+          }
+
+          // Contact-sourced member — dedup by normalized phone.
+          // FIXED: הפוך לאיש קשר now patches existing member row, no duplicate created.
+          // A manual member (no phone) converted to contact-sourced has the same displayName
+          // but no selectedPhoneNumber. Without the displayName fallback, the phone search
+          // misses it and ctx.db.insert creates a second row.
+          const normalizedPhone = normalizeToE164(contact.selectedPhoneNumber as string);
+          if (!normalizedPhone) continue;
+          const matchedId = contact.matchedUserId as Id<'users'> | undefined;
+
+          const existingByPhone = existingMembers.find(
+            (m) => m.selectedPhoneNumber === normalizedPhone
+          );
+          // Fallback: find existing manual row with the same name (no phone yet)
+          const existingByName = !existingByPhone
+            ? existingMembers.find(
+                (m) =>
+                  (m.kind === 'entity' || (m.kind === undefined && m.displayName)) &&
+                  !m.selectedPhoneNumber &&
+                  m.displayName === contact.name
+              )
+            : undefined;
+          const existing = existingByPhone ?? existingByName;
+
+          if (existing) {
+            await ctx.db.patch(existing._id, {
+              kind: 'entity', // stamp kind on pre-existing rows opportunistically
+              selectedPhoneNumber: normalizedPhone,
+              inviteStatus: contact.inviteStatus ?? existing.inviteStatus,
+              matchedUserId: matchedId ?? existing.matchedUserId,
+              userId: matchedId ?? existing.userId,
+              displayName: contact.name ?? existing.displayName,
+              color: contact.color ?? existing.color,
+            });
+            touchedEntityIds.add(existing._id);
+          } else {
+            const newId = await ctx.db.insert('members', {
+              spaceId,
+              role: 'member',
+              kind: 'entity',
+              joinedAt: now,
+              displayName: contact.name,
+              color: contact.color,
+              selectedPhoneNumber: normalizedPhone,
+              inviteStatus: contact.inviteStatus ?? 'none',
+              matchedUserId: matchedId,
+              userId: matchedId,
+            });
+            touchedEntityIds.add(newId);
+          }
+        }
+
+        // Delete entity rows no longer in familyContacts — propagates deletes to all
+        // family members in real-time. Only removes kind='entity' rows (never access rows).
+        for (const m of existingMembers) {
+          const isEntityRow =
+            m.kind === 'entity' ||
+            (m.kind === undefined && m.role === 'member' && Boolean(m.displayName));
+          if (isEntityRow && !touchedEntityIds.has(m._id)) {
+            await ctx.db.delete(m._id);
+          }
+        }
+      }
+    }
   },
 });
 

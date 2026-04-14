@@ -53,15 +53,34 @@ export default defineSchema({
   // טבלת חברי משפחה (Members = Family Members)
   // ═══════════════════════════════════════════════════════
   members: defineTable({
-    userId: v.id('users'),
+    userId: v.optional(v.id('users')),   // optional: pending invited contacts have no userId yet
     spaceId: v.id('spaces'),
     role: v.union(v.literal('admin'), v.literal('member')),
     displayName: v.optional(v.string()),
     color: v.optional(v.string()),
     joinedAt: v.number(),
+    // ── Row-type discriminator ────────────────────────────────────────────────
+    // 'access' — authenticated user who owns or was granted access to the space
+    // 'entity' — visible family entity (contact placeholder, child, pet)
+    // Rows without this field: infer via resolveKind() in convex/members.ts
+    // FIXED: kind discriminator added to separate access rows from entity rows
+    kind: v.optional(v.union(
+      v.literal('access'),
+      v.literal('entity'),
+    )),
+    // ── Family invite tracking (additive, all optional) ──────────────────────
+    selectedPhoneNumber: v.optional(v.string()),
+    matchedUserId: v.optional(v.id('users')),
+    inviteStatus: v.optional(v.union(
+      v.literal('none'),
+      v.literal('invited'),
+      v.literal('joined')
+    )),
   })
     .index('by_space', ['spaceId'])
-    .index('by_user', ['userId']),
+    .index('by_user', ['userId'])
+    .index('by_kind', ['spaceId', 'kind'])
+    .index('by_phone', ['selectedPhoneNumber']),
 
   // ═══════════════════════════════════════════════════════
   // טבלת אירועים
@@ -87,6 +106,9 @@ export default defineSchema({
     onlineUrl: v.optional(v.string()), // Zoom / Meet link
     // TODO: migrate groupId → communityId (groupId was v.optional(v.id('spaces')))
     sharedWithUserIds: v.optional(v.array(v.id('users'))), // משתמשים מוזמנים
+    // FIXED: added allFamily and sharedWithFamilyMemberIds to events schema
+    allFamily: v.optional(v.boolean()), // true → shared with all family members
+    sharedWithFamilyMemberIds: v.optional(v.array(v.string())), // entity row IDs of selected family members
     communityId: v.optional(v.id('communities')),
     requiresRsvp: v.optional(v.boolean()), // האם האירוע דורש אישור השתתפות
     status: v.optional(v.union(v.literal('active'), v.literal('cancelled'))),

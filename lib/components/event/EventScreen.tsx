@@ -1,6 +1,9 @@
+// FIXED: added family sharing section to participants bottom sheet
 import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useQuery } from 'convex/react';
+import { api } from '@/convex/_generated/api';
 import {
   Alert,
   FlatList,
@@ -27,7 +30,7 @@ import {
   type LocationUpdate,
 } from '@/lib/components/event/LocationCard';
 import { NotesCard } from '@/lib/components/event/NotesCard';
-import { ParticipantsCard } from '@/lib/components/event/ParticipantsCard';
+import { ParticipantsCard, type FamilyMemberChip } from '@/lib/components/event/ParticipantsCard';
 import { RelatedTasksSection } from '@/lib/components/event/RelatedTasksSection';
 import { RemindersCard } from '@/lib/components/event/RemindersCard';
 import type { EventData, RecurrenceType } from '@/lib/types/event';
@@ -131,6 +134,17 @@ export default function EventScreen({
   const [event, setEvent] = useState<EventData>(() =>
     isCreate ? makeEmptyEvent(selectedDate) : MOCK_EVENT
   );
+
+  // FIXED: load family members for the family sharing section in ParticipantsCard.
+  // selfEntityId is the signed-in user's own entity row — excluded from the chips
+  // so the creator is never shown (they are always implicitly included).
+  const serverFamilyContacts = useQuery(api.members.listMyFamilyContacts);
+  useEffect(() => {
+    console.log('[DEBUG chips] serverFamilyContacts:', JSON.stringify(serverFamilyContacts));
+  }, [serverFamilyContacts]);
+  const familyMembers: FamilyMemberChip[] = (serverFamilyContacts?.members ?? [])
+    .filter((m) => m._id !== serverFamilyContacts?.selfEntityId)
+    .map((m) => ({ _id: m._id, displayName: m.displayName, color: m.color }));
   const [titleError, setTitleError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -332,6 +346,12 @@ export default function EventScreen({
                       : event.tasks;
                   updateEvent({ participants: p, tasks });
                 }}
+                familyMembers={familyMembers}
+                allFamily={event.allFamily}
+                sharedWithFamilyMemberIds={event.sharedWithFamilyMemberIds}
+                onFamilyChange={(af, ids) =>
+                  updateEvent({ allFamily: af || undefined, sharedWithFamilyMemberIds: ids.length > 0 ? ids : undefined })
+                }
               />
 
               {/* Location */}

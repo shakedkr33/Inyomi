@@ -89,4 +89,7 @@ export interface EventData {
   tasks: EventTask[];
   showAllTasksToAll: boolean;
   createdAt: number;
+  // FIXED: added family sharing fields to EventData
+  allFamily?: boolean;
+  sharedWithFamilyMemberIds?: string[];
 }

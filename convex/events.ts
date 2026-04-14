@@ -92,6 +92,9 @@ export const create = mutation({
     sharedWithUserIds: v.optional(v.array(v.id('users'))),
     communityId: v.optional(v.id('communities')),
     requiresRsvp: v.optional(v.boolean()),
+    // FIXED: added family sharing fields to create mutation
+    allFamily: v.optional(v.boolean()),
+    sharedWithFamilyMemberIds: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
