@@ -21,7 +21,7 @@ import type { Id } from '@/convex/_generated/dataModel';
 import EventScreen from '@/lib/components/event/EventScreen';
 import type { LocalAssignee } from '@/lib/components/event/TaskAssigneeSheet';
 import { TaskAssigneeSheet } from '@/lib/components/event/TaskAssigneeSheet';
-import type { EventData } from '@/lib/types/event';
+import type { EventAttachmentDraft, EventData } from '@/lib/types/event';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -750,6 +750,70 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
   );
 }
 
+// ─── Upload helper ────────────────────────────────────────────────────────────
+// FIXED: uploads draft attachments (localUri) to Convex Storage before saving.
+// Returns the final list with storageId set and localUri stripped.
+// uploadedBy is stamped by the backend mutation; we pass a placeholder here
+// and let the mutation fill it using getAuthUserId(ctx).
+
+// Shape accepted by the create/update mutation args (uploadedBy/uploadedAt stamped by backend)
+type ConvexAttachment = {
+  storageId: Id<'_storage'>;
+  originalName: string;
+  displayName: string;
+  mimeType: string;
+  sizeBytes: number;
+};
+
+async function uploadDraftAttachments(
+  drafts: EventAttachmentDraft[],
+  generateUrl: () => Promise<string>
+): Promise<ConvexAttachment[]> {
+  const results: ConvexAttachment[] = [];
+
+  for (const draft of drafts) {
+    if (draft.storageId && !draft.localUri) {
+      // Already saved — pass through (storageId already typed as Id<'_storage'>)
+      results.push({
+        storageId: draft.storageId,
+        originalName: draft.originalName,
+        displayName: draft.displayName,
+        mimeType: draft.mimeType,
+        sizeBytes: draft.sizeBytes,
+      });
+      continue;
+    }
+
+    if (!draft.localUri) continue; // skip anything with neither
+
+    const uploadUrl = await generateUrl();
+    const response = await fetch(draft.localUri);
+    const blob = await response.blob();
+
+    const uploadResponse = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': draft.mimeType },
+      body: blob,
+    });
+
+    if (!uploadResponse.ok) {
+      throw new Error(`העלאת הקובץ נכשלה: ${draft.originalName}`);
+    }
+
+    const { storageId } = (await uploadResponse.json()) as { storageId: string };
+
+    results.push({
+      storageId: storageId as Id<'_storage'>,
+      originalName: draft.originalName,
+      displayName: draft.displayName,
+      mimeType: draft.mimeType,
+      sizeBytes: draft.sizeBytes,
+    });
+  }
+
+  return results;
+}
+
 // ─── Route Entry ──────────────────────────────────────────────────────────────
 
 export default function NewEventScreen(): React.JSX.Element {
@@ -757,7 +821,9 @@ export default function NewEventScreen(): React.JSX.Element {
     communityId?: string;
     selectedDate?: string;
   }>();
+  // FIXED: added generateUploadUrl + upload loop before createEvent for file attachments
   const createEvent = useMutation(api.events.create);
+  const generateUploadUrl = useMutation(api.events.generateUploadUrl);
   const spaceId = useQuery(api.users.getMySpace);
 
   const selectedDate = selectedDateParam ? Number(selectedDateParam) : undefined;
@@ -804,6 +870,12 @@ export default function NewEventScreen(): React.JSX.Element {
         endMs = startMs + 60 * 60 * 1000; // default +1 hour
       }
 
+      // Upload any new draft attachments (localUri set, storageId not yet set)
+      const resolvedAttachments = await uploadDraftAttachments(
+        data.attachments ?? [],
+        generateUploadUrl
+      );
+
       // FIXED: family sharing saved to event on creation
       // Let any Convex errors propagate — EventScreen.handleSave catches them
       await createEvent({
@@ -819,9 +891,11 @@ export default function NewEventScreen(): React.JSX.Element {
           data.sharedWithFamilyMemberIds && data.sharedWithFamilyMemberIds.length > 0
             ? data.sharedWithFamilyMemberIds
             : undefined,
+        attachments:
+          resolvedAttachments.length > 0 ? resolvedAttachments : undefined,
       });
     },
-    [createEvent, spaceId]
+    [createEvent, generateUploadUrl, spaceId]
   );
 
   if (communityId) {

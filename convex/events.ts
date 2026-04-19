@@ -1,6 +1,40 @@
+// FIXED: added generateUploadUrl, getAttachmentUrl, and attachment support to create + update
 import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
+
+// ─── Attachment arg validator ──────────────────────────────────────────────────
+// uploadedBy and uploadedAt are NOT accepted from the client — the handler
+// stamps them using the authenticated userId and server time.
+const attachmentObject = v.object({
+  storageId: v.id('_storage'),
+  originalName: v.string(),
+  displayName: v.string(),
+  mimeType: v.string(),
+  sizeBytes: v.number(),
+});
+
+// ─────────────────────────────────────────────────────────────
+// יצירת URL להעלאת קובץ ל-Convex Storage
+// ─────────────────────────────────────────────────────────────
+export const generateUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('לא מחובר למערכת');
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
+// ─────────────────────────────────────────────────────────────
+// שליפת URL לצפייה בקובץ מ-Convex Storage
+// ─────────────────────────────────────────────────────────────
+export const getAttachmentUrl = query({
+  args: { storageId: v.id('_storage') },
+  handler: async (ctx, { storageId }) => {
+    return await ctx.storage.getUrl(storageId);
+  },
+});
 
 // ─────────────────────────────────────────────────────────────
 // שליפת אירוע יחיד לפי מזהה
@@ -95,16 +129,31 @@ export const create = mutation({
     // FIXED: added family sharing fields to create mutation
     allFamily: v.optional(v.boolean()),
     sharedWithFamilyMemberIds: v.optional(v.array(v.string())),
+    // FIXED: file attachments (max 2 enforced here)
+    attachments: v.optional(v.array(attachmentObject)),
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error('לא מחובר למערכת');
 
+    if (args.attachments && args.attachments.length > 2) {
+      throw new Error('לא ניתן לצרף יותר מ-2 קבצים לאירוע');
+    }
+
+    const now = Date.now();
+    // Stamp uploadedBy and uploadedAt server-side — not trusted from client
+    const stamped = args.attachments?.map((a) => ({
+      ...a,
+      uploadedBy: userId,
+      uploadedAt: now,
+    }));
+
     return await ctx.db.insert('events', {
       ...args,
+      attachments: stamped,
       isAiGenerated: false,
       createdBy: userId,
-      createdAt: Date.now(),
+      createdAt: now,
     });
   },
 });
@@ -127,8 +176,10 @@ export const update = mutation({
     groupId: v.optional(v.id('spaces')),
     sharedWithUserIds: v.optional(v.array(v.id('users'))),
     requiresRsvp: v.optional(v.boolean()),
+    // FIXED: file attachments (max 2; backend diffs and deletes removed files from storage)
+    attachments: v.optional(v.array(attachmentObject)),
   },
-  handler: async (ctx, { id, ...fields }) => {
+  handler: async (ctx, { id, attachments, ...fields }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error('לא מחובר למערכת');
 
@@ -137,7 +188,40 @@ export const update = mutation({
     if (existing.createdBy !== userId)
       throw new Error('אין הרשאה לערוך את האירוע');
 
-    await ctx.db.patch(id, fields);
+    let stampedAttachments: typeof existing.attachments | undefined;
+    if (attachments !== undefined) {
+      if (attachments.length > 2) {
+        throw new Error('לא ניתן לצרף יותר מ-2 קבצים לאירוע');
+      }
+
+      // Delete from storage any file present in the old list but absent from the new list
+      const newIds = new Set(attachments.map((a) => a.storageId));
+      for (const old of existing.attachments ?? []) {
+        if (!newIds.has(old.storageId)) {
+          await ctx.storage.delete(old.storageId);
+        }
+      }
+
+      const now = Date.now();
+      // Build a lookup of existing metadata so we can preserve uploadedBy/uploadedAt
+      const existingByStorageId = new Map(
+        (existing.attachments ?? []).map((a) => [a.storageId, a])
+      );
+
+      stampedAttachments = attachments.map((a) => {
+        const prev = existingByStorageId.get(a.storageId);
+        return {
+          ...a,
+          uploadedBy: prev?.uploadedBy ?? userId,
+          uploadedAt: prev?.uploadedAt ?? now,
+        };
+      });
+    }
+
+    await ctx.db.patch(id, {
+      ...fields,
+      ...(stampedAttachments !== undefined ? { attachments: stampedAttachments } : {}),
+    });
   },
 });
 

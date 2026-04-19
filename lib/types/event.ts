@@ -1,3 +1,26 @@
+// FIXED: added EventAttachmentDraft type and attachments field to EventData
+import type { Id } from '@/convex/_generated/dataModel';
+
+// ─── Attachments ──────────────────────────────────────────────────────────────
+
+/**
+ * Frontend attachment draft.
+ * - New file (selected, not yet uploaded): localUri set, storageId undefined
+ * - Saved file (already on server): storageId set, localUri undefined
+ * localUri is never sent to Convex.
+ */
+export interface EventAttachmentDraft {
+  /** Set after upload. Undefined for newly selected files. */
+  storageId?: Id<'_storage'>;
+  originalName: string;
+  /** Editable by the user before save. */
+  displayName: string;
+  mimeType: string;
+  sizeBytes: number;
+  /** Frontend draft only — never persisted to Convex. */
+  localUri?: string;
+}
+
 export interface Participant {
   id: string;
   /** Display name used throughout the app. For contact-sourced participants this
@@ -92,4 +115,6 @@ export interface EventData {
   // FIXED: added family sharing fields to EventData
   allFamily?: boolean;
   sharedWithFamilyMemberIds?: string[];
+  // FIXED: file attachments (max 2, frontend draft — localUri stripped before saving)
+  attachments?: EventAttachmentDraft[];
 }

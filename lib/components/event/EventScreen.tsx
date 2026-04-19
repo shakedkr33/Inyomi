@@ -1,4 +1,4 @@
-// FIXED: added family sharing section to participants bottom sheet
+// FIXED: added EventAttachmentsSection between LocationCard and RecurrenceRow
 import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -31,9 +31,10 @@ import {
 } from '@/lib/components/event/LocationCard';
 import { NotesCard } from '@/lib/components/event/NotesCard';
 import { ParticipantsCard, type FamilyMemberChip } from '@/lib/components/event/ParticipantsCard';
+import { EventAttachmentsSection } from '@/lib/components/event/EventAttachmentsSection';
 import { RelatedTasksSection } from '@/lib/components/event/RelatedTasksSection';
 import { RemindersCard } from '@/lib/components/event/RemindersCard';
-import type { EventData, RecurrenceType } from '@/lib/types/event';
+import type { EventAttachmentDraft, EventData, RecurrenceType } from '@/lib/types/event';
 import { makeReminder } from '@/lib/types/event';
 
 const PRIMARY = '#36a9e2';
@@ -209,13 +210,15 @@ export default function EventScreen({
   };
 
   /** true if the user touched any meaningful field */
+  // FIXED: attachments now counted as a dirty-state change (triggers back confirmation)
   const isFormDirty = (): boolean =>
     event.title.trim().length > 0 ||
     event.participants.length > 0 ||
     event.tasks.length > 0 ||
     !!event.location ||
     !!event.onlineUrl ||
-    !!event.notes;
+    !!event.notes ||
+    (event.attachments?.length ?? 0) > 0;
 
   const goBack = (): void => {
     if (router.canGoBack()) {
@@ -344,14 +347,73 @@ export default function EventScreen({
                           ).filter((id) => !removedIds.has(id)),
                         }))
                       : event.tasks;
-                  updateEvent({ participants: p, tasks });
+
+                  // FIXED: removing a family member from participants also deselects them in family section
+                  const removedFamilyIds = [...removedIds].filter(
+                    (id) => familyMembers.some((fm) => fm._id === id)
+                  );
+
+                  if (removedFamilyIds.length > 0) {
+                    const newFamilyIds = (event.sharedWithFamilyMemberIds ?? []).filter(
+                      (id) => !removedFamilyIds.includes(id)
+                    );
+                    updateEvent({
+                      participants: p,
+                      tasks,
+                      // If "כולם" was on and a member is removed, turn it off
+                      allFamily: event.allFamily ? undefined : event.allFamily,
+                      sharedWithFamilyMemberIds: newFamilyIds.length > 0 ? newFamilyIds : undefined,
+                    });
+                  } else {
+                    updateEvent({ participants: p, tasks });
+                  }
                 }}
                 familyMembers={familyMembers}
                 allFamily={event.allFamily}
                 sharedWithFamilyMemberIds={event.sharedWithFamilyMemberIds}
-                onFamilyChange={(af, ids) =>
-                  updateEvent({ allFamily: af || undefined, sharedWithFamilyMemberIds: ids.length > 0 ? ids : undefined })
-                }
+                onFamilyChange={(af, ids) => {
+                  // FIXED: family member selection now syncs to event.participants for display
+                  const patch: Partial<EventData> = {
+                    allFamily: af || undefined,
+                    sharedWithFamilyMemberIds: ids.length > 0 ? ids : undefined,
+                  };
+
+                  // Keep participants that are NOT family members (external contacts/email)
+                  const existingNonFamily = event.participants.filter(
+                    (p) => !familyMembers.some((fm) => fm._id === p.id)
+                  );
+
+                  if (af) {
+                    // "כולם" — add every family member as a participant
+                    patch.participants = [
+                      ...existingNonFamily,
+                      ...familyMembers.map((fm) => ({
+                        id: fm._id,
+                        name: fm.displayName ?? '',
+                        color: fm.color ?? '#36a9e2',
+                        avatarUrl: undefined,
+                      })),
+                    ];
+                  } else if (ids.length > 0) {
+                    // Individual selection — only the selected family members
+                    patch.participants = [
+                      ...existingNonFamily,
+                      ...familyMembers
+                        .filter((fm) => ids.includes(fm._id))
+                        .map((fm) => ({
+                          id: fm._id,
+                          name: fm.displayName ?? '',
+                          color: fm.color ?? '#36a9e2',
+                          avatarUrl: undefined,
+                        })),
+                    ];
+                  } else {
+                    // Nothing selected — strip all family members from participants
+                    patch.participants = existingNonFamily;
+                  }
+
+                  updateEvent(patch);
+                }}
               />
 
               {/* Location */}
@@ -363,6 +425,14 @@ export default function EventScreen({
                     location: update.location || undefined,
                     onlineUrl: update.onlineUrl || undefined,
                   })
+                }
+              />
+
+              {/* Attachments */}
+              <EventAttachmentsSection
+                attachments={event.attachments ?? []}
+                onChange={(attachments: EventAttachmentDraft[]) =>
+                  updateEvent({ attachments })
                 }
               />
 

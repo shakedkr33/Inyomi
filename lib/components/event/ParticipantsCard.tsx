@@ -1,4 +1,4 @@
-// FIXED: added family sharing section to participants bottom sheet
+// FIXED: added dimmed backdrop, strengthened sheet elevation, clearer grabber
 import { Ionicons } from '@expo/vector-icons';
 import * as Contacts from 'expo-contacts';
 import { useCallback, useState } from 'react';
@@ -37,10 +37,20 @@ export interface FamilyMemberChip {
 const PRIMARY = '#36a9e2';
 const TINT = '#e8f5fd';
 
-// Fixed turquoise style for all non-family participants
+// Default circle style for email/contact participants (no profile color)
 const CIRCLE_BG = '#e8f5fd';
 const CIRCLE_BORDER = '#36a9e2';
 const CIRCLE_TEXT = '#36a9e2';
+
+// FIXED: family member participants now rendered with their profile colors
+// Returns per-participant background and text color so each avatar is distinct.
+function circleColors(color: string | undefined): { bg: string; text: string } {
+  if (!color || color === CIRCLE_BG) {
+    return { bg: CIRCLE_BG, text: CIRCLE_TEXT };
+  }
+  // Solid profile color (family member) → white text for legibility
+  return { bg: color, text: '#fff' };
+}
 
 /** Stable key for a contact: prefer contact.id, fallback to normalised phone */
 function contactKey(contact: Contacts.Contact): string {
@@ -305,18 +315,21 @@ export function ParticipantsCard({
       {/* ── Participant circles row ── */}
       {participants.length > 0 && (
         <View style={s.circlesRow}>
-          {participants.map((p) => (
-            <Pressable
-              key={p.id}
-              style={s.circle}
-              onLongPress={() => removeParticipant(p.id)}
-              accessible={true}
-              accessibilityRole="button"
-              accessibilityLabel={`${p.name} — לחץ לחיצה ארוכה להסרה`}
-            >
-              <Text style={s.circleText}>{initial(p)}</Text>
-            </Pressable>
-          ))}
+          {participants.map((p) => {
+            const cc = circleColors(p.color);
+            return (
+              <Pressable
+                key={p.id}
+                style={[s.circle, { backgroundColor: cc.bg, borderColor: cc.bg === CIRCLE_BG ? CIRCLE_BORDER : cc.bg }]}
+                onLongPress={() => removeParticipant(p.id)}
+                accessible={true}
+                accessibilityRole="button"
+                accessibilityLabel={`${p.name} — לחץ לחיצה ארוכה להסרה`}
+              >
+                <Text style={[s.circleText, { color: cc.text }]}>{initial(p)}</Text>
+              </Pressable>
+            );
+          })}
 
           {/* "הצג הכל" — appears right next to circles */}
           <Pressable
@@ -341,7 +354,8 @@ export function ParticipantsCard({
         >
           <View style={{ flex: 1 }}>
             {/* Backdrop — separate from sheet so sheet gestures never reach it */}
-            <Pressable style={StyleSheet.absoluteFill} onPress={closeSheet} />
+            {/* FIXED: added dimmed backdrop behind participants bottom sheet */}
+            <Pressable style={[StyleSheet.absoluteFill, s.backdropDim]} onPress={closeSheet} />
             <View style={s.modalSheetWrapper}>
             <View
               style={[s.sheet, (sheetView === 'contacts' || sheetView === 'phone-disambig') && s.sheetContacts]}
@@ -784,35 +798,39 @@ export function ParticipantsCard({
               data={participants}
               keyExtractor={(p) => p.id}
               style={{ maxHeight: 360 }}
-              renderItem={({ item }) => (
-                <View style={s.listRow}>
-                  {/* Turquoise circle */}
-                  <Pressable
-                    style={s.listRemoveBtn}
-                    onPress={() => {
-                      removeParticipant(item.id);
-                      if (participants.length <= 1) setListOpen(false);
-                    }}
-                    accessible={true}
-                    accessibilityRole="button"
-                    accessibilityLabel={`הסר ${item.name}`}
-                    hitSlop={8}
-                  >
-                    <Ionicons name="close-circle" size={18} color="#94a3b8" />
-                  </Pressable>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.listName} numberOfLines={1}>{item.name}</Text>
-                    {(item.phone ?? item.email) ? (
-                      <Text style={s.listSub} numberOfLines={1}>
-                        {item.phone ?? item.email}
-                      </Text>
-                    ) : null}
+              renderItem={({ item }) => {
+                const cc = circleColors(item.color);
+                return (
+                  <View style={s.listRow}>
+                    {/* Remove button */}
+                    <Pressable
+                      style={s.listRemoveBtn}
+                      onPress={() => {
+                        removeParticipant(item.id);
+                        if (participants.length <= 1) setListOpen(false);
+                      }}
+                      accessible={true}
+                      accessibilityRole="button"
+                      accessibilityLabel={`הסר ${item.name}`}
+                      hitSlop={8}
+                    >
+                      <Ionicons name="close-circle" size={18} color="#94a3b8" />
+                    </Pressable>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.listName} numberOfLines={1}>{item.name}</Text>
+                      {(item.phone ?? item.email) ? (
+                        <Text style={s.listSub} numberOfLines={1}>
+                          {item.phone ?? item.email}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {/* FIXED: avatar uses participant's profile color */}
+                    <View style={[s.circle, { backgroundColor: cc.bg, borderColor: cc.bg === CIRCLE_BG ? CIRCLE_BORDER : cc.bg }]}>
+                      <Text style={[s.circleText, { color: cc.text }]}>{initial(item)}</Text>
+                    </View>
                   </View>
-                  <View style={s.circle}>
-                    <Text style={s.circleText}>{initial(item)}</Text>
-                  </View>
-                </View>
-              )}
+                );
+              }}
               ListEmptyComponent={
                 <Text style={s.emptyContacts}>אין משתתפים</Text>
               }
@@ -912,15 +930,21 @@ const s = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
   },
+  // FIXED: strengthened sheet elevation and corner radius for clear layering
   sheet: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
     paddingHorizontal: 20,
     paddingBottom: Platform.OS === 'ios' ? 36 : 24,
     paddingTop: 12,
     // No flex:1 here — main view ("הוסף משתתף") must size to content only
     maxHeight: '88%',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 14,
   },
   // Applied only in contacts view — restores flex distribution for FlatList
   sheetContacts: {
@@ -930,13 +954,18 @@ const s = StyleSheet.create({
   contactsViewContainer: {
     flex: 1,
   },
+  // FIXED: clearer grabber styling for bottom sheet
   handle: {
-    width: 40,
-    height: 4,
-    backgroundColor: '#e2e8f0',
-    borderRadius: 999,
+    width: 48,
+    height: 5,
+    backgroundColor: '#D7DEE8',
+    borderRadius: 3,
     alignSelf: 'center',
-    marginBottom: 14,
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  backdropDim: {
+    backgroundColor: 'rgba(15, 23, 42, 0.18)',
   },
   sheetHeaderRow: {
     flexDirection: 'row',

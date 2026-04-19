@@ -20,12 +20,75 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+// FIXED: added file attachment support (prefill, section, upload loop in handleSave)
 import type { LocalAssignee } from '@/lib/components/event/TaskAssigneeSheet';
 import { TaskAssigneeSheet } from '@/lib/components/event/TaskAssigneeSheet';
+import { EventAttachmentsSection } from '@/lib/components/event/EventAttachmentsSection';
+import type { EventAttachmentDraft } from '@/lib/types/event';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PRIMARY = '#36a9e2';
+
+// ─── Upload helper (mirrors new.tsx) ─────────────────────────────────────────
+// Returns the final attachment list with storageId set and localUri stripped.
+// uploadedBy/uploadedAt are stamped by the backend mutation.
+
+type ConvexAttachment = {
+  storageId: Id<'_storage'>;
+  originalName: string;
+  displayName: string;
+  mimeType: string;
+  sizeBytes: number;
+};
+
+async function uploadDraftAttachmentsEdit(
+  drafts: EventAttachmentDraft[],
+  generateUrl: () => Promise<string>
+): Promise<ConvexAttachment[]> {
+  const results: ConvexAttachment[] = [];
+
+  for (const draft of drafts) {
+    if (draft.storageId && !draft.localUri) {
+      results.push({
+        storageId: draft.storageId,
+        originalName: draft.originalName,
+        displayName: draft.displayName,
+        mimeType: draft.mimeType,
+        sizeBytes: draft.sizeBytes,
+      });
+      continue;
+    }
+
+    if (!draft.localUri) continue;
+
+    const uploadUrl = await generateUrl();
+    const response = await fetch(draft.localUri);
+    const blob = await response.blob();
+
+    const uploadResponse = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': draft.mimeType },
+      body: blob,
+    });
+
+    if (!uploadResponse.ok) {
+      throw new Error(`העלאת הקובץ נכשלה: ${draft.originalName}`);
+    }
+
+    const { storageId } = (await uploadResponse.json()) as { storageId: string };
+
+    results.push({
+      storageId: storageId as Id<'_storage'>,
+      originalName: draft.originalName,
+      displayName: draft.displayName,
+      mimeType: draft.mimeType,
+      sizeBytes: draft.sizeBytes,
+    });
+  }
+
+  return results;
+}
 
 type LocationType = 'address' | 'link';
 
@@ -47,6 +110,7 @@ export default function EditEventScreen(): React.JSX.Element {
   const event = useQuery(api.events.getById, { eventId });
   const eventTasks = useQuery(api.eventTasks.listByEvent, { eventId });
   const updateEvent = useMutation(api.events.update);
+  const generateUploadUrl = useMutation(api.events.generateUploadUrl);
   const createEventTasks = useMutation(api.eventTasks.createBatch);
   const updateEventTask = useMutation(api.eventTasks.update);
   const removeEventTask = useMutation(api.eventTasks.remove);
@@ -81,6 +145,7 @@ export default function EditEventScreen(): React.JSX.Element {
   const [allDay, setAllDay] = useState(false);
   const [titleError, setTitleError] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [attachments, setAttachments] = useState<EventAttachmentDraft[]>([]);
 
   // ── Date/time pickers
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
@@ -119,6 +184,17 @@ export default function EditEventScreen(): React.JSX.Element {
       setLocationType('address');
       setLocation(event.location ?? '');
     }
+
+    // Prefill attachments from saved event — map to EventAttachmentDraft (no localUri)
+    setAttachments(
+      (event.attachments ?? []).map((a) => ({
+        storageId: a.storageId,
+        originalName: a.originalName,
+        displayName: a.displayName,
+        mimeType: a.mimeType,
+        sizeBytes: a.sizeBytes,
+      }))
+    );
   }, [event, eventId]);
 
   // ── Reset tasks when event changes; prefill when eventTasks load
@@ -160,6 +236,12 @@ export default function EditEventScreen(): React.JSX.Element {
         ? new Date(selectedDate).setHours(23, 59, 59, 999)
         : buildTimestamp(selectedDate, endTimeDate);
 
+      // Upload any new draft attachments before saving
+      const resolvedAttachments = await uploadDraftAttachmentsEdit(
+        attachments,
+        generateUploadUrl
+      );
+
       await updateEvent({
         id: eventId,
         title: title.trim(),
@@ -172,6 +254,7 @@ export default function EditEventScreen(): React.JSX.Element {
         onlineUrl:
           locationType === 'link' ? location.trim() || undefined : undefined,
         requiresRsvp: rsvpRequired,
+        attachments: resolvedAttachments,
       });
 
       const existingIds = new Set(
@@ -287,12 +370,14 @@ export default function EditEventScreen(): React.JSX.Element {
     rsvpRequired,
     eventId,
     updateEvent,
+    generateUploadUrl,
     createEventTasks,
     updateEventTask,
     removeEventTask,
     setTaskAssignee,
     eventTasks,
     tasks,
+    attachments,
     router,
   ]);
 
@@ -720,6 +805,12 @@ export default function EditEventScreen(): React.JSX.Element {
               }
             />
           </View>
+
+          {/* קבצים מצורפים */}
+          <EventAttachmentsSection
+            attachments={attachments}
+            onChange={setAttachments}
+          />
 
           {/* תיאור */}
           <View style={s.card}>

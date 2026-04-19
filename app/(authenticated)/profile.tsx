@@ -1,3 +1,4 @@
+// FIXED: title → "הגדרות"; logo aligned left; debug panel hidden behind long-press on version footer
 import { useAuthActions } from '@convex-dev/auth/react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useMutation } from 'convex/react';
@@ -35,19 +36,14 @@ export default function ProfileScreen() {
     isConfigured,
     isExpoGo,
     presentPaywall,
-    presentCustomerCenter,
     customerData,
   } = useRevenueCat();
   const deleteMyAccount = useMutation(api.users.deleteMyAccount);
   const [isDebugOpen, setIsDebugOpen] = useState(false);
+  // Debug panel is hidden in normal UI; revealed only by long-pressing the version footer
+  const [isDebugUnlocked, setIsDebugUnlocked] = useState(false);
 
   const { data: onboardingData } = useOnboarding();
-  // FIXED: unified profile screen — single screen with two states based on actual family data
-  const familyMembers = onboardingData.familyData?.familyMembers ?? [];
-  const profileMemberCount = familyMembers.length;
-  const hasFamilyMembers = profileMemberCount > 0;
-
-  // FIXED: replaced hardcoded user data with OnboardingContext
   const rawFirstName = onboardingData.firstName ?? '';
   const rawLastName = onboardingData.lastName ?? '';
   const rawNickname = onboardingData.nickname ?? '';
@@ -128,17 +124,10 @@ export default function ProfileScreen() {
     );
   };
 
-  const openPaywallPreview = () => {
-    router.push('/(auth)/paywall?preview=true');
-  };
-
-  const openSignInPreview = () => {
-    router.push('/(auth)/sign-in?preview=true');
-  };
-
-  const openSignUpPreview = () => {
-    router.push('/(auth)/sign-up?preview=true');
-  };
+  // Debug-only preview helpers — only used inside IS_DEV_MODE block
+  const openPaywallPreview = () => router.push('/(auth)/paywall?preview=true');
+  const openSignInPreview = () => router.push('/(auth)/sign-in?preview=true');
+  const openSignUpPreview = () => router.push('/(auth)/sign-up?preview=true');
 
   // ============================================================================
   // רינדור
@@ -149,18 +138,16 @@ export default function ProfileScreen() {
       <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.headerContainer}>
-          {/* Left side — full logo (icon + InYomi text combined) */}
           <Image
             source={require('@/assets/images/logo-inyomi.png')}
             style={styles.headerLogo}
             resizeMode="contain"
             accessibilityLabel="InYomi logo"
           />
-          {/* Right side — page title */}
-          <Text style={styles.headerTitle}>פרופיל</Text>
+          <Text style={styles.headerTitle}>הגדרות</Text>
         </View>
 
-        {/* Profile card */}
+        {/* Profile card — tapping opens family-profile (profile management) */}
         <TouchableOpacity
           style={styles.card}
           onPress={() => router.push('/(authenticated)/family-profile')}
@@ -169,104 +156,51 @@ export default function ProfileScreen() {
           accessibilityLabel="עריכת פרופיל"
         >
           <View style={styles.profileRow}>
-            {/* Chevron on the left */}
             <MaterialIcons name="chevron-left" size={22} color="#9ca3af" />
-            {/* Text stack in the middle */}
             <View style={styles.profileTexts}>
               <Text style={styles.profileName}>{displayName}</Text>
-              <Text style={styles.profileSubtitle}>
-                {isPremium ? 'מנוי פרימיום 👑' : 'מנוי חינמי'}
-              </Text>
+              {/* Premium status — only entry point for subscription on this screen */}
+              <TouchableOpacity
+                onPress={() => presentPaywall()}
+                accessible={true}
+                accessibilityRole="button"
+                accessibilityLabel={isPremium ? 'מנוי פרימיום פעיל' : 'שדרוג ל-InYomi Pro'}
+                hitSlop={8}
+              >
+                <Text style={[styles.profileSubtitle, isPremium && styles.premiumLabel]}>
+                  {isPremium ? 'מנוי פרימיום פעיל 👑' : 'מנוי חינמי'}
+                </Text>
+              </TouchableOpacity>
             </View>
-            {/* Avatar on the right */}
             <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
               <Text style={styles.avatarInitial}>{avatarInitial}</Text>
             </View>
           </View>
         </TouchableOpacity>
 
-        {/* FIXED: added family upgrade CTA to personal-only profile state */}
-        {/* Only shown when the user has no family members yet — disappears once they add one */}
-        {!hasFamilyMembers && (
-          <TouchableOpacity
-            style={[styles.card, styles.familyCta]}
-            onPress={() => router.push('/(authenticated)/family-profile')}
-            accessible={true}
-            accessibilityRole="button"
-            accessibilityLabel="הוספת בני משפחה"
-          >
-            <View style={styles.familyCtaRow}>
-              <MaterialIcons name="chevron-left" size={20} color="#36a9e2" />
-              <View style={styles.familyCtaTexts}>
-                <Text style={styles.familyCtaTitle}>הוספת בני משפחה</Text>
-                <Text style={styles.familyCtaSubtitle}>
-                  אפשר להוסיף בן/בת זוג, ילדים או אנשים קבועים בבית בכל שלב
-                </Text>
-              </View>
-              <MaterialIcons name="group-add" size={22} color="#36a9e2" />
-            </View>
-          </TouchableOpacity>
-        )}
-
-        {/* Invite card */}
-        <TouchableOpacity
-          style={styles.card}
-          onPress={() => console.log('TODO: open invite flow')}
-          accessible={true}
-          accessibilityRole="button"
-          accessibilityLabel="הזמנת חברה"
-        >
-          <View style={styles.inviteRow}>
-            <MaterialIcons name="chevron-left" size={20} color="#d1d5db" />
-            <View style={styles.inviteTexts}>
-              <Text style={styles.inviteTitle}>
-                הזמיני חברה וקבלי חודש מתנה
-              </Text>
-              <Text style={styles.inviteSubtitle}>
-                שתפי קישור ותרוויחי 30 יום בחינם
-              </Text>
-            </View>
-            <MaterialIcons name="group-add" size={22} color="#9ca3af" />
-          </View>
-        </TouchableOpacity>
-
         {/* Section title */}
         <Text style={styles.sectionTitle}>הגדרות</Text>
 
-        {/* Settings list card */}
+        {/* Settings list — MVP structure */}
         <View style={[styles.card, styles.settingsCard]}>
+          {/* Import flows */}
           <SettingsRow
-            iconName="people-outline"
-            label="ניהול פרופיל"
-            note={
-              profileMemberCount > 0
-                ? `${profileMemberCount} מחוברים`
-                : undefined
-            }
-            onPress={() => router.push('/(authenticated)/family-profile')}
+            iconName="sync"
+            label="ייבוא מיומן חיצוני"
+            onPress={() => router.push('/(authenticated)/import-calendar')}
           />
           <SettingsRow
-            iconName={isPremium ? 'star' : 'star-outline'}
-            label={isPremium ? 'מנוי פרימיום פעיל' : 'שדרוג ל-InYomi Pro'}
-            note={!isPremium ? "גישה לכל הפיצ'רים ללא הגבלה" : undefined}
-            onPress={() => presentPaywall()}
+            iconName="event"
+            label="ייבוא חגים ישראליים"
+            onPress={() => router.push('/(authenticated)/import-holidays')}
           />
-          <SettingsRow
-            iconName="headset-mic"
-            label="ניהול מנוי ותמיכה"
-            onPress={() => presentCustomerCenter()}
-          />
+          {/* Notifications */}
           <SettingsRow
             iconName="notifications-none"
             label="התראות"
             onPress={() => console.log('TODO: notifications settings')}
           />
-          <SettingsRow
-            iconName="brightness-medium"
-            label="תצוגה"
-            note="בהיר / כהה / מערכת"
-            onPress={() => console.log('TODO: display settings')}
-          />
+          {/* Danger zone */}
           <SettingsRow
             iconName="delete-outline"
             label="מחיקת חשבון"
@@ -283,8 +217,8 @@ export default function ProfileScreen() {
           />
         </View>
 
-        {/* Debug panel — only in dev mode */}
-        {IS_DEV_MODE && (
+        {/* Debug panel — hidden by default; revealed by long-pressing the version footer */}
+        {isDebugUnlocked && (
           <View style={styles.debugContainer}>
             <TouchableOpacity
               onPress={() => setIsDebugOpen(!isDebugOpen)}
@@ -300,13 +234,9 @@ export default function ProfileScreen() {
                 name="chevron-left"
                 size={20}
                 color="#eab308"
-                style={{
-                  transform: [{ rotate: isDebugOpen ? '-90deg' : '0deg' }],
-                }}
+                style={{ transform: [{ rotate: isDebugOpen ? '-90deg' : '0deg' }] }}
               />
-              <Text style={styles.debugHeaderText}>
-                קונסולת דיבאג (מצב פיתוח)
-              </Text>
+              <Text style={styles.debugHeaderText}>קונסולת דיבאג (מצב פיתוח)</Text>
               <MaterialIcons name="bug-report" size={20} color="#eab308" />
             </TouchableOpacity>
 
@@ -315,66 +245,35 @@ export default function ProfileScreen() {
                 <Text style={styles.debugSectionLabel}>מצב אפליקציה</Text>
                 <View style={styles.debugRows}>
                   <DebugRow label="סביבה" value={APP_ENV} />
-                  <DebugRow
-                    label="מערכת תשלומים"
-                    value={PAYMENT_SYSTEM_ENABLED ? 'פעיל' : 'כבוי'}
-                  />
-                  <DebugRow
-                    label="תשלומים מדומים"
-                    value={MOCK_PAYMENTS ? 'פעיל' : 'כבוי'}
-                  />
-                  <DebugRow
-                    label="RevenueCat מוגדר"
-                    value={isConfigured ? 'כן' : 'לא'}
-                  />
+                  <DebugRow label="מערכת תשלומים" value={PAYMENT_SYSTEM_ENABLED ? 'פעיל' : 'כבוי'} />
+                  <DebugRow label="תשלומים מדומים" value={MOCK_PAYMENTS ? 'פעיל' : 'כבוי'} />
+                  <DebugRow label="RevenueCat מוגדר" value={isConfigured ? 'כן' : 'לא'} />
                   <DebugRow label="Expo Go" value={isExpoGo ? 'כן' : 'לא'} />
-                  <DebugRow
-                    label="סטטוס פרימיום"
-                    value={isPremium ? 'פרימיום' : 'חינמי'}
-                  />
+                  <DebugRow label="סטטוס פרימיום" value={isPremium ? 'פרימיום' : 'חינמי'} />
                   <DebugRow label="Entitlement" value="InYomi Pro" />
                   {customerData && (
-                    <DebugRow
-                      label="App User ID"
-                      value={customerData.appUserID.substring(0, 20)}
-                    />
+                    <DebugRow label="App User ID" value={customerData.appUserID.substring(0, 20)} />
                   )}
                 </View>
-
-                <Text style={[styles.debugSectionLabel, { marginTop: 16 }]}>
-                  בדיקות UI
-                </Text>
+                <Text style={[styles.debugSectionLabel, { marginTop: 16 }]}>בדיקות UI</Text>
                 <View style={styles.debugRows}>
-                  <DebugButton
-                    iconName="credit-card"
-                    label="פתח מסך תשלום (Preview)"
-                    onPress={openPaywallPreview}
-                  />
-                  <DebugButton
-                    iconName="login"
-                    label="פתח מסך התחברות (Preview)"
-                    onPress={openSignInPreview}
-                  />
-                  <DebugButton
-                    iconName="person-add"
-                    label="פתח מסך הרשמה (Preview)"
-                    onPress={openSignUpPreview}
-                  />
+                  <DebugButton iconName="credit-card" label="פתח מסך תשלום (Preview)" onPress={openPaywallPreview} />
+                  <DebugButton iconName="login" label="פתח מסך התחברות (Preview)" onPress={openSignInPreview} />
+                  <DebugButton iconName="person-add" label="פתח מסך הרשמה (Preview)" onPress={openSignUpPreview} />
                 </View>
               </View>
             )}
           </View>
         )}
 
-        {IS_DEV_MODE && (
-          <View style={styles.devBanner}>
-            <Text style={styles.devBannerText}>מצב פיתוח פעיל</Text>
-          </View>
-        )}
-
-        {/* Footer */}
-        {/* TODO: use expo-constants for real version */}
-        <Text style={styles.footer}>InYomi v1.0.0</Text>
+        {/* Version footer — long-press to unlock hidden debug panel */}
+        <TouchableOpacity
+          onLongPress={() => setIsDebugUnlocked((v) => !v)}
+          delayLongPress={800}
+          accessible={false}
+        >
+          <Text style={styles.footer}>InYomi v1.0.0</Text>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -488,7 +387,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingLeft: 8,
+    paddingLeft: 0,
     paddingRight: 24,
     paddingTop: 12,
     paddingBottom: 4,
@@ -556,59 +455,9 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     marginTop: 2,
   },
-
-  // ── Family upgrade CTA ────────────────────────────────────────────────────
-  familyCta: {
-    borderWidth: 1,
-    borderColor: 'rgba(54,169,226,0.25)',
-    backgroundColor: 'rgba(54,169,226,0.06)',
-  },
-  familyCtaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    gap: 12,
-  },
-  familyCtaTexts: {
-    flex: 1,
-    alignItems: 'flex-end',
-  },
-  familyCtaTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1e293b',
-    textAlign: 'right',
-  },
-  familyCtaSubtitle: {
-    fontSize: 13,
-    color: '#6b7280',
-    textAlign: 'right',
-    marginTop: 2,
-    lineHeight: 18,
-  },
-
-  // ── Invite card ────────────────────────────────────────────────────────────
-  inviteRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    gap: 12,
-  },
-  inviteTexts: {
-    flex: 1,
-    alignItems: 'flex-end',
-  },
-  inviteTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#111517',
-    textAlign: 'right',
-  },
-  inviteSubtitle: {
-    fontSize: 13,
-    color: '#6b7280',
-    textAlign: 'right',
-    marginTop: 2,
+  premiumLabel: {
+    color: '#36a9e2',
+    fontWeight: '600',
   },
 
   // ── Section title ──────────────────────────────────────────────────────────

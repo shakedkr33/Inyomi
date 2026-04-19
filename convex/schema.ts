@@ -114,6 +114,16 @@ export default defineSchema({
     status: v.optional(v.union(v.literal('active'), v.literal('cancelled'))),
     cancelledAt: v.optional(v.number()),
     cancelReason: v.optional(v.string()),
+    // FIXED: file attachments for personal events (hard cap of 2 enforced in mutations)
+    attachments: v.optional(v.array(v.object({
+      storageId: v.id('_storage'),
+      originalName: v.string(),
+      displayName: v.string(),
+      mimeType: v.string(),
+      sizeBytes: v.number(),
+      uploadedAt: v.number(),
+      uploadedBy: v.id('users'),
+    }))),
   })
     .index('by_space_and_time', ['spaceId', 'startTime'])
     .index('by_creator', ['createdBy'])
