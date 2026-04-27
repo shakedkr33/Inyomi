@@ -21,10 +21,28 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 // FIXED: added file attachment support (prefill, section, upload loop in handleSave)
+import { RecurrenceRow } from '@/lib/components/event/EventScreen';
+import { RemindersCard } from '@/lib/components/event/RemindersCard';
 import type { LocalAssignee } from '@/lib/components/event/TaskAssigneeSheet';
 import { TaskAssigneeSheet } from '@/lib/components/event/TaskAssigneeSheet';
 import { EventAttachmentsSection } from '@/lib/components/event/EventAttachmentsSection';
-import type { EventAttachmentDraft } from '@/lib/types/event';
+import type {
+  EventAttachmentDraft,
+  RecurrenceType,
+  Reminder,
+} from '@/lib/types/event';
+import { makeReminder } from '@/lib/types/event';
+
+// Convert a saved number[] (offsetMinutes) back to Reminder[] for RemindersCard
+function offsetsToReminders(offsets: number[] | undefined): Reminder[] {
+  if (!offsets || offsets.length === 0) return [makeReminder('hour_before')];
+  return offsets.map((offsetMinutes) => {
+    if (offsetMinutes === 0) return { preset: 'at_event' as const, offsetMinutes };
+    if (offsetMinutes === 60) return { preset: 'hour_before' as const, offsetMinutes };
+    if (offsetMinutes === 1440) return { preset: 'day_before' as const, offsetMinutes };
+    return { preset: 'custom' as const, offsetMinutes, customValue: offsetMinutes, customUnit: 'minutes' as const };
+  });
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -100,6 +118,15 @@ function buildTimestamp(date: Date, timeDate: Date): number {
   return result.getTime();
 }
 
+function isRecurrenceType(value: unknown): value is RecurrenceType {
+  return (
+    value === 'daily' ||
+    value === 'weekly' ||
+    value === 'monthly' ||
+    value === 'yearly'
+  );
+}
+
 // ─── Edit Event Form ───────────────────────────────────────────────────────────
 
 export default function EditEventScreen(): React.JSX.Element {
@@ -146,6 +173,13 @@ export default function EditEventScreen(): React.JSX.Element {
   const [titleError, setTitleError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [attachments, setAttachments] = useState<EventAttachmentDraft[]>([]);
+  const [recurrence, setRecurrence] = useState<RecurrenceType>('none');
+  const [remindersEnabled, setRemindersEnabled] = useState(true);
+  const [reminders, setReminders] = useState<Reminder[]>([
+    makeReminder('hour_before'),
+  ]);
+  // FIXED: preserve saved participant names even before a full edit UI exists
+  const [participants, setParticipants] = useState<string[]>([]);
 
   // ── Date/time pickers
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
@@ -171,6 +205,21 @@ export default function EditEventScreen(): React.JSX.Element {
     setDescription(event.description ?? '');
     setAllDay(event.allDay ?? false);
     setRsvpRequired(event.requiresRsvp ?? false);
+    setParticipants(event.participants ?? []);
+    setRecurrence(
+      event.isRecurring && isRecurrenceType(event.recurringPattern)
+        ? event.recurringPattern
+        : 'none'
+    );
+
+    const savedOffsets = (event as { reminders?: number[] }).reminders;
+    if (savedOffsets && savedOffsets.length > 0) {
+      setRemindersEnabled(true);
+      setReminders(offsetsToReminders(savedOffsets));
+    } else {
+      setRemindersEnabled(false);
+      setReminders([makeReminder('hour_before')]);
+    }
 
     const start = new Date(event.startTime);
     setSelectedDate(start);
@@ -241,6 +290,7 @@ export default function EditEventScreen(): React.JSX.Element {
         attachments,
         generateUploadUrl
       );
+      const isSavingCommunityEvent = Boolean(event?.communityId);
 
       await updateEvent({
         id: eventId,
@@ -249,12 +299,22 @@ export default function EditEventScreen(): React.JSX.Element {
         startTime: startTs,
         endTime: endTs,
         allDay,
+        ...(isSavingCommunityEvent
+          ? {}
+          : {
+              isRecurring: recurrence !== 'none',
+              recurringPattern: recurrence !== 'none' ? recurrence : undefined,
+            }),
         location:
           locationType === 'address' ? location.trim() || undefined : undefined,
         onlineUrl:
           locationType === 'link' ? location.trim() || undefined : undefined,
         requiresRsvp: rsvpRequired,
+        participants: participants.length > 0 ? participants : undefined,
         attachments: resolvedAttachments,
+        reminders: remindersEnabled
+          ? reminders.map((r) => r.offsetMinutes)
+          : [],
       });
 
       const existingIds = new Set(
@@ -368,7 +428,10 @@ export default function EditEventScreen(): React.JSX.Element {
     location,
     locationType,
     rsvpRequired,
+    participants,
+    recurrence,
     eventId,
+    event,
     updateEvent,
     generateUploadUrl,
     createEventTasks,
@@ -389,6 +452,9 @@ export default function EditEventScreen(): React.JSX.Element {
   }, [router, eventId]);
 
   const isSaveDisabled = !title.trim() || saving;
+  const isCommunityEvent = Boolean(event?.communityId);
+  const shouldShowRecurrence = !isCommunityEvent;
+  const shouldShowReminders = true;
   const dateLabel = selectedDate.toLocaleDateString('he-IL', {
     weekday: 'long',
     day: 'numeric',
@@ -829,6 +895,22 @@ export default function EditEventScreen(): React.JSX.Element {
               accessibilityLabel="תיאור"
             />
           </View>
+
+          {shouldShowRecurrence ? (
+            <RecurrenceRow value={recurrence} onChange={setRecurrence} />
+          ) : null}
+
+          {shouldShowReminders ? (
+            <RemindersCard
+              enabled={remindersEnabled}
+              reminders={reminders}
+              isAllDay={allDay}
+              onChange={(enabled, nextReminders) => {
+                setRemindersEnabled(enabled);
+                setReminders(nextReminders);
+              }}
+            />
+          ) : null}
 
           {/* משימות לאירוע */}
           <View style={s.card}>

@@ -14,6 +14,7 @@ import {
   Pressable,
   Share,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -136,6 +137,14 @@ interface EventScreenProps {
   eventId?: string;
   /** Pre-selected date (midnight Unix ms) when opened from a calendar day tap. */
   selectedDate?: number;
+  /** PHASE 1: community creation reuses the personal base form layout. */
+  context?: 'personal' | 'community';
+  showParticipants?: boolean;
+  taskParticipants?: EventData['participants'];
+  showRsvpSection?: boolean;
+  rsvpRequired?: boolean;
+  onRsvpRequiredChange?: (required: boolean) => void;
+  showSuccessSheet?: boolean;
   /**
    * Called when the user confirms save. Should call the Convex mutation.
    * Returns the new event ID so the success sheet can generate a share link.
@@ -147,9 +156,18 @@ export default function EventScreen({
   mode,
   eventId: _eventId,
   selectedDate,
+  context = 'personal',
+  showParticipants = true,
+  taskParticipants,
+  showRsvpSection = false,
+  rsvpRequired = false,
+  onRsvpRequiredChange,
+  showSuccessSheet = true,
   onSave,
 }: EventScreenProps): React.JSX.Element {
   const isCreate = mode === 'create';
+  const headerTitle =
+    isCreate && context === 'community' ? 'יצירת אירוע קהילתי' : 'יצירת אירוע';
   // TODO: replace MOCK_EVENT with Convex query using _eventId
   const [event, setEvent] = useState<EventData>(() =>
     isCreate ? makeEmptyEvent(selectedDate) : MOCK_EVENT
@@ -224,10 +242,12 @@ export default function EventScreen({
     try {
       if (onSave) {
         const newEventId = await onSave(event);
-        // FIXED: show success/share sheet instead of navigating away immediately
-        setSavedEvent({ ...event });
-        setSavedEventId(newEventId);
-        setEvent(makeEmptyEvent(selectedDate));
+        if (showSuccessSheet) {
+          // FIXED: show success/share sheet instead of navigating away immediately
+          setSavedEvent({ ...event });
+          setSavedEventId(newEventId);
+          setEvent(makeEmptyEvent(selectedDate));
+        }
       } else {
         // Details mode without onSave — just go back
         if (router.canGoBack()) {
@@ -329,6 +349,9 @@ export default function EventScreen({
   const completedTasks = event.tasks.filter((t) => t.completed).length;
   const hasMultipleAssignees =
     new Set(event.tasks.map((t) => t.assigneeId).filter(Boolean)).size > 1;
+  const isCommunityEvent = context === 'community';
+  const shouldShowRecurrence = !isCommunityEvent;
+  const shouldShowReminders = true;
 
   return (
     <SafeAreaView style={s.safeArea} edges={['top', 'bottom']}>
@@ -337,7 +360,7 @@ export default function EventScreen({
         {/* Left spacer matches back button width for visual centering */}
         <View style={{ width: 40 }} />
         <Text style={s.headerTitle}>
-          {isCreate ? 'יצירת אירוע' : 'פרטי אירוע'}
+          {isCreate ? headerTitle : 'פרטי אירוע'}
         </Text>
         <Pressable
           style={s.backButton}
@@ -416,94 +439,6 @@ export default function EventScreen({
                 }}
               />
 
-              {/* Participants */}
-              <ParticipantsCard
-                participants={event.participants}
-                onChange={(p) => {
-                  const removedIds = new Set(
-                    event.participants
-                      .filter((prev) => !p.some((next) => next.id === prev.id))
-                      .map((prev) => prev.id)
-                  );
-                  const tasks =
-                    removedIds.size > 0
-                      ? event.tasks.map((t) => ({
-                          ...t,
-                          assignedParticipantIds: (
-                            t.assignedParticipantIds ?? []
-                          ).filter((id) => !removedIds.has(id)),
-                        }))
-                      : event.tasks;
-
-                  // FIXED: removing a family member from participants also deselects them in family section
-                  const removedFamilyIds = [...removedIds].filter((id) =>
-                    familyMembers.some((fm) => fm._id === id)
-                  );
-
-                  if (removedFamilyIds.length > 0) {
-                    const newFamilyIds = (
-                      event.sharedWithFamilyMemberIds ?? []
-                    ).filter((id) => !removedFamilyIds.includes(id));
-                    updateEvent({
-                      participants: p,
-                      tasks,
-                      // If "כולם" was on and a member is removed, turn it off
-                      allFamily: event.allFamily ? undefined : event.allFamily,
-                      sharedWithFamilyMemberIds:
-                        newFamilyIds.length > 0 ? newFamilyIds : undefined,
-                    });
-                  } else {
-                    updateEvent({ participants: p, tasks });
-                  }
-                }}
-                familyMembers={familyMembers}
-                allFamily={event.allFamily}
-                sharedWithFamilyMemberIds={event.sharedWithFamilyMemberIds}
-                onFamilyChange={(af, ids) => {
-                  // FIXED: family member selection now syncs to event.participants for display
-                  const patch: Partial<EventData> = {
-                    allFamily: af || undefined,
-                    sharedWithFamilyMemberIds: ids.length > 0 ? ids : undefined,
-                  };
-
-                  // Keep participants that are NOT family members (external contacts/email)
-                  const existingNonFamily = event.participants.filter(
-                    (p) => !familyMembers.some((fm) => fm._id === p.id)
-                  );
-
-                  if (af) {
-                    // "כולם" — add every family member as a participant
-                    patch.participants = [
-                      ...existingNonFamily,
-                      ...familyMembers.map((fm) => ({
-                        id: fm._id,
-                        name: fm.displayName ?? '',
-                        color: fm.color ?? '#36a9e2',
-                        avatarUrl: undefined,
-                      })),
-                    ];
-                  } else if (ids.length > 0) {
-                    // Individual selection — only the selected family members
-                    patch.participants = [
-                      ...existingNonFamily,
-                      ...familyMembers
-                        .filter((fm) => ids.includes(fm._id))
-                        .map((fm) => ({
-                          id: fm._id,
-                          name: fm.displayName ?? '',
-                          color: fm.color ?? '#36a9e2',
-                          avatarUrl: undefined,
-                        })),
-                    ];
-                  } else {
-                    // Nothing selected — strip all family members from participants
-                    patch.participants = existingNonFamily;
-                  }
-
-                  updateEvent(patch);
-                }}
-              />
-
               {/* Location */}
               <LocationCard
                 location={event.location}
@@ -516,6 +451,12 @@ export default function EventScreen({
                 }
               />
 
+              {/* Notes */}
+              <NotesCard
+                notes={event.notes}
+                onChange={(notes) => updateEvent({ notes })}
+              />
+
               {/* Attachments */}
               <EventAttachmentsSection
                 attachments={event.attachments ?? []}
@@ -524,32 +465,118 @@ export default function EventScreen({
                 }
               />
 
-              {/* Recurrence */}
-              <RecurrenceRow
-                value={event.recurrence}
-                onChange={(val) => updateEvent({ recurrence: val })}
-              />
+              {shouldShowRecurrence ? (
+                <RecurrenceRow
+                  value={event.recurrence}
+                  onChange={(val) => updateEvent({ recurrence: val })}
+                />
+              ) : null}
 
-              {/* Reminders */}
-              <RemindersCard
-                enabled={event.remindersEnabled}
-                reminders={event.reminders}
-                isAllDay={event.isAllDay}
-                onChange={(enabled, reminders) =>
-                  updateEvent({ remindersEnabled: enabled, reminders })
-                }
-              />
+              {shouldShowReminders ? (
+                <RemindersCard
+                  enabled={event.remindersEnabled}
+                  reminders={event.reminders}
+                  isAllDay={event.isAllDay}
+                  onChange={(enabled, reminders) =>
+                    updateEvent({ remindersEnabled: enabled, reminders })
+                  }
+                />
+              ) : null}
 
-              {/* Notes */}
-              <NotesCard
-                notes={event.notes}
-                onChange={(notes) => updateEvent({ notes })}
-              />
+              {/* Participants — personal events only */}
+              {showParticipants ? (
+                <ParticipantsCard
+                  participants={event.participants}
+                  onChange={(p) => {
+                    const removedIds = new Set(
+                      event.participants
+                        .filter((prev) => !p.some((next) => next.id === prev.id))
+                        .map((prev) => prev.id)
+                    );
+                    const tasks =
+                      removedIds.size > 0
+                        ? event.tasks.map((t) => ({
+                            ...t,
+                            assignedParticipantIds: (
+                              t.assignedParticipantIds ?? []
+                            ).filter((id) => !removedIds.has(id)),
+                          }))
+                        : event.tasks;
+
+                    // FIXED: removing a family member from participants also deselects them in family section
+                    const removedFamilyIds = [...removedIds].filter((id) =>
+                      familyMembers.some((fm) => fm._id === id)
+                    );
+
+                    if (removedFamilyIds.length > 0) {
+                      const newFamilyIds = (
+                        event.sharedWithFamilyMemberIds ?? []
+                      ).filter((id) => !removedFamilyIds.includes(id));
+                      updateEvent({
+                        participants: p,
+                        tasks,
+                        // If "כולם" was on and a member is removed, turn it off
+                        allFamily: event.allFamily ? undefined : event.allFamily,
+                        sharedWithFamilyMemberIds:
+                          newFamilyIds.length > 0 ? newFamilyIds : undefined,
+                      });
+                    } else {
+                      updateEvent({ participants: p, tasks });
+                    }
+                  }}
+                  familyMembers={familyMembers}
+                  allFamily={event.allFamily}
+                  sharedWithFamilyMemberIds={event.sharedWithFamilyMemberIds}
+                  onFamilyChange={(af, ids) => {
+                    // FIXED: family member selection now syncs to event.participants for display
+                    const patch: Partial<EventData> = {
+                      allFamily: af || undefined,
+                      sharedWithFamilyMemberIds: ids.length > 0 ? ids : undefined,
+                    };
+
+                    // Keep participants that are NOT family members (external contacts/email)
+                    const existingNonFamily = event.participants.filter(
+                      (p) => !familyMembers.some((fm) => fm._id === p.id)
+                    );
+
+                    if (af) {
+                      // "כולם" — add every family member as a participant
+                      patch.participants = [
+                        ...existingNonFamily,
+                        ...familyMembers.map((fm) => ({
+                          id: fm._id,
+                          name: fm.displayName ?? '',
+                          color: fm.color ?? '#36a9e2',
+                          avatarUrl: undefined,
+                        })),
+                      ];
+                    } else if (ids.length > 0) {
+                      // Individual selection — only the selected family members
+                      patch.participants = [
+                        ...existingNonFamily,
+                        ...familyMembers
+                          .filter((fm) => ids.includes(fm._id))
+                          .map((fm) => ({
+                            id: fm._id,
+                            name: fm.displayName ?? '',
+                            color: fm.color ?? '#36a9e2',
+                            avatarUrl: undefined,
+                          })),
+                      ];
+                    } else {
+                      // Nothing selected — strip all family members from participants
+                      patch.participants = existingNonFamily;
+                    }
+
+                    updateEvent(patch);
+                  }}
+                />
+              ) : null}
 
               {/* Related Tasks */}
               <RelatedTasksSection
                 tasks={event.tasks}
-                participants={event.participants}
+                participants={taskParticipants ?? event.participants}
                 completedCount={completedTasks}
                 showAllTasksToAll={event.showAllTasksToAll}
                 showToggle={hasMultipleAssignees}
@@ -559,6 +586,37 @@ export default function EventScreen({
                 }
                 onAddParticipants={() => {}}
               />
+
+              {showRsvpSection ? (
+                <View style={s.rsvpSection}>
+                  <View style={s.rsvpHeaderRow}>
+                    <View style={s.rsvpTextBlock}>
+                      <Text style={s.rsvpTitle}>אישור הגעה</Text>
+                      <Text style={s.rsvpDescription}>
+                        לבקש מחברי הקהילה לאשר הגעה לאירוע?
+                      </Text>
+                    </View>
+                    <View style={s.rsvpIconCircle}>
+                      <MaterialIcons
+                        name="how-to-reg"
+                        size={20}
+                        color="#36a9e2"
+                      />
+                    </View>
+                  </View>
+                  <View style={s.rsvpToggleRow}>
+                    <Switch
+                      value={rsvpRequired}
+                      onValueChange={onRsvpRequiredChange}
+                      trackColor={{ true: '#36a9e2', false: '#e2e8f0' }}
+                      thumbColor="#fff"
+                      accessible={true}
+                      accessibilityLabel="נדרש אישור הגעה"
+                    />
+                    <Text style={s.rsvpToggleText}>נדרש אישור הגעה</Text>
+                  </View>
+                </View>
+              ) : null}
 
               <View style={{ height: 20 }} />
             </>
@@ -745,7 +803,7 @@ export default function EventScreen({
 
 /* ─── Recurrence Row (inline) ─── */
 
-function RecurrenceRow({
+export function RecurrenceRow({
   value,
   onChange,
 }: {
@@ -906,6 +964,58 @@ const s = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 8,
     elevation: 1,
+  },
+  rsvpSection: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
+    gap: 14,
+  },
+  rsvpHeaderRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 12,
+  },
+  rsvpTextBlock: {
+    flex: 1,
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  rsvpTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+    textAlign: 'right',
+  },
+  rsvpDescription: {
+    fontSize: 13,
+    color: '#64748b',
+    textAlign: 'right',
+    lineHeight: 18,
+  },
+  rsvpIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#e8f5fd',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rsvpToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  rsvpToggleText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111827',
+    textAlign: 'right',
   },
   recurrenceRow: {
     flexDirection: 'row',

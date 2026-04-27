@@ -117,12 +117,16 @@ export const create = mutation({
     startTime: v.number(),
     endTime: v.number(),
     allDay: v.optional(v.boolean()),
+    isRecurring: v.optional(v.boolean()),
+    recurringPattern: v.optional(v.string()),
     spaceId: v.optional(v.id('spaces')),
     category: v.optional(v.string()),
     location: v.optional(v.string()),
     locationUrl: v.optional(v.string()),
     onlineUrl: v.optional(v.string()),
     groupId: v.optional(v.id('spaces')),
+    // FIXED: persist personal event participants collected in EventScreen
+    participants: v.optional(v.array(v.string())),
     sharedWithUserIds: v.optional(v.array(v.id('users'))),
     communityId: v.optional(v.id('communities')),
     requiresRsvp: v.optional(v.boolean()),
@@ -131,6 +135,8 @@ export const create = mutation({
     sharedWithFamilyMemberIds: v.optional(v.array(v.string())),
     // FIXED: file attachments (max 2 enforced here)
     attachments: v.optional(v.array(attachmentObject)),
+    // Reminder offsets in minutes before event start
+    reminders: v.optional(v.array(v.number())),
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
@@ -169,15 +175,23 @@ export const update = mutation({
     startTime: v.optional(v.number()),
     endTime: v.optional(v.number()),
     allDay: v.optional(v.boolean()),
+    isRecurring: v.optional(v.boolean()),
+    recurringPattern: v.optional(v.string()),
     category: v.optional(v.string()),
     location: v.optional(v.string()),
     locationUrl: v.optional(v.string()),
     onlineUrl: v.optional(v.string()),
     groupId: v.optional(v.id('spaces')),
+    // FIXED: allow edit flows to preserve/update existing event sharing fields
+    participants: v.optional(v.array(v.string())),
     sharedWithUserIds: v.optional(v.array(v.id('users'))),
+    allFamily: v.optional(v.boolean()),
+    sharedWithFamilyMemberIds: v.optional(v.array(v.string())),
     requiresRsvp: v.optional(v.boolean()),
     // FIXED: file attachments (max 2; backend diffs and deletes removed files from storage)
     attachments: v.optional(v.array(attachmentObject)),
+    // Reminder offsets in minutes before event start
+    reminders: v.optional(v.array(v.number())),
   },
   handler: async (ctx, { id, attachments, ...fields }) => {
     const userId = await getAuthUserId(ctx);

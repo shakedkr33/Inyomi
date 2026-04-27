@@ -75,6 +75,9 @@ type Item = {
   rsvpStatus?: 'none' | 'yes' | 'no' | 'maybe';
   communityId?: string; // set only for community events — used to route to event detail
   personalTaskSummary?: string; // set when current user has assigned tasks in this event
+  isRecurring?: boolean;
+  recurringPattern?: string;
+  reminders?: number[];
   // FIXED: linkedEventId set on linked shared events → routes to linked-event/[id] detail
   linkedEventId?: string;
 };
@@ -220,6 +223,7 @@ export default function HomeScreen() {
 
   // ── Event detail sheet ─────────────────────────────────────────────────────
   const [selectedEvent, setSelectedEvent] = useState<EventItem | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [isEventSheetVisible, setIsEventSheetVisible] = useState(false);
 
   // ── Navigation app picker ──────────────────────────────────────────────────
@@ -236,12 +240,17 @@ export default function HomeScreen() {
   const [showAllUndated, setShowAllUndated] = useState(false);
 
   const openEventSheet = (item: Item) => {
-    setSelectedEvent(item as EventItem);
+    setSelectedEvent({
+      ...(item as EventItem),
+      canEdit: item.linkedEventId ? false : undefined,
+    });
+    setSelectedEventId(item.linkedEventId ? null : item.id);
     setIsEventSheetVisible(true);
   };
   const closeEventSheet = () => {
     setIsEventSheetVisible(false);
     setSelectedEvent(null);
+    setSelectedEventId(null);
   };
 
   const dateScrollRef = useRef<ScrollView>(null);
@@ -387,6 +396,8 @@ export default function HomeScreen() {
         groupName: ev.communityName,
         communityId: ev.communityId,
         personalTaskSummary,
+        isRecurring: undefined,
+        recurringPattern: undefined,
       };
     });
   }, [communityEvents, assignedEventTasks]);
@@ -443,6 +454,9 @@ export default function HomeScreen() {
         assigneeColor: '#36a9e2',
         completed: false,
         allDay: ev.allDay,
+        isRecurring: ev.isRecurring,
+        recurringPattern: ev.recurringPattern,
+        reminders: (ev as { reminders?: number[] }).reminders,
       })),
     [personalEventData]
   );
@@ -489,14 +503,37 @@ export default function HomeScreen() {
   const allDayEvents = useMemo(() => {
     const communityAllDay = communityEventItems
       .filter((i) => i.allDay)
-      .map((i) => ({ id: i.id, title: i.title, iconColor: i.iconColor, groupName: i.groupName }));
+      .map((i) => ({
+        id: i.id,
+        title: i.title,
+        iconColor: i.iconColor,
+        groupName: i.groupName,
+        isRecurring: undefined,
+        recurringPattern: undefined,
+        linkedEventId: i.linkedEventId,
+      }));
     const personalAllDay = personalEventItems
       .filter((i) => i.allDay)
-      .map((i) => ({ id: i.id, title: i.title, iconColor: i.iconColor, groupName: undefined }));
+      .map((i) => ({
+        id: i.id,
+        title: i.title,
+        iconColor: i.iconColor,
+        groupName: undefined,
+        isRecurring: i.isRecurring,
+        recurringPattern: i.recurringPattern,
+        reminders: i.reminders,
+      }));
     // FIXED: include linked all-day events in all-day strip
     const linkedAllDay = linkedEventItems
       .filter((i) => i.allDay)
-      .map((i) => ({ id: i.id, title: i.title, iconColor: i.iconColor, groupName: i.groupName }));
+      .map((i) => ({
+        id: i.id,
+        title: i.title,
+        iconColor: i.iconColor,
+        groupName: i.groupName,
+        isRecurring: undefined,
+        recurringPattern: undefined,
+      }));
     return [...communityAllDay, ...personalAllDay, ...linkedAllDay];
   }, [communityEventItems, personalEventItems, linkedEventItems]);
 
@@ -636,11 +673,8 @@ export default function HomeScreen() {
         params: { id: item.id },
       });
     } else if (item.communityId) {
-      // Community events → navigate directly to full event detail screen
-      router.push({
-        pathname: '/(authenticated)/event/[id]',
-        params: { id: item.id },
-      });
+      // Community events → open the standard event detail bottom sheet
+      openEventSheet(item);
     } else if (item.linkedEventId) {
       // FIXED: linked (shared) events → navigate to read-only linked-event detail
       router.push({
@@ -1358,6 +1392,10 @@ export default function HomeScreen() {
                         completed: false,
                         allDay: true,
                         groupName: ev.groupName,
+                        isRecurring: ev.isRecurring,
+                        recurringPattern: ev.recurringPattern,
+                        reminders: ev.reminders,
+                        linkedEventId: ev.linkedEventId,
                       })
                     }
                     accessible={true}
@@ -2168,6 +2206,7 @@ export default function HomeScreen() {
       {/* ── Event Detail Sheet ──────────────────────────────────────────────── */}
       <EventDetailsBottomSheet
         event={selectedEvent}
+        eventId={selectedEventId}
         visible={isEventSheetVisible}
         onClose={closeEventSheet}
         onNavigate={handleOpenNavPicker}

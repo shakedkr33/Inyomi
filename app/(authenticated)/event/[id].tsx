@@ -8,6 +8,7 @@ import {
   Alert,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   Share,
@@ -47,6 +48,44 @@ function formatTime(ts: number): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function formatFileSize(sizeBytes: number): string {
+  if (sizeBytes <= 0) return '';
+  if (sizeBytes < 1024 * 1024) {
+    return `${Math.round(sizeBytes / 1024)}KB`;
+  }
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function formatRecurrenceLabel(pattern: string | undefined): string {
+  if (pattern === 'daily') return 'כל יום';
+  if (pattern === 'weekly') return 'כל שבוע';
+  if (pattern === 'monthly') return 'כל חודש';
+  if (pattern === 'yearly') return 'כל שנה';
+  if (pattern === 'custom') return 'מותאם אישית';
+  return 'ללא';
+}
+
+function formatReminderLabel(offsetMinutes: number): string {
+  if (offsetMinutes === 0) return 'תזכורת: בזמן האירוע';
+  if (offsetMinutes === 60) return 'תזכורת: שעה לפני האירוע';
+  if (offsetMinutes === 1440) return 'תזכורת: יום לפני האירוע';
+  if (offsetMinutes % 1440 === 0) {
+    return `תזכורת: ${offsetMinutes / 1440} ימים לפני האירוע`;
+  }
+  if (offsetMinutes % 60 === 0) {
+    return `תזכורת: ${offsetMinutes / 60} שעות לפני האירוע`;
+  }
+  return `תזכורת: ${offsetMinutes} דקות לפני האירוע`;
+}
+
+function getReminderLabels(eventLike: unknown): string[] {
+  const reminders = (eventLike as { reminders?: unknown }).reminders;
+  if (!Array.isArray(reminders) || reminders.length === 0) return [];
+  return reminders
+    .filter((r): r is number => typeof r === 'number')
+    .map(formatReminderLabel);
 }
 
 // ─── RSVP Options (module-level to avoid recreating in render) ────────────────
@@ -260,6 +299,25 @@ export default function EventDetailScreen() {
     setTimeout(() => { doShare(); }, 300);
   }, [event, eventId, createShareLinkMutation]);
 
+  // FIXED: make saved event addresses tappable without changing stored data.
+  const handleOpenLocation = useCallback(() => {
+    const location = event?.location?.trim();
+    if (!location) return;
+
+    const encodedLocation = encodeURIComponent(location);
+    const primaryUrl =
+      Platform.OS === 'ios'
+        ? `maps://?q=${encodedLocation}`
+        : `geo:0,0?q=${encodedLocation}`;
+    const fallbackUrl = `https://maps.google.com/?q=${encodedLocation}`;
+
+    Linking.openURL(primaryUrl).catch(() => {
+      Linking.openURL(fallbackUrl).catch(() => {
+        Alert.alert('שגיאה', 'לא ניתן לפתוח את המיקום');
+      });
+    });
+  }, [event?.location]);
+
   const overflowItems = useMemo<OverflowItem[]>(() => {
     const items: OverflowItem[] = [
       {
@@ -364,6 +422,15 @@ export default function EventDetailScreen() {
   const maybeCount = rsvps?.filter((r) => r.status === 'maybe').length ?? 0;
   const noCount = rsvps?.filter((r) => r.status === 'no').length ?? 0;
   const hasAnyRsvps = yesCount > 0 || maybeCount > 0 || noCount > 0;
+  const participantNames = (event.participants ?? [])
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  const hasParticipants = participantNames.length > 0;
+  const recurrenceLabel =
+    event.isRecurring === true
+      ? formatRecurrenceLabel(event.recurringPattern)
+      : 'ללא';
+  const reminderLabels = getReminderLabels(event);
 
   // Local variable to satisfy TypeScript in closures (event.onlineUrl may be undefined)
   const onlineUrl = event.onlineUrl;
@@ -480,12 +547,18 @@ export default function EventDetailScreen() {
             </View>
           )}
 
-          {/* Location — address text (display-only for MVP) */}
+          {/* Location — address text */}
           {event.location ? (
-            <View style={styles.detailRow}>
+            <TouchableOpacity
+              style={styles.detailRow}
+              onPress={handleOpenLocation}
+              accessible
+              accessibilityRole="link"
+              accessibilityLabel="פתח מיקום במפות"
+            >
               <Ionicons name="location-outline" size={18} color={PRIMARY} />
-              <Text style={styles.detailText}>{event.location}</Text>
-            </View>
+              <Text style={styles.linkText}>{event.location}</Text>
+            </TouchableOpacity>
           ) : null}
 
           {/* Online URL — meeting/video link */}
@@ -505,14 +578,78 @@ export default function EventDetailScreen() {
             </View>
           ) : null}
 
-          {/* Description */}
+          {/* Description as notes/details */}
           {event.description ? (
             <>
               <View style={styles.separator} />
+              <Text style={styles.descriptionLabel}>הערות</Text>
               <Text style={styles.descriptionText}>{event.description}</Text>
             </>
           ) : null}
         </View>
+
+        {/* ── Scheduling */}
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>תזמון</Text>
+          <View style={styles.scheduleRow}>
+            <Ionicons name="repeat-outline" size={18} color={PRIMARY} />
+            <Text style={styles.scheduleText}>
+              {`אירוע חוזר: ${recurrenceLabel}`}
+            </Text>
+          </View>
+          {reminderLabels.length > 0 ? (
+            <View style={styles.reminderRows}>
+              {reminderLabels.map((label) => (
+                <View key={label} style={styles.reminderDisplayRow}>
+                  <Ionicons
+                    name="notifications-outline"
+                    size={16}
+                    color={PRIMARY}
+                  />
+                  <Text style={styles.reminderDisplayText}>{label}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </View>
+
+        {/* ── Attachments */}
+        {event.attachments && event.attachments.length > 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>קבצים מצורפים</Text>
+            <View style={styles.attachmentsList}>
+              {event.attachments.map((attachment) => {
+                const sizeLabel = formatFileSize(attachment.sizeBytes);
+                return (
+                  <View
+                    key={attachment.storageId}
+                    style={styles.attachmentRow}
+                  >
+                    <Ionicons
+                      name={
+                        attachment.mimeType.startsWith('image/')
+                          ? 'image-outline'
+                          : 'document-outline'
+                      }
+                      size={20}
+                      color={PRIMARY}
+                    />
+                    <View style={styles.attachmentContent}>
+                      <Text style={styles.attachmentName} numberOfLines={1}>
+                        {attachment.displayName || attachment.originalName}
+                      </Text>
+                      <Text style={styles.attachmentMeta} numberOfLines={1}>
+                        {[attachment.mimeType, sizeLabel]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
 
         {/* ── Section 2: RSVP / passive state */}
         {
@@ -695,32 +832,43 @@ export default function EventDetailScreen() {
         {/* ── Section 4: משתתפים */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>משתתפים</Text>
-          {hasAnyRsvps ? (
+          {hasAnyRsvps || hasParticipants ? (
             <>
-              <View style={styles.pillsRow}>
-                {yesCount > 0 && (
-                  <View style={[styles.pill, styles.pillYes]}>
-                    <Text
-                      style={[styles.pillText, styles.pillYesText]}
-                    >{`מגיעים (${yesCount})`}</Text>
-                  </View>
-                )}
-                {maybeCount > 0 && (
-                  <View style={[styles.pill, styles.pillMaybe]}>
-                    <Text
-                      style={[styles.pillText, styles.pillMaybeText]}
-                    >{`אולי (${maybeCount})`}</Text>
-                  </View>
-                )}
-                {noCount > 0 && (
-                  <View style={[styles.pill, styles.pillNo]}>
-                    <Text
-                      style={[styles.pillText, styles.pillNoText]}
-                    >{`לא מגיעים (${noCount})`}</Text>
-                  </View>
-                )}
-              </View>
-              {/* TODO: show participant names when a denormalized query is available */}
+              {hasAnyRsvps ? (
+                <View style={styles.pillsRow}>
+                  {yesCount > 0 && (
+                    <View style={[styles.pill, styles.pillYes]}>
+                      <Text
+                        style={[styles.pillText, styles.pillYesText]}
+                      >{`מגיעים (${yesCount})`}</Text>
+                    </View>
+                  )}
+                  {maybeCount > 0 && (
+                    <View style={[styles.pill, styles.pillMaybe]}>
+                      <Text
+                        style={[styles.pillText, styles.pillMaybeText]}
+                      >{`אולי (${maybeCount})`}</Text>
+                    </View>
+                  )}
+                  {noCount > 0 && (
+                    <View style={[styles.pill, styles.pillNo]}>
+                      <Text
+                        style={[styles.pillText, styles.pillNoText]}
+                      >{`לא מגיעים (${noCount})`}</Text>
+                    </View>
+                  )}
+                </View>
+              ) : null}
+
+              {hasParticipants ? (
+                <View style={styles.participantChips}>
+                  {participantNames.map((name) => (
+                    <View key={name} style={styles.participantChip}>
+                      <Text style={styles.participantChipText}>{name}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
             </>
           ) : (
             <View style={styles.emptyParticipants}>
@@ -914,6 +1062,8 @@ const styles = StyleSheet.create({
   linkText: {
     fontSize: 14,
     color: PRIMARY,
+    textAlign: 'right',
+    flex: 1,
   },
   separator: {
     height: 1,
@@ -924,6 +1074,72 @@ const styles = StyleSheet.create({
     color: '#374151',
     textAlign: 'right',
     lineHeight: 22,
+  },
+  descriptionLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+    textAlign: 'right',
+  },
+  scheduleRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 10,
+  },
+  scheduleText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#374151',
+    textAlign: 'right',
+    fontWeight: '600',
+  },
+  reminderRows: {
+    gap: 8,
+  },
+  reminderDisplayRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#e8f5fd',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  reminderDisplayText: {
+    flex: 1,
+    fontSize: 14,
+    color: PRIMARY,
+    textAlign: 'right',
+    fontWeight: '600',
+  },
+
+  // ── Attachments
+  attachmentsList: {
+    gap: 8,
+  },
+  attachmentRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    padding: 12,
+  },
+  attachmentContent: {
+    flex: 1,
+    alignItems: 'flex-end',
+    gap: 2,
+  },
+  attachmentName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+    textAlign: 'right',
+  },
+  attachmentMeta: {
+    fontSize: 12,
+    color: '#9ca3af',
+    textAlign: 'right',
   },
 
   // ── RSVP
@@ -1085,6 +1301,22 @@ const styles = StyleSheet.create({
   pillMaybeText: { color: '#ca8a04' },
   pillNo: { backgroundColor: '#fee2e2' },
   pillNoText: { color: '#dc2626' },
+  participantChips: {
+    flexDirection: 'row-reverse',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  participantChip: {
+    borderRadius: 999,
+    backgroundColor: '#e8f5fd',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  participantChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: PRIMARY,
+  },
   emptyParticipants: {
     alignItems: 'center',
     gap: 8,

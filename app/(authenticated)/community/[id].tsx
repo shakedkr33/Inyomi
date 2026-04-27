@@ -8,6 +8,7 @@ import {
   Alert,
   Animated,
   FlatList,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -19,6 +20,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { EventDetailsBottomSheet } from '@/components/EventDetailsBottomSheet';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 
@@ -287,6 +289,7 @@ interface EventCardProps {
   currentUserId?: Id<'users'>;
   isCancelled?: boolean;
   taskSummary?: TaskSummary;
+  onOpenDetails: (eventId: Id<'events'>) => void;
 }
 
 function EventCard({
@@ -295,8 +298,8 @@ function EventCard({
   currentUserId,
   isCancelled,
   taskSummary,
+  onOpenDetails,
 }: EventCardProps) {
-  const router = useRouter();
   const color = getEventColor(event._id);
   const isCreator =
     currentUserId !== undefined && event.createdBy === currentUserId;
@@ -328,11 +331,7 @@ function EventCard({
       onPress={
         isCancelled
           ? undefined
-          : () =>
-              router.push({
-                pathname: '/(authenticated)/event/[id]',
-                params: { id: event._id },
-              })
+          : () => onOpenDetails(event._id)
       }
       accessible
       accessibilityRole="button"
@@ -407,6 +406,7 @@ interface EventRowProps {
   event: EventDoc;
   rsvpStatus: RsvpStatus;
   onRsvpPress: (eventId: Id<'events'>) => void;
+  onOpenDetails: (eventId: Id<'events'>) => void;
   isCancelled?: boolean;
   cancelReason?: string;
   taskSummary?: TaskSummary;
@@ -416,6 +416,7 @@ function EventRow({
   event,
   rsvpStatus,
   onRsvpPress,
+  onOpenDetails,
   isCancelled,
   cancelReason,
   taskSummary,
@@ -443,12 +444,16 @@ function EventRow({
   const showCancelledBadge = isCancelled;
 
   return (
-    <View
+    <Pressable
       style={[
         styles.eventRow,
         past && { opacity: 0.45 },
         isCancelled && { opacity: 0.5 },
       ]}
+      onPress={isCancelled ? undefined : () => onOpenDetails(event._id)}
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={event.title}
     >
       <View style={styles.eventRowLeft}>
         <Text style={styles.eventRowDate}>
@@ -529,7 +534,7 @@ function EventRow({
           </Text>
         ) : null}
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -770,6 +775,7 @@ interface TabAllProps {
   onToggleTask: (id: Id<'tasks'>) => void;
   onSeeMoreEvents: () => void;
   onSeeMoreReminders: () => void;
+  onOpenEventDetails: (eventId: Id<'events'>) => void;
   // Persisted state lifted to parent so it survives tab switches
   hiddenReminderIds: Set<string>;
   setHiddenReminderIds: React.Dispatch<React.SetStateAction<Set<string>>>;
@@ -787,6 +793,7 @@ function TabAll({
   communityId,
   rsvpMap,
   onToggleTask,
+  onOpenEventDetails,
   hiddenReminderIds,
   setHiddenReminderIds,
   localCompletedIds,
@@ -1011,6 +1018,7 @@ function TabAll({
                 rsvpStatus={rsvpMap[ev._id] ?? 'none'}
                 currentUserId={currentUserId}
                 taskSummary={taskCountsMap[ev._id]}
+                onOpenDetails={onOpenEventDetails}
               />
             ))}
           </View>
@@ -1121,6 +1129,7 @@ function TabAll({
                 rsvpStatus={rsvpMap[ev._id] ?? 'none'}
                 currentUserId={currentUserId}
                 taskSummary={taskCountsMap[ev._id]}
+                onOpenDetails={onOpenEventDetails}
               />
             ))}
           </View>
@@ -1148,6 +1157,7 @@ interface TabEventsProps {
   communityId: Id<'communities'>;
   rsvpMap: Record<string, RsvpStatus>;
   onRsvpPress: (eventId: Id<'events'>) => void;
+  onOpenEventDetails: (eventId: Id<'events'>) => void;
   selectedMonth: Date;
   onMonthChange: (d: Date) => void;
   searchQuery: string;
@@ -1159,6 +1169,7 @@ function TabEvents({
   communityId,
   rsvpMap,
   onRsvpPress,
+  onOpenEventDetails,
   selectedMonth,
   onMonthChange,
   searchQuery,
@@ -1261,10 +1272,11 @@ function TabEvents({
         event={item}
         rsvpStatus={rsvpMap[item._id] ?? 'none'}
         onRsvpPress={onRsvpPress}
+        onOpenDetails={onOpenEventDetails}
         taskSummary={taskCountsMap[item._id]}
       />
     ),
-    [rsvpMap, onRsvpPress, taskCountsMap]
+    [rsvpMap, onRsvpPress, onOpenEventDetails, taskCountsMap]
   );
 
   const keyExtractor = useCallback((item: EventDoc) => item._id, []);
@@ -1348,6 +1360,7 @@ function TabEvents({
                       event={ev}
                       rsvpStatus="none"
                       onRsvpPress={() => {}}
+                      onOpenDetails={onOpenEventDetails}
                       isCancelled
                       cancelReason={ev.cancelReason}
                     />
@@ -1553,6 +1566,9 @@ export default function CommunityDetailScreen() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [rsvpSheet, setRsvpSheet] = useState<Id<'events'> | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<Id<'events'> | null>(
+    null
+  );
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [descriptionCanExpand, setDescriptionCanExpand] = useState(false);
   const menuBtnRef = useRef<View>(null);
@@ -1604,6 +1620,21 @@ export default function CommunityDetailScreen() {
     },
     [rsvpSheet, upsertRsvp]
   );
+
+  const handleOpenEventDetails = useCallback((eventId: Id<'events'>) => {
+    setSelectedEventId(eventId);
+  }, []);
+
+  const handleCloseEventDetails = useCallback(() => {
+    setSelectedEventId(null);
+  }, []);
+
+  const handleNavigateToLocation = useCallback((location: string) => {
+    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
+    Linking.openURL(url).catch(() =>
+      Alert.alert('שגיאה', 'לא ניתן לפתוח ניווט כרגע')
+    );
+  }, []);
 
   const handleToggleTask = useCallback(
     (taskId: Id<'tasks'>) => {
@@ -1930,6 +1961,7 @@ export default function CommunityDetailScreen() {
           communityId={communityId}
           rsvpMap={rsvpMap}
           onToggleTask={handleToggleTask}
+          onOpenEventDetails={handleOpenEventDetails}
           onSeeMoreEvents={handleSeeMoreEvents}
           onSeeMoreReminders={handleSeeMoreReminders}
           hiddenReminderIds={hiddenReminderIds}
@@ -1949,6 +1981,7 @@ export default function CommunityDetailScreen() {
           communityId={communityId}
           rsvpMap={rsvpMap}
           onRsvpPress={setRsvpSheet}
+          onOpenEventDetails={handleOpenEventDetails}
           selectedMonth={selectedMonth}
           onMonthChange={setSelectedMonth}
           searchQuery={searchQuery}
@@ -1974,6 +2007,13 @@ export default function CommunityDetailScreen() {
         currentStatus={rsvpSheet ? (rsvpMap[rsvpSheet] ?? 'none') : 'none'}
         onSelect={handleRsvpSelect}
         onClose={() => setRsvpSheet(null)}
+      />
+
+      <EventDetailsBottomSheet
+        eventId={selectedEventId}
+        visible={selectedEventId !== null}
+        onClose={handleCloseEventDetails}
+        onNavigate={handleNavigateToLocation}
       />
 
       <OverflowMenu

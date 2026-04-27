@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -19,6 +20,8 @@ import ReAnimated, {
   withSpring,
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import type { EventItem } from '@/components/EventDetailsBottomSheet';
+import { EventDetailsBottomSheet } from '@/components/EventDetailsBottomSheet';
 import { useNotifications } from '@/contexts/NotificationsContext';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
@@ -76,7 +79,8 @@ interface CalendarEvent {
   location?: string;
   icon?: string;
   cancelled?: boolean;
-  assigneeColors: string[];
+  assigneeColors?: string[];
+  sourceType?: 'event' | 'linked';
 }
 
 interface BirthdayInfo {
@@ -449,6 +453,8 @@ export default function CalendarScreen(): React.JSX.Element {
       ? (segmentContainerWidth - SEGMENT_PAD * 2) / 2
       : 0;
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<EventItem | null>(null);
   const {
     unseenCount,
     markAllSeen,
@@ -462,6 +468,37 @@ export default function CalendarScreen(): React.JSX.Element {
     if (!notifLoading) {
       markAllSeen();
     }
+  };
+
+  const handleOpenEventDetails = (event: CalendarEvent): void => {
+    if (event.sourceType === 'linked') {
+      setSelectedEvent({
+        id: event.id,
+        time: event.time,
+        title: event.title,
+        location: event.location,
+        type: 'event',
+        iconColor: event.categoryColor,
+        completed: false,
+        canEdit: false,
+      });
+      setSelectedEventId(null);
+    } else {
+      setSelectedEvent(null);
+      setSelectedEventId(event.id);
+    }
+  };
+
+  const closeEventSheet = (): void => {
+    setSelectedEventId(null);
+    setSelectedEvent(null);
+  };
+
+  const handleNavigateToLocation = (location: string): void => {
+    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
+    Linking.openURL(url).catch(() =>
+      Alert.alert('שגיאה', 'לא ניתן לפתוח ניווט כרגע')
+    );
   };
 
   const today = useMemo(() => new Date(), []);
@@ -519,6 +556,7 @@ export default function CalendarScreen(): React.JSX.Element {
         category: 'אישי',
         categoryColor: PRIMARY_BLUE,
         assigneeColors: [],
+        sourceType: 'event',
       });
     }
     // FIXED: add linked event dots with a distinct teal-blue shade
@@ -537,6 +575,7 @@ export default function CalendarScreen(): React.JSX.Element {
         categoryColor: '#0284c7',
         assigneeColors: [],
         cancelled: ev.sourceStatus === 'cancelled',
+        sourceType: 'linked',
       });
     }
     return generateCalendarGrid(displayYear, displayMonth, eventsByDay);
@@ -802,6 +841,7 @@ export default function CalendarScreen(): React.JSX.Element {
           location: event.location ?? '',
           icon: 'event',
           cancelled: false,
+          sourceType: 'event',
         });
       }
 
@@ -857,6 +897,7 @@ export default function CalendarScreen(): React.JSX.Element {
         location: event.location ?? '',
         icon: 'event',
         cancelled: false,
+        sourceType: 'event',
       });
     }
 
@@ -1057,7 +1098,10 @@ export default function CalendarScreen(): React.JSX.Element {
             style={styles.content}
             showsVerticalScrollIndicator={false}
           >
-            <TimelineView data={timelineData} />
+            <TimelineView
+              data={timelineData}
+              onEventPress={handleOpenEventDetails}
+            />
           </ScrollView>
         ) : (
           <View style={styles.content}>
@@ -1091,6 +1135,7 @@ export default function CalendarScreen(): React.JSX.Element {
                   year={displayYear}
                   month={displayMonth}
                   anim={listAnim}
+                  onEventPress={handleOpenEventDetails}
                   onClose={() => setSelectedDay(null)}
                 />
               )}
@@ -1102,6 +1147,13 @@ export default function CalendarScreen(): React.JSX.Element {
         <NotificationsDrawer
           isOpen={isNotificationsOpen}
           onClose={() => setIsNotificationsOpen(false)}
+        />
+        <EventDetailsBottomSheet
+          event={selectedEvent}
+          eventId={selectedEventId}
+          visible={selectedEventId !== null || selectedEvent !== null}
+          onClose={closeEventSheet}
+          onNavigate={handleNavigateToLocation}
         />
       </View>
     </SafeAreaView>
@@ -1321,6 +1373,7 @@ interface DayEventsListProps {
   year: number;
   month: number;
   anim: Animated.Value;
+  onEventPress: (event: CalendarEvent) => void;
   onClose: () => void;
 }
 
@@ -1329,6 +1382,7 @@ function DayEventsList({
   year,
   month,
   anim,
+  onEventPress,
   onClose,
 }: DayEventsListProps): React.JSX.Element {
   const router = useRouter();
@@ -1421,9 +1475,7 @@ function DayEventsList({
           <Pressable
             key={event.id}
             style={dStyles.card}
-            onPress={() =>
-              router.push(`/(authenticated)/event/${event.id}` as never)
-            }
+            onPress={() => onEventPress(event)}
             accessible={true}
             accessibilityRole="button"
             accessibilityLabel={`${event.title}, ${event.time}, ${duration} דקות`}
@@ -1451,9 +1503,9 @@ function DayEventsList({
                   <Text style={dStyles.locationText}>{event.location}</Text>
                 </View>
               )}
-              {event.assigneeColors.length > 0 && (
+              {(event.assigneeColors?.length ?? 0) > 0 && (
                 <View style={dStyles.assigneeDots}>
-                  {event.assigneeColors.slice(0, 4).map((color) => (
+                  {event.assigneeColors?.slice(0, 4).map((color) => (
                     <View
                       key={color}
                       style={[dStyles.assigneeDot, { backgroundColor: color }]}
@@ -1494,8 +1546,10 @@ function DayEventsList({
 // ===== Timeline View =====
 function TimelineView({
   data,
+  onEventPress,
 }: {
   data: typeof MOCK_TIMELINE_DATA;
+  onEventPress: (event: CalendarEvent) => void;
 }): React.JSX.Element {
   if (data.length === 0) {
     return (
@@ -1572,6 +1626,7 @@ function TimelineView({
                       styles.eventCard,
                       event.cancelled && styles.eventCardCancelled,
                     ]}
+                    onPress={() => onEventPress(event)}
                     accessible={true}
                     accessibilityRole="button"
                     accessibilityLabel={`${event.title}, ${event.time}`}

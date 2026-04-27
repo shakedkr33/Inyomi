@@ -72,6 +72,7 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
   const createEvent = useMutation(api.events.create);
   const createEventTasks = useMutation(api.eventTasks.createBatch);
   const setTaskAssignee = useMutation(api.eventTasks.setAssignee);
+  const generateUploadUrl = useMutation(api.events.generateUploadUrl);
   const spaceId = useQuery(api.users.getMySpace);
   const currentUserId = useQuery(api.users.getMyId) ?? undefined;
   const communityMembersData = useQuery(api.communities.getCommunityMembers, {
@@ -118,7 +119,7 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
           locationType === 'address' ? location.trim() || undefined : undefined,
         onlineUrl:
           locationType === 'link' ? location.trim() || undefined : undefined,
-        spaceId: spaceId ?? undefined,
+        spaceId: (spaceId as Id<'spaces'> | null) ?? undefined,
         communityId: communityId as Id<'communities'>,
         requiresRsvp: rsvpRequired,
       };
@@ -184,6 +185,129 @@ function CommunityEventForm({ communityId }: { communityId: string }) {
     day: 'numeric',
     month: 'long',
   });
+
+  const communityTaskParticipants =
+    communityMembers.map((member) => ({
+      id: member.userId,
+      name: member.fullName,
+      email: member.email,
+      color: '#36a9e2',
+    })) ?? [];
+
+  const handleUnifiedCommunitySave = useCallback(
+    async (data: EventData): Promise<string> => {
+      if (!spaceId && !communityId) {
+        Alert.alert('שגיאה', 'לא נמצא מרחב פעיל. נסה להתנתק ולהתחבר מחדש.');
+        throw new Error('לא נמצא מרחב פעיל');
+      }
+
+      const baseDate = new Date(data.date);
+      const startTs =
+        data.isAllDay || !data.startTime
+          ? new Date(data.date).setHours(0, 0, 0, 0)
+          : (() => {
+              const [hStr, mStr] = data.startTime.split(':');
+              const d = new Date(baseDate);
+              d.setHours(Number(hStr ?? '9'), Number(mStr ?? '0'), 0, 0);
+              return d.getTime();
+            })();
+      const endTs =
+        data.isAllDay || !data.endTime
+          ? new Date(data.date).setHours(23, 59, 59, 999)
+          : (() => {
+              const [hStr, mStr] = data.endTime.split(':');
+              const endBase =
+                data.endDate != null ? new Date(data.endDate) : baseDate;
+              const d = new Date(
+                endBase.getFullYear(),
+                endBase.getMonth(),
+                endBase.getDate()
+              );
+              d.setHours(Number(hStr ?? '10'), Number(mStr ?? '0'), 0, 0);
+              return d.getTime();
+            })();
+      const resolvedAttachments = await uploadDraftAttachments(
+        data.attachments ?? [],
+        generateUploadUrl
+      );
+
+      const eventId = await createEvent({
+        // FIXED: community creation now uses the shared base EventScreen form
+        title: data.title.trim(),
+        description: data.notes?.trim() || undefined,
+        startTime: startTs,
+        endTime: endTs,
+        allDay: data.isAllDay || undefined,
+        location: data.location?.trim() || undefined,
+        onlineUrl: data.onlineUrl?.trim() || undefined,
+        spaceId: (spaceId as Id<'spaces'> | null) ?? undefined,
+        communityId: communityId as Id<'communities'>,
+        requiresRsvp: rsvpRequired,
+        attachments:
+          resolvedAttachments.length > 0 ? resolvedAttachments : undefined,
+        reminders: data.remindersEnabled
+          ? data.reminders.map((r) => r.offsetMinutes)
+          : [],
+      });
+
+      const tasksToCreate = data.tasks.filter(
+        (task) => task.title.trim().length > 0
+      );
+      if (tasksToCreate.length > 0) {
+        const taskIds = await createEventTasks({
+          eventId,
+          tasks: tasksToCreate.map((task) => ({ title: task.title.trim() })),
+        });
+
+        for (let i = 0; i < tasksToCreate.length; i++) {
+          const task = tasksToCreate[i];
+          const taskId = taskIds[i];
+          const assigneeUserId =
+            task.assignedParticipantIds?.[0] ?? task.assigneeId;
+          if (taskId && assigneeUserId) {
+            await setTaskAssignee({
+              id: taskId as Id<'eventTasks'>,
+              assignee: {
+                type: 'user',
+                userId: assigneeUserId as Id<'users'>,
+              },
+            }).catch(() => {});
+          }
+        }
+      }
+
+      router.replace(
+        `/(authenticated)/community/${communityId}` as Parameters<
+          typeof router.replace
+        >[0]
+      );
+      return eventId;
+    },
+    [
+      communityId,
+      createEvent,
+      createEventTasks,
+      generateUploadUrl,
+      router,
+      rsvpRequired,
+      setTaskAssignee,
+      spaceId,
+    ]
+  );
+
+  return (
+    <EventScreen
+      mode="create"
+      context="community"
+      onSave={handleUnifiedCommunitySave}
+      showParticipants={false}
+      taskParticipants={communityTaskParticipants}
+      showRsvpSection={true}
+      rsvpRequired={rsvpRequired}
+      onRsvpRequiredChange={setRsvpRequired}
+      showSuccessSheet={false}
+    />
+  );
 
   return (
     <SafeAreaView style={s.safe} edges={['top']}>
@@ -824,6 +948,10 @@ export default function NewEventScreen(): React.JSX.Element {
   // FIXED: added generateUploadUrl + upload loop before createEvent for file attachments
   const createEvent = useMutation(api.events.create);
   const generateUploadUrl = useMutation(api.events.generateUploadUrl);
+  // FIXED: persist personal event checklist tasks created in EventScreen
+  const createEventTasks = useMutation(api.eventTasks.createBatch);
+  const setTaskAssignee = useMutation(api.eventTasks.setAssignee);
+  const toggleEventTaskCompleted = useMutation(api.eventTasks.toggleCompleted);
   const spaceId = useQuery(api.users.getMySpace);
 
   const selectedDate = selectedDateParam ? Number(selectedDateParam) : undefined;
@@ -881,12 +1009,22 @@ export default function NewEventScreen(): React.JSX.Element {
       // FIXED: return eventId so EventScreen can show the post-save success/share sheet
       const newEventId = await createEvent({
         title: data.title,
+        description: data.notes?.trim() || undefined,
         startTime: startMs,
         endTime: endMs,
         allDay: data.isAllDay || undefined,
+        isRecurring: data.recurrence !== 'none' || undefined,
+        recurringPattern:
+          data.recurrence !== 'none' ? data.recurrence : undefined,
         spaceId: resolvedSpaceId,
         location: data.location?.trim() || undefined,
         onlineUrl: data.onlineUrl?.trim() || undefined,
+        participants:
+          data.participants.length > 0
+            ? data.participants
+                .map((participant) => participant.name.trim())
+                .filter((name) => name.length > 0)
+            : undefined,
         allFamily: data.allFamily || undefined,
         sharedWithFamilyMemberIds:
           data.sharedWithFamilyMemberIds && data.sharedWithFamilyMemberIds.length > 0
@@ -894,10 +1032,57 @@ export default function NewEventScreen(): React.JSX.Element {
             : undefined,
         attachments:
           resolvedAttachments.length > 0 ? resolvedAttachments : undefined,
+        reminders: data.remindersEnabled
+          ? data.reminders.map((r) => r.offsetMinutes)
+          : [],
       });
+
+      const tasksToCreate = data.tasks.filter(
+        (task) => task.title.trim().length > 0
+      );
+      if (tasksToCreate.length > 0) {
+        const taskIds = await createEventTasks({
+          eventId: newEventId as Id<'events'>,
+          tasks: tasksToCreate.map((task) => ({ title: task.title.trim() })),
+        });
+
+        for (let i = 0; i < tasksToCreate.length; i++) {
+          const task = tasksToCreate[i];
+          const taskId = taskIds[i];
+          if (!taskId) continue;
+
+          const assignedParticipantId =
+            task.assignedParticipantIds?.[0] ?? task.assigneeId;
+          const assignedParticipant = assignedParticipantId
+            ? data.participants.find((p) => p.id === assignedParticipantId)
+            : undefined;
+          const assignedName =
+            assignedParticipant?.name.trim() || task.assignee?.name.trim();
+
+          if (assignedName) {
+            await setTaskAssignee({
+              id: taskId as Id<'eventTasks'>,
+              assignee: { type: 'manual', name: assignedName },
+            }).catch(() => {});
+          }
+
+          if (task.completed) {
+            await toggleEventTaskCompleted({
+              id: taskId as Id<'eventTasks'>,
+            }).catch(() => {});
+          }
+        }
+      }
       return newEventId;
     },
-    [createEvent, generateUploadUrl, spaceId]
+    [
+      createEvent,
+      createEventTasks,
+      generateUploadUrl,
+      setTaskAssignee,
+      spaceId,
+      toggleEventTaskCompleted,
+    ]
   );
 
   if (communityId) {

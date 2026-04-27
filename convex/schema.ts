@@ -114,6 +114,8 @@ export default defineSchema({
     status: v.optional(v.union(v.literal('active'), v.literal('cancelled'))),
     cancelledAt: v.optional(v.number()),
     cancelReason: v.optional(v.string()),
+    // Persisted reminder offsets in minutes before event start (e.g. 0, 60, 1440)
+    reminders: v.optional(v.array(v.number())),
     // FIXED: file attachments for personal events (hard cap of 2 enforced in mutations)
     attachments: v.optional(v.array(v.object({
       storageId: v.id('_storage'),
