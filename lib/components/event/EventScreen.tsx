@@ -146,6 +146,13 @@ interface EventScreenProps {
   onRsvpRequiredChange?: (required: boolean) => void;
   showSuccessSheet?: boolean;
   /**
+   * Pre-fill all form fields on mount (used by edit screens).
+   * Applied once via useState initializer — not reactive to prop changes.
+   */
+  initialData?: Partial<EventData>;
+  /** Override the header title (e.g. "עריכת אירוע" for edit mode). */
+  customHeaderTitle?: string;
+  /**
    * Called when the user confirms save. Should call the Convex mutation.
    * Returns the new event ID so the success sheet can generate a share link.
    */
@@ -163,15 +170,20 @@ export default function EventScreen({
   rsvpRequired = false,
   onRsvpRequiredChange,
   showSuccessSheet = true,
+  initialData,
+  customHeaderTitle,
   onSave,
 }: EventScreenProps): React.JSX.Element {
   const isCreate = mode === 'create';
-  const headerTitle =
+  const defaultHeaderTitle =
     isCreate && context === 'community' ? 'יצירת אירוע קהילתי' : 'יצירת אירוע';
+  const headerTitle = customHeaderTitle ?? defaultHeaderTitle;
   // TODO: replace MOCK_EVENT with Convex query using _eventId
-  const [event, setEvent] = useState<EventData>(() =>
-    isCreate ? makeEmptyEvent(selectedDate) : MOCK_EVENT
-  );
+  const [event, setEvent] = useState<EventData>(() => {
+    const base = isCreate ? makeEmptyEvent(selectedDate) : MOCK_EVENT;
+    if (!initialData) return base;
+    return { ...base, ...initialData };
+  });
 
   // FIXED: load family members for the family sharing section in ParticipantsCard.
   // selfEntityId is the signed-in user's own entity row — excluded from the chips
@@ -188,6 +200,8 @@ export default function EventScreen({
   )
     .filter((m) => m._id !== serverFamilyContacts?.selfEntityId)
     .map((m) => ({ _id: m._id, displayName: m.displayName, color: m.color }));
+  const isEditMode = Boolean(initialData);
+  const [isDirty, setIsDirty] = useState(!isEditMode);
   const [titleError, setTitleError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -214,6 +228,7 @@ export default function EventScreen({
 
   const updateEvent = useCallback(
     (updates: Partial<EventData>) => {
+      setIsDirty(true);
       setEvent((prev) => {
         const updated = { ...prev, ...updates };
         autosave(updated);
@@ -341,8 +356,16 @@ export default function EventScreen({
 
   const confirmDiscard = (): void => {
     setDiscardOpen(false);
-    setEvent(makeEmptyEvent(selectedDate));
     setTitleError(false);
+    if (isEditMode) {
+      // Restore original saved data so the component is correct if cached.
+      // Never write to Convex — just reset local React state.
+      const base = makeEmptyEvent(selectedDate);
+      setEvent(initialData ? { ...base, ...initialData } : base);
+      setIsDirty(false);
+    } else {
+      setEvent(makeEmptyEvent(selectedDate));
+    }
     goBack();
   };
 
@@ -399,7 +422,7 @@ export default function EventScreen({
                   placeholder="שם האירוע"
                   placeholderTextColor="#94a3b8"
                   textAlign="right"
-                  autoFocus={isCreate}
+                  autoFocus={false}
                   accessible={true}
                   accessibilityLabel="שם האירוע"
                 />
@@ -490,7 +513,9 @@ export default function EventScreen({
                   onChange={(p) => {
                     const removedIds = new Set(
                       event.participants
-                        .filter((prev) => !p.some((next) => next.id === prev.id))
+                        .filter(
+                          (prev) => !p.some((next) => next.id === prev.id)
+                        )
                         .map((prev) => prev.id)
                     );
                     const tasks =
@@ -516,7 +541,9 @@ export default function EventScreen({
                         participants: p,
                         tasks,
                         // If "כולם" was on and a member is removed, turn it off
-                        allFamily: event.allFamily ? undefined : event.allFamily,
+                        allFamily: event.allFamily
+                          ? undefined
+                          : event.allFamily,
                         sharedWithFamilyMemberIds:
                           newFamilyIds.length > 0 ? newFamilyIds : undefined,
                       });
@@ -531,7 +558,8 @@ export default function EventScreen({
                     // FIXED: family member selection now syncs to event.participants for display
                     const patch: Partial<EventData> = {
                       allFamily: af || undefined,
-                      sharedWithFamilyMemberIds: ids.length > 0 ? ids : undefined,
+                      sharedWithFamilyMemberIds:
+                        ids.length > 0 ? ids : undefined,
                     };
 
                     // Keep participants that are NOT family members (external contacts/email)
@@ -607,7 +635,10 @@ export default function EventScreen({
                   <View style={s.rsvpToggleRow}>
                     <Switch
                       value={rsvpRequired}
-                      onValueChange={onRsvpRequiredChange}
+                      onValueChange={(val) => {
+                        setIsDirty(true);
+                        onRsvpRequiredChange?.(val);
+                      }}
                       trackColor={{ true: '#36a9e2', false: '#e2e8f0' }}
                       thumbColor="#fff"
                       accessible={true}
@@ -629,10 +660,13 @@ export default function EventScreen({
             <Pressable
               style={[
                 s.footerSaveBtn,
+                isEditMode && !isDirty && s.footerSaveBtnNotDirty,
                 (!event.title.trim() || isSaving) && s.footerSaveBtnDisabled,
               ]}
               onPress={handleSave}
-              disabled={!event.title.trim() || isSaving}
+              disabled={
+                !event.title.trim() || isSaving || (isEditMode && !isDirty)
+              }
               accessible={true}
               accessibilityRole="button"
               accessibilityLabel={isSaving ? 'שומר...' : 'שמור אירוע'}
@@ -640,6 +674,7 @@ export default function EventScreen({
               <Text
                 style={[
                   s.footerSaveBtnText,
+                  isEditMode && !isDirty && s.footerSaveBtnTextDisabled,
                   (!event.title.trim() || isSaving) &&
                     s.footerSaveBtnTextDisabled,
                 ]}
@@ -676,9 +711,13 @@ export default function EventScreen({
           accessible={false}
         >
           <Pressable style={s.discardBox} onPress={() => undefined}>
-            <Text style={s.discardTitle}>יציאה ללא שמירה</Text>
+            <Text style={s.discardTitle}>
+              {initialData ? 'ביטול שינויים' : 'יציאה ללא שמירה'}
+            </Text>
             <Text style={s.discardMessage}>
-              האם ברצונך למחוק את הנתונים שהכנסת?
+              {initialData
+                ? 'האם ברצונך לבטל את השינויים שביצעת?'
+                : 'האם ברצונך למחוק את הנתונים שהכנסת?'}
             </Text>
             <View style={s.discardDivider} />
             <View style={s.discardBtns}>
@@ -687,9 +726,11 @@ export default function EventScreen({
                 onPress={confirmDiscard}
                 accessible={true}
                 accessibilityRole="button"
-                accessibilityLabel="מחק וצא"
+                accessibilityLabel={initialData ? 'בטל שינויים' : 'מחק וצא'}
               >
-                <Text style={s.discardBtnDestructiveText}>מחק וצא</Text>
+                <Text style={s.discardBtnDestructiveText}>
+                  {initialData ? 'בטל שינויים' : 'מחק וצא'}
+                </Text>
               </Pressable>
               <View style={s.discardBtnDivider} />
               <Pressable
@@ -920,13 +961,16 @@ const s = StyleSheet.create({
   footerSaveBtnDisabled: {
     backgroundColor: '#e5e7eb',
   },
+  footerSaveBtnNotDirty: {
+    backgroundColor: '#d1d5db',
+  },
   footerSaveBtnText: {
     color: '#fff',
     fontWeight: '700',
     fontSize: 16,
   },
   footerSaveBtnTextDisabled: {
-    color: '#9ca3af',
+    color: '#6b7280',
   },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 16, paddingTop: 4 },

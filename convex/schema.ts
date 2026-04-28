@@ -53,7 +53,7 @@ export default defineSchema({
   // טבלת חברי משפחה (Members = Family Members)
   // ═══════════════════════════════════════════════════════
   members: defineTable({
-    userId: v.optional(v.id('users')),   // optional: pending invited contacts have no userId yet
+    userId: v.optional(v.id('users')), // optional: pending invited contacts have no userId yet
     spaceId: v.id('spaces'),
     role: v.union(v.literal('admin'), v.literal('member')),
     displayName: v.optional(v.string()),
@@ -64,18 +64,13 @@ export default defineSchema({
     // 'entity' — visible family entity (contact placeholder, child, pet)
     // Rows without this field: infer via resolveKind() in convex/members.ts
     // FIXED: kind discriminator added to separate access rows from entity rows
-    kind: v.optional(v.union(
-      v.literal('access'),
-      v.literal('entity'),
-    )),
+    kind: v.optional(v.union(v.literal('access'), v.literal('entity'))),
     // ── Family invite tracking (additive, all optional) ──────────────────────
     selectedPhoneNumber: v.optional(v.string()),
     matchedUserId: v.optional(v.id('users')),
-    inviteStatus: v.optional(v.union(
-      v.literal('none'),
-      v.literal('invited'),
-      v.literal('joined')
-    )),
+    inviteStatus: v.optional(
+      v.union(v.literal('none'), v.literal('invited'), v.literal('joined'))
+    ),
   })
     .index('by_space', ['spaceId'])
     .index('by_user', ['userId'])
@@ -113,19 +108,24 @@ export default defineSchema({
     requiresRsvp: v.optional(v.boolean()), // האם האירוע דורש אישור השתתפות
     status: v.optional(v.union(v.literal('active'), v.literal('cancelled'))),
     cancelledAt: v.optional(v.number()),
+    cancelledBy: v.optional(v.id('users')),
     cancelReason: v.optional(v.string()),
     // Persisted reminder offsets in minutes before event start (e.g. 0, 60, 1440)
     reminders: v.optional(v.array(v.number())),
     // FIXED: file attachments for personal events (hard cap of 2 enforced in mutations)
-    attachments: v.optional(v.array(v.object({
-      storageId: v.id('_storage'),
-      originalName: v.string(),
-      displayName: v.string(),
-      mimeType: v.string(),
-      sizeBytes: v.number(),
-      uploadedAt: v.number(),
-      uploadedBy: v.id('users'),
-    }))),
+    attachments: v.optional(
+      v.array(
+        v.object({
+          storageId: v.id('_storage'),
+          originalName: v.string(),
+          displayName: v.string(),
+          mimeType: v.string(),
+          sizeBytes: v.number(),
+          uploadedAt: v.number(),
+          uploadedBy: v.id('users'),
+        })
+      )
+    ),
   })
     .index('by_space_and_time', ['spaceId', 'startTime'])
     .index('by_creator', ['createdBy'])
@@ -316,14 +316,14 @@ export default defineSchema({
   // FIXED: one active link per event (enforced in createShareLink mutation)
   // ═══════════════════════════════════════════════════════
   shareLinks: defineTable({
-    eventId:   v.id('events'),
-    token:     v.string(),       // random 24-char alphanumeric — same pattern as communities.inviteCode
-    createdBy: v.id('users'),    // event owner
-    revoked:   v.boolean(),
+    eventId: v.id('events'),
+    token: v.string(), // random 24-char alphanumeric — same pattern as communities.inviteCode
+    createdBy: v.id('users'), // event owner
+    revoked: v.boolean(),
     createdAt: v.number(),
   })
-    .index('by_token',   ['token'])
-    .index('by_event',   ['eventId'])
+    .index('by_token', ['token'])
+    .index('by_event', ['eventId'])
     .index('by_creator', ['createdBy']),
 
   // ═══════════════════════════════════════════════════════
@@ -331,31 +331,31 @@ export default defineSchema({
   // FIXED: snapshot used only for sourceStatus='deleted'; live data read from source otherwise
   // ═══════════════════════════════════════════════════════
   linkedEvents: defineTable({
-    sourceEventId:  v.id('events'),
-    shareToken:     v.string(),
-    savedByUserId:  v.id('users'),    // recipient — internal only, never exposed to owner
-    ownerUserId:    v.id('users'),    // event owner — stamped at save time
-    spaceId:        v.id('spaces'),   // recipient's own space
+    sourceEventId: v.id('events'),
+    shareToken: v.string(),
+    savedByUserId: v.id('users'), // recipient — internal only, never exposed to owner
+    ownerUserId: v.id('users'), // event owner — stamped at save time
+    spaceId: v.id('spaces'), // recipient's own space
 
     // patched by deleteEvent / cancelEvent mutations
     sourceStatus: v.union(
       v.literal('active'),
       v.literal('deleted'),
-      v.literal('cancelled'),
+      v.literal('cancelled')
     ),
 
     // snapshot — populated at save time
     // used ONLY when sourceStatus = 'deleted' (tombstone fallback)
     // when active or cancelled, display data is read live from the source event
-    snapshotTitle:     v.string(),
+    snapshotTitle: v.string(),
     snapshotStartTime: v.number(),
-    snapshotEndTime:   v.number(),
-    snapshotLocation:  v.optional(v.string()),
+    snapshotEndTime: v.number(),
+    snapshotLocation: v.optional(v.string()),
 
     savedAt: v.number(),
   })
-    .index('by_recipient',            ['savedByUserId'])
+    .index('by_recipient', ['savedByUserId'])
     .index('by_recipient_and_source', ['savedByUserId', 'sourceEventId'])
-    .index('by_source',               ['sourceEventId'])
-    .index('by_space',                ['spaceId']),
+    .index('by_source', ['sourceEventId'])
+    .index('by_space', ['spaceId']),
 });

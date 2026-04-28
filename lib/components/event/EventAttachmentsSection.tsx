@@ -106,6 +106,22 @@ function SavedFileRow({
 
   return (
     <View style={s.fileBlock}>
+      {isImage && url ? (
+        <Pressable
+          onPress={handleTap}
+          accessible
+          accessibilityRole="imagebutton"
+          accessibilityLabel={`פתח תמונה: ${attachment.displayName}`}
+        >
+          <Image
+            source={{ uri: url }}
+            style={s.thumbImage}
+            resizeMode="cover"
+            accessible
+            accessibilityLabel={attachment.displayName}
+          />
+        </Pressable>
+      ) : null}
       <Pressable
         onPress={handleTap}
         accessible
@@ -249,7 +265,9 @@ export function EventAttachmentsSection({
     const finalDraft: EventAttachmentDraft = { ...draft, mimeType };
 
     if (replaceIndex !== undefined) {
-      onChange(attachments.map((a, i) => (i === replaceIndex ? finalDraft : a)));
+      onChange(
+        attachments.map((a, i) => (i === replaceIndex ? finalDraft : a))
+      );
     } else {
       onChange([...attachments, finalDraft]);
     }
@@ -324,7 +342,9 @@ export function EventAttachmentsSection({
   // ── Handlers ──
 
   const updateDisplayName = (index: number, name: string): void => {
-    onChange(attachments.map((a, i) => (i === index ? { ...a, displayName: name } : a)));
+    onChange(
+      attachments.map((a, i) => (i === index ? { ...a, displayName: name } : a))
+    );
   };
 
   const removeAt = (index: number): void => {
@@ -345,7 +365,9 @@ export function EventAttachmentsSection({
             onPress={() => openPicker()}
             accessible
             accessibilityRole="button"
-            accessibilityLabel={attachments.length === 0 ? 'הוסף קובץ' : 'הוסף קובץ נוסף'}
+            accessibilityLabel={
+              attachments.length === 0 ? 'הוסף קובץ' : 'הוסף קובץ נוסף'
+            }
             accessibilityHint="פותח בחירת מקור הקובץ"
           >
             <MaterialIcons name="add" size={18} color={PRIMARY} />
@@ -369,7 +391,9 @@ export function EventAttachmentsSection({
           return (
             <SavedFileRow
               key={`saved-${att.storageId}`}
-              attachment={att as EventAttachmentDraft & { storageId: Id<'_storage'> }}
+              attachment={
+                att as EventAttachmentDraft & { storageId: Id<'_storage'> }
+              }
               onReplace={() => openPicker(idx)}
               onRemove={() => removeAt(idx)}
               onOpenImage={(url) => setImageModalUrl(url)}

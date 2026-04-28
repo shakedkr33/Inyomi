@@ -49,7 +49,6 @@ export function NotesCard({
         multiline
         numberOfLines={3}
         textAlign="right"
-        autoFocus
       />
     </View>
   );

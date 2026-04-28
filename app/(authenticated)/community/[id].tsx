@@ -328,11 +328,7 @@ function EventCard({
   return (
     <Pressable
       style={[styles.eventCard, isCancelled && { opacity: 0.6 }]}
-      onPress={
-        isCancelled
-          ? undefined
-          : () => onOpenDetails(event._id)
-      }
+      onPress={() => onOpenDetails(event._id)}
       accessible
       accessibilityRole="button"
       accessibilityLabel={event.title}
@@ -450,7 +446,7 @@ function EventRow({
         past && { opacity: 0.45 },
         isCancelled && { opacity: 0.5 },
       ]}
-      onPress={isCancelled ? undefined : () => onOpenDetails(event._id)}
+      onPress={() => onOpenDetails(event._id)}
       accessible
       accessibilityRole="button"
       accessibilityLabel={event.title}
@@ -852,6 +848,13 @@ function TabAll({
 
   const activeEvents = events.filter((ev) => ev.status !== 'cancelled');
 
+  const recentlyCancelledEvents = events.filter(
+    (ev) =>
+      ev.status === 'cancelled' &&
+      ev.cancelledAt !== undefined &&
+      Date.now() - ev.cancelledAt < 24 * 60 * 60 * 1000
+  );
+
   // Section 1: events the user already RSVPed to OR created by current user
   const myEvents = activeEvents.filter(
     (ev) =>
@@ -1147,6 +1150,25 @@ function TabAll({
           {/* TODO: create activityFeed query in convex/communities.ts */}
         </View>
       </View>
+
+      {/* ── Section 5: אירועים שבוטלו (24h window) */}
+      {recentlyCancelledEvents.length > 0 ? (
+        <View style={styles.cancelledEventsSection}>
+          <Text style={styles.cancelledEventsTitle}>אירועים שבוטלו</Text>
+          <View style={styles.eventsGrid}>
+            {recentlyCancelledEvents.map((ev) => (
+              <EventCard
+                key={ev._id}
+                event={ev}
+                rsvpStatus="none"
+                currentUserId={currentUserId}
+                isCancelled
+                onOpenDetails={onOpenEventDetails}
+              />
+            ))}
+          </View>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -1232,7 +1254,7 @@ function TabEvents({
     setAccumulated([]);
   }, [monthStart]);
 
-  const gracePeriod = 14 * 24 * 60 * 60 * 1000;
+  const gracePeriod = 24 * 60 * 60 * 1000;
   const activeEvents = accumulated.filter((ev) => ev.status !== 'cancelled');
   const cancelledEvents = accumulated.filter(
     (ev) =>
@@ -1352,7 +1374,7 @@ function TabEvents({
                     אירועים שבוטלו
                   </Text>
                   <Text style={styles.cancelledEventsSubtitle}>
-                    אירועים שבוטלו יימחקו לצמיתות לאחר 14 ימים מרגע ביטולם
+                    אירועים שבוטלו יוסרו מהתצוגה לאחר 24 שעות מרגע ביטולם
                   </Text>
                   {cancelledEvents.map((ev) => (
                     <EventRow
@@ -1569,6 +1591,7 @@ export default function CommunityDetailScreen() {
   const [selectedEventId, setSelectedEventId] = useState<Id<'events'> | null>(
     null
   );
+  const lastDragCloseTime = useRef<number>(0);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [descriptionCanExpand, setDescriptionCanExpand] = useState(false);
   const menuBtnRef = useRef<View>(null);
@@ -1622,6 +1645,8 @@ export default function CommunityDetailScreen() {
   );
 
   const handleOpenEventDetails = useCallback((eventId: Id<'events'>) => {
+    if (Date.now() - lastDragCloseTime.current < 600) return;
+
     setSelectedEventId(eventId);
   }, []);
 
@@ -2012,6 +2037,9 @@ export default function CommunityDetailScreen() {
       <EventDetailsBottomSheet
         eventId={selectedEventId}
         visible={selectedEventId !== null}
+        onDragClose={() => {
+          lastDragCloseTime.current = Date.now();
+        }}
         onClose={handleCloseEventDetails}
         onNavigate={handleNavigateToLocation}
       />

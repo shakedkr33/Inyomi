@@ -225,6 +225,7 @@ export default function HomeScreen() {
   const [selectedEvent, setSelectedEvent] = useState<EventItem | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [isEventSheetVisible, setIsEventSheetVisible] = useState(false);
+  const lastDragCloseTime = useRef<number>(0);
 
   // ── Navigation app picker ──────────────────────────────────────────────────
   const [navPickerVisible, setNavPickerVisible] = useState(false);
@@ -240,6 +241,8 @@ export default function HomeScreen() {
   const [showAllUndated, setShowAllUndated] = useState(false);
 
   const openEventSheet = (item: Item) => {
+    if (Date.now() - lastDragCloseTime.current < 600) return;
+
     setSelectedEvent({
       ...(item as EventItem),
       canEdit: item.linkedEventId ? false : undefined,
@@ -2208,6 +2211,9 @@ export default function HomeScreen() {
         event={selectedEvent}
         eventId={selectedEventId}
         visible={isEventSheetVisible}
+        onDragClose={() => {
+          lastDragCloseTime.current = Date.now();
+        }}
         onClose={closeEventSheet}
         onNavigate={handleOpenNavPicker}
       />

@@ -455,6 +455,7 @@ export default function CalendarScreen(): React.JSX.Element {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<EventItem | null>(null);
+  const lastDragCloseTime = useRef<number>(0);
   const {
     unseenCount,
     markAllSeen,
@@ -471,6 +472,8 @@ export default function CalendarScreen(): React.JSX.Element {
   };
 
   const handleOpenEventDetails = (event: CalendarEvent): void => {
+    if (Date.now() - lastDragCloseTime.current < 600) return;
+
     if (event.sourceType === 'linked') {
       setSelectedEvent({
         id: event.id,
@@ -840,7 +843,7 @@ export default function CalendarScreen(): React.JSX.Element {
           time: timeStr,
           location: event.location ?? '',
           icon: 'event',
-          cancelled: false,
+          cancelled: event.status === 'cancelled',
           sourceType: 'event',
         });
       }
@@ -896,7 +899,7 @@ export default function CalendarScreen(): React.JSX.Element {
         }),
         location: event.location ?? '',
         icon: 'event',
-        cancelled: false,
+        cancelled: event.status === 'cancelled',
         sourceType: 'event',
       });
     }
@@ -1152,6 +1155,9 @@ export default function CalendarScreen(): React.JSX.Element {
           event={selectedEvent}
           eventId={selectedEventId}
           visible={selectedEventId !== null || selectedEvent !== null}
+          onDragClose={() => {
+            lastDragCloseTime.current = Date.now();
+          }}
           onClose={closeEventSheet}
           onNavigate={handleNavigateToLocation}
         />

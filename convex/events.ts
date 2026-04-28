@@ -81,6 +81,7 @@ export const listByCommunity = query({
     return await ctx.db
       .query('events')
       .withIndex('by_community_date', (q) => q.eq('communityId', communityId))
+      .filter((q) => q.neq(q.field('status'), 'cancelled'))
       .order('asc')
       .collect();
   },
@@ -102,6 +103,7 @@ export const listByDateRange = query({
       .withIndex('by_space_and_time', (q) =>
         q.eq('spaceId', spaceId).gte('startTime', from).lte('startTime', to)
       )
+      .filter((q) => q.neq(q.field('status'), 'cancelled'))
       .order('asc')
       .collect();
   },
@@ -234,7 +236,9 @@ export const update = mutation({
 
     await ctx.db.patch(id, {
       ...fields,
-      ...(stampedAttachments !== undefined ? { attachments: stampedAttachments } : {}),
+      ...(stampedAttachments !== undefined
+        ? { attachments: stampedAttachments }
+        : {}),
     });
   },
 });
@@ -247,8 +251,9 @@ export const cancelEvent = mutation({
   args: {
     eventId: v.id('events'),
     cancelReason: v.optional(v.string()),
+    cancelledBy: v.optional(v.id('users')),
   },
-  handler: async (ctx, { eventId, cancelReason }) => {
+  handler: async (ctx, { eventId, cancelReason, cancelledBy }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error('לא מחובר');
     const event = await ctx.db.get(eventId);
@@ -258,6 +263,7 @@ export const cancelEvent = mutation({
     await ctx.db.patch(eventId, {
       status: 'cancelled',
       cancelledAt: Date.now(),
+      cancelledBy: cancelledBy ?? userId,
       cancelReason,
     });
 

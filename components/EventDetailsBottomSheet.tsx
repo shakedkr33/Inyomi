@@ -50,6 +50,7 @@ interface EventDetailsBottomSheetProps {
   eventId?: string | null;
   visible: boolean;
   onClose: () => void;
+  onDragClose?: () => void;
   onNavigate: (location: string) => void;
 }
 
@@ -69,6 +70,7 @@ export function EventDetailsBottomSheet({
   eventId,
   visible,
   onClose,
+  onDragClose,
   onNavigate: _onNavigate,
 }: EventDetailsBottomSheetProps): React.JSX.Element | null {
   const router = useRouter();
@@ -77,11 +79,13 @@ export function EventDetailsBottomSheet({
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const sheetTranslateY = useRef(new Animated.Value(0)).current;
   const isClosingRef = useRef(false);
+  const [isClosingState, setIsClosingState] = useState(false);
   const handlePanResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gesture) =>
         gesture.dy > 5 && Math.abs(gesture.dx) < Math.abs(gesture.dy),
+      onPanResponderTerminationRequest: () => false,
       onPanResponderMove: (_, gesture) => {
         sheetTranslateY.setValue(Math.max(0, gesture.dy));
       },
@@ -92,6 +96,8 @@ export function EventDetailsBottomSheet({
 
         if (shouldClose) {
           isClosingRef.current = true;
+          setIsClosingState(true);
+          onDragClose?.();
           Animated.timing(sheetTranslateY, {
             toValue: SHEET_HEIGHT,
             duration: 160,
@@ -120,6 +126,7 @@ export function EventDetailsBottomSheet({
   useEffect(() => {
     if (visible) {
       isClosingRef.current = false;
+      setIsClosingState(false);
     }
   }, [visible]);
 
@@ -131,6 +138,7 @@ export function EventDetailsBottomSheet({
     eventId && isValidConvexId(eventId) ? (eventId as Id<'events'>) : null;
 
   const cancelEventMutation = useMutation(api.events.cancelEvent);
+  const deleteEventMutation = useMutation(api.events.deleteEvent);
   const createShareLinkMutation = useMutation(api.shareLinks.createShareLink);
   const eventDoc = useQuery(
     api.events.getById,
@@ -156,6 +164,11 @@ export function EventDetailsBottomSheet({
             eventDoc.endTime,
             eventDoc.allDay
           ),
+          dateTimeParts: formatDateTimeParts(
+            eventDoc.startTime,
+            eventDoc.endTime,
+            eventDoc.allDay
+          ),
           groupName: event?.groupName,
           location: eventDoc.location,
           description: eventDoc.description,
@@ -170,6 +183,7 @@ export function EventDetailsBottomSheet({
           communityId: eventDoc.communityId,
           createdBy: eventDoc.createdBy,
           status: eventDoc.status,
+          cancelledAt: eventDoc.cancelledAt,
           cancelReason: eventDoc.cancelReason,
         }
       : event
@@ -195,6 +209,7 @@ export function EventDetailsBottomSheet({
             communityId: undefined,
             createdBy: undefined,
             status: undefined,
+            cancelledAt: undefined,
             cancelReason: undefined,
           }
         : null;
@@ -204,7 +219,7 @@ export function EventDetailsBottomSheet({
     onClose();
     router.push({
       pathname: '/(authenticated)/event-edit/[id]',
-      params: { id: displayEvent.id },
+      params: { id: displayEvent.id, returnTo: 'home' },
     });
   };
 
@@ -248,19 +263,46 @@ export function EventDetailsBottomSheet({
   };
 
   const handleCancel = (): void => {
-    if (!convexEventId) return;
-    Alert.alert('ביטול אירוע', 'האם לבטל את האירוע?', [
-      { text: 'חזור', style: 'cancel' },
+    if (!convexEventId || !currentUserId) return;
+    const isCommunity = Boolean(displayEvent?.communityId);
+    const message = isCommunity
+      ? 'האירוע יוצג בקהילה כמבוטל למשך 24 שעות, כדי שחברי הקהילה יראו את העדכון.'
+      : 'האם לבטל את האירוע?';
+    Alert.alert('ביטול אירוע', message, [
+      { text: 'חזרה', style: 'cancel' },
       {
         text: 'בטל אירוע',
         style: 'destructive',
         onPress: () => {
-          cancelEventMutation({ eventId: convexEventId }).catch(() =>
-            Alert.alert('שגיאה', 'לא ניתן לבטל את האירוע')
-          );
+          cancelEventMutation({
+            eventId: convexEventId,
+            cancelledBy: currentUserId,
+          })
+            .then(() => onClose())
+            .catch(() => Alert.alert('שגיאה', 'לא ניתן לבטל את האירוע'));
         },
       },
     ]);
+  };
+
+  const handleDelete = (): void => {
+    if (!convexEventId) return;
+    Alert.alert(
+      'הסרת אירוע',
+      'האם למחוק את האירוע לגמרי מהקהילה? פעולה זו תסיר אותו מהתצוגה לכל חברי הקהילה.',
+      [
+        { text: 'ביטול', style: 'cancel' },
+        {
+          text: 'הסר לגמרי',
+          style: 'destructive',
+          onPress: () => {
+            deleteEventMutation({ eventId: convexEventId })
+              .then(() => onClose())
+              .catch(() => Alert.alert('שגיאה', 'לא ניתן למחוק את האירוע'));
+          },
+        },
+      ]
+    );
   };
 
   const handleNavigate = (): void => {
@@ -313,6 +355,16 @@ export function EventDetailsBottomSheet({
       displayEvent.createdBy === currentUserId &&
       displayEvent.status !== 'cancelled'
   );
+  const canDelete = Boolean(
+    convexEventId &&
+      displayEvent?.communityId &&
+      displayEvent?.createdBy &&
+      currentUserId &&
+      displayEvent.createdBy === currentUserId &&
+      displayEvent.status === 'cancelled' &&
+      displayEvent.cancelledAt !== undefined &&
+      Date.now() - (displayEvent.cancelledAt as number) < 24 * 60 * 60 * 1000
+  );
 
   return (
     <Modal
@@ -324,6 +376,7 @@ export function EventDetailsBottomSheet({
       <Pressable onPress={handleRequestClose} style={styles.backdrop} />
 
       <Animated.View
+        pointerEvents={isClosingState ? 'none' : 'box-none'}
         style={[
           styles.sheet,
           {
@@ -376,7 +429,18 @@ export function EventDetailsBottomSheet({
                 ) : null}
                 <View style={styles.infoRow}>
                   <MaterialIcons color="#94a3b8" name="schedule" size={17} />
-                  <Text style={styles.timeText}>{displayEvent.timeLabel}</Text>
+                  <View style={styles.dateTimeBlock}>
+                    <Text style={styles.dateLine}>
+                      {displayEvent.dateTimeParts
+                        ? displayEvent.dateTimeParts.dateLine
+                        : displayEvent.timeLabel}
+                    </Text>
+                    {displayEvent.dateTimeParts ? (
+                      <Text style={styles.timeText}>
+                        {displayEvent.dateTimeParts.timeLine}
+                      </Text>
+                    ) : null}
+                  </View>
                 </View>
 
                 {hasLocation ? (
@@ -427,6 +491,25 @@ export function EventDetailsBottomSheet({
                     onPress={handleCancel}
                   />
                 </View>
+
+                {canDelete ? (
+                  <Pressable
+                    accessible={true}
+                    accessibilityLabel="הסר אירוע מהקהילה"
+                    accessibilityRole="button"
+                    onPress={handleDelete}
+                    style={styles.deleteEventBtn}
+                  >
+                    <MaterialIcons
+                      color="#dc2626"
+                      name="delete-forever"
+                      size={18}
+                    />
+                    <Text style={styles.deleteEventBtnText}>
+                      הסר אירוע מהקהילה
+                    </Text>
+                  </Pressable>
+                ) : null}
 
                 {displayEvent.description ? (
                   <View style={styles.notesBox}>
@@ -904,8 +987,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 7,
   },
-  timeText: {
+  dateTimeBlock: {
     flex: 1,
+    gap: 1,
+  },
+  dateLine: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'right',
+    fontWeight: '600',
+  },
+  timeText: {
     fontSize: 15,
     color: '#111827',
     textAlign: 'right',
@@ -956,6 +1048,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-around',
     paddingTop: 2,
+  },
+  deleteEventBtn: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+    backgroundColor: '#fff5f5',
+  },
+  deleteEventBtnText: {
+    color: '#dc2626',
+    fontSize: 14,
+    fontWeight: '600',
   },
   quickAction: {
     alignItems: 'center',
@@ -1008,10 +1118,10 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   sectionCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    backgroundColor: '#f8fafc',
+    borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#f1f5f9',
+    borderColor: '#e2e8f0',
     padding: 12,
     gap: 8,
   },
@@ -1282,13 +1392,29 @@ function formatDateTimeLabel(
   endTime: number,
   allDay?: boolean
 ): string {
-  const dateLabel = new Date(startTime).toLocaleDateString('he-IL', {
+  const { dateLine, timeLine } = formatDateTimeParts(
+    startTime,
+    endTime,
+    allDay
+  );
+  return `${dateLine}\n${timeLine}`;
+}
+
+function formatDateTimeParts(
+  startTime: number,
+  endTime: number,
+  allDay?: boolean
+): { dateLine: string; timeLine: string } {
+  const dateLine = new Date(startTime).toLocaleDateString('he-IL', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
+    year: 'numeric',
   });
-  if (allDay) return `${dateLabel}, כל היום`;
-  return `${dateLabel}, ${formatTime(startTime)}-${formatTime(endTime)}`;
+  const timeLine = allDay
+    ? 'כל היום'
+    : `${formatTime(startTime)}-${formatTime(endTime)}`;
+  return { dateLine, timeLine };
 }
 
 function formatFileSize(sizeBytes: number): string {
