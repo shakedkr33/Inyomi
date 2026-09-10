@@ -10,6 +10,7 @@ import {
   isActiveCommunityMember,
 } from './communityMemberUtils';
 import { shouldSkipMarkCommunityViewed } from '../lib/communityViewedIdempotency';
+import { resolveMySpaceId } from './members';
 import { createUserNotifications } from './userNotifications';
 
 async function requireOwnerOrAdminActive(
@@ -241,6 +242,9 @@ export const getCommunity = query({
       // here so the community UI can show the REAL current value instead of
       // duplicating local state — see toggleAutoAddEvents below.
       myAutoAddEventsToCalendar: membership?.autoAddEventsToCalendar === true,
+      // FIX 9: Profile IDs associated with this community for profile filtering.
+      myAssociatedProfileIds: (membership?.associatedProfileIds ??
+        []) as string[],
       // Stage 2A: the viewer's PREVIOUS visit timestamp, for the "ראשי" tab's
       // "חדש" event chip (event.createdAt > myLastViewedAt). This is the
       // pre-markCommunityViewed value for the current reactive snapshot —
@@ -1183,5 +1187,106 @@ export const toggleAutoAddEvents = mutation({
     const next = !(member.autoAddEventsToCalendar === true);
     await ctx.db.patch(member._id, { autoAddEventsToCalendar: next });
     return next;
+  },
+});
+
+// ─────────────────────────────────────────────────────────────
+// FIX 9: Community ↔ Family Profile association
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Set the family profiles associated with a community for the current user.
+ * This is a personal setting — each user controls their own association independently.
+ *
+ * Validates that all provided profile IDs belong to the user's own family space
+ * and are legitimate members rows.
+ */
+export const setCommunityProfileAssociation = mutation({
+  args: {
+    communityId: v.id('communities'),
+    profileIds: v.array(v.id('members')),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('Not authenticated');
+
+    // Verify active community membership
+    const membership = await ctx.db
+      .query('communityMembers')
+      .withIndex('by_community_user', (q) =>
+        q.eq('communityId', args.communityId).eq('userId', userId)
+      )
+      .unique();
+
+    if (!membership || !isActiveCommunityMember(membership)) {
+      throw new Error('Not a member of this community');
+    }
+
+    // Validate profile IDs: each must belong to the user's own family space
+    if (args.profileIds.length > 0) {
+      const spaceId = await resolveMySpaceId(ctx, userId);
+      if (!spaceId) {
+        throw new Error('No family space found');
+      }
+
+      for (const profileId of args.profileIds) {
+        const memberRow = await ctx.db.get(profileId);
+        if (!memberRow) {
+          throw new Error('Profile not found');
+        }
+        if (memberRow.spaceId !== spaceId) {
+          throw new Error('Profile does not belong to your family space');
+        }
+      }
+    }
+
+    await ctx.db.patch(membership._id, {
+      associatedProfileIds:
+        args.profileIds.length > 0 ? args.profileIds : undefined,
+    });
+    return null;
+  },
+});
+
+/**
+ * Get all community-profile associations for the current user.
+ * Returns only communities where the user has set non-empty profile associations.
+ * Used by Calendar to build the profile→community mapping for filtering.
+ */
+export const getMyProfileAssociations = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      communityId: v.id('communities'),
+      profileIds: v.array(v.id('members')),
+    })
+  ),
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+
+    const memberships = await ctx.db
+      .query('communityMembers')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect();
+
+    const results: {
+      communityId: Id<'communities'>;
+      profileIds: Id<'members'>[];
+    }[] = [];
+    for (const m of memberships) {
+      if (
+        isActiveCommunityMember(m) &&
+        m.associatedProfileIds &&
+        m.associatedProfileIds.length > 0
+      ) {
+        results.push({
+          communityId: m.communityId,
+          profileIds: m.associatedProfileIds,
+        });
+      }
+    }
+    return results;
   },
 });

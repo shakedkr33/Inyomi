@@ -47,6 +47,7 @@ import {
   type JoinApprovalMode,
   JoinApprovalSettingsModal,
 } from '@/components/JoinApprovalSettingsModal';
+import { ProfileAssociationSheet } from '@/components/ProfileAssociationSheet';
 import { RsvpBlockedByTaskDialog } from '@/components/RsvpBlockedByTaskDialog';
 import { useActionSheet } from '@/contexts/ActionSheetContext';
 import { api } from '@/convex/_generated/api';
@@ -4587,6 +4588,8 @@ export default function CommunityDetailScreen() {
   } | null>(null);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [descriptionCanExpand, setDescriptionCanExpand] = useState(false);
+  // FIX 9: Profile association sheet
+  const [profileAssociationOpen, setProfileAssociationOpen] = useState(false);
   const menuBtnRef = useRef<View>(null);
 
   // Reset description when switching communities
@@ -4970,6 +4973,15 @@ export default function CommunityDetailScreen() {
         onPress: handleToggleAutoAdd,
         toggle: { value: community?.myAutoAddEventsToCalendar === true },
       },
+      // FIX 9: Profile association — personal setting for every active member
+      {
+        label: 'שיוך לפרופיל משפחה',
+        iconName: 'people-outline',
+        onPress: () => {
+          setMenuOpen(false);
+          setTimeout(() => setProfileAssociationOpen(true), 200);
+        },
+      },
       {
         label: 'ניהול חברים',
         iconName: 'people-outline',
@@ -5271,6 +5283,13 @@ export default function CommunityDetailScreen() {
         onChange={setJoinApprovalDraft}
         onClose={() => setJoinApprovalOpen(false)}
         onSave={handleSaveJoinApproval}
+      />
+
+      {/* FIX 9: Profile association sheet */}
+      <ProfileAssociationSheet
+        communityId={communityId}
+        visible={profileAssociationOpen}
+        onClose={() => setProfileAssociationOpen(false)}
       />
 
       <SearchModal

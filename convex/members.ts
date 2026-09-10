@@ -1,5 +1,6 @@
 import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
+import { buildCanonicalFamilyMembers } from '../lib/canonicalFamilyMembers';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation, mutation, query } from './_generated/server';
@@ -298,6 +299,52 @@ export const listMyFamilyContacts = query({
       }
     }
 
+    // ── FIX 9 FOLLOW-UP: canonical Self profile normalization ────────────
+    // Joined family members already have an 'entity' row for themselves
+    // (via matchOnPhone) — that row IS their canonical Self and is already
+    // included in `entities`/`enrichedEntities` below, so no synthesis is
+    // needed. The space admin has no such entity row (only their own
+    // 'access' row), so without normalization their own profile is
+    // entirely absent from this list — this is the confirmed root cause of
+    // the admin's profile missing from the Community association picker
+    // and Calendar profile filter.
+    //
+    // We build a synthetic Self candidate from the viewer's OWN access row
+    // + user record — using the exact same representation shape as
+    // `adminEntry` above (which shows the admin to OTHER family members) —
+    // but this is not a role-based special case: any access-kind viewer
+    // without an entity row gets the same synthesis. `buildCanonicalFamilyMembers`
+    // only injects it when `selfEntityRow` is null, so Self can never be
+    // duplicated.
+    let syntheticSelfCandidate: typeof adminEntry = null;
+    if (!selfEntityRow) {
+      const myAccessRow = allRows.find(
+        (r) => r.userId === userId && resolveKind(r) === 'access'
+      );
+      if (myAccessRow) {
+        const me = await ctx.db.get(userId);
+        if (me) {
+          const myPhone =
+            (me as unknown as { phone?: string }).phone ?? undefined;
+          const myPhoneLocal = myPhone ? e164ToLocal(myPhone) : undefined;
+          syntheticSelfCandidate = {
+            _id: myAccessRow._id,
+            displayName:
+              (me as unknown as { fullName?: string }).fullName ??
+              'הפרופיל שלי',
+            color:
+              (me as unknown as { profileColor?: string }).profileColor ??
+              '#36a9e2',
+            selectedPhoneNumber: myPhone,
+            maskedPhone: myPhoneLocal ? maskPhone(myPhoneLocal) : undefined,
+            matchedUserId: userId,
+            inviteStatus: 'joined',
+            memberType: 'person',
+          };
+        }
+      }
+    }
+
     const enrichedEntities = await Promise.all(
       entities.map(async (m) => {
         const localPhone = m.selectedPhoneNumber
@@ -324,21 +371,39 @@ export const listMyFamilyContacts = query({
       })
     );
 
-    const finalMembers = [
-      ...(adminEntry ? [adminEntry] : []),
-      ...enrichedEntities,
-    ];
+    // Canonical merge: injects the synthetic Self candidate exactly once
+    // (only when no real entity row already represents the viewer), keeps
+    // the unrelated `adminEntry` (Self of ANOTHER user, shown to non-admin
+    // viewers) fully independent, and resolves ONE canonical Self id used
+    // consistently for both display and default-to-self association
+    // matching (see lib/calendarProfileFilter.ts).
+    const { selfId: canonicalSelfId, members: finalMembers } =
+      buildCanonicalFamilyMembers({
+        entities: enrichedEntities,
+        selfEntityId: selfEntityRow?._id ?? null,
+        syntheticSelfCandidate,
+        otherAccessEntry: adminEntry,
+      });
+
+    const selfEntity = selfEntityRow
+      ? {
+          _id: selfEntityRow._id,
+          displayName: selfEntityRow.displayName,
+          color: selfEntityRow.color,
+          matchedUserId: selfEntityRow.matchedUserId,
+        }
+      : syntheticSelfCandidate
+        ? {
+            _id: syntheticSelfCandidate._id,
+            displayName: syntheticSelfCandidate.displayName,
+            color: syntheticSelfCandidate.color,
+            matchedUserId: syntheticSelfCandidate.matchedUserId,
+          }
+        : null;
 
     return {
-      selfEntityId: selfEntityRow?._id ?? null,
-      selfEntity: selfEntityRow
-        ? {
-            _id: selfEntityRow._id,
-            displayName: selfEntityRow.displayName,
-            color: selfEntityRow.color,
-            matchedUserId: selfEntityRow.matchedUserId,
-          }
-        : null,
+      selfEntityId: canonicalSelfId,
+      selfEntity,
       members: finalMembers,
     };
   },

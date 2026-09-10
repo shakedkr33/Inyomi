@@ -22,6 +22,18 @@ export const DEFAULT_CALENDAR_LAYER_FILTERS: CalendarLayerFilters = {
 };
 
 /**
+ * FIX 9: "הצג הכל" — sets ALL layer filters to ON.
+ * NOT the same as DEFAULT (which has showHolidays: false).
+ * This genuinely shows all available calendar content.
+ */
+export const SHOW_ALL_CALENDAR_LAYER_FILTERS: CalendarLayerFilters = {
+  showCommunity: true,
+  showTasks: true,
+  showHolidays: true,
+  showShabbatTimes: true,
+};
+
+/**
  * Load persisted calendar layer filter preferences.
  * Falls back to defaults if storage is empty, missing, or malformed.
  * Never throws — storage failure returns defaults safely.

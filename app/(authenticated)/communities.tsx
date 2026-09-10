@@ -23,6 +23,7 @@ import {
   JoinApprovalSettingsModal,
 } from '@/components/JoinApprovalSettingsModal';
 import { MainScreenHeader } from '@/components/MainScreenHeader';
+import { ProfileAssociationSheet } from '@/components/ProfileAssociationSheet';
 import { colors } from '@/constants/theme';
 import { useNotifications } from '@/contexts/NotificationsContext';
 import { api } from '@/convex/_generated/api';
@@ -491,6 +492,10 @@ export default function CommunitiesScreen() {
     useState<JoinApprovalMode>('automatic');
   const [joinApprovalSaving, setJoinApprovalSaving] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  // FIX 9 follow-up: same ProfileAssociationSheet used by community/[id].tsx,
+  // reused here for the main Communities list ⋯ menu.
+  const [profileAssociationCommunityId, setProfileAssociationCommunityId] =
+    useState<Id<'communities'> | null>(null);
 
   const handleBellPress = (): void => {
     if (!isNotificationsOpen) {
@@ -765,6 +770,24 @@ export default function CommunitiesScreen() {
               },
             ]
           : []),
+        // FIX 9 follow-up: same personal-setting entry as the Community detail
+        // ⋯ menu — visible to every active member, not owner/admin-gated.
+        {
+          label: 'שיוך לפרופיל משפחה',
+          iconName: 'people-outline',
+          onPress: () => {
+            // Same menu-dismiss -> sheet-open sequencing already used in
+            // community/[id].tsx for this exact action: let the overflow
+            // menu's own Modal finish dismissing before presenting the
+            // ProfileAssociationSheet Modal, avoiding a native modal
+            // present/dismiss collision (visible as a "double open").
+            setMenuItem(null);
+            setTimeout(
+              () => setProfileAssociationCommunityId(community._id),
+              200
+            );
+          },
+        },
         {
           label: 'הצג ביומן',
           iconName: 'calendar-outline',
@@ -935,6 +958,16 @@ export default function CommunitiesScreen() {
         onClose={() => setMenuItem(null)}
         items={menuItem ? buildMenuItems(menuItem) : []}
       />
+
+      {/* FIX 9 follow-up: same ProfileAssociationSheet as the Community
+          detail screen — single shared implementation, reused here. */}
+      {profileAssociationCommunityId ? (
+        <ProfileAssociationSheet
+          communityId={profileAssociationCommunityId}
+          visible={profileAssociationCommunityId !== null}
+          onClose={() => setProfileAssociationCommunityId(null)}
+        />
+      ) : null}
 
       <NotificationsDrawer
         isOpen={isNotificationsOpen}

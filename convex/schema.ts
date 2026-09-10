@@ -569,6 +569,10 @@ export default defineSchema({
     lastViewedAt: v.optional(v.number()),
     // undefined = false (no auto-add)
     autoAddEventsToCalendar: v.optional(v.boolean()),
+    // FIX 9: Family profiles associated with this community for this user.
+    // Entity row IDs from the members table. Used for Calendar profile filtering.
+    // undefined or [] = no profile association (backward compatible).
+    associatedProfileIds: v.optional(v.array(v.id('members'))),
   })
     .index('by_community', ['communityId'])
     .index('by_user', ['userId'])

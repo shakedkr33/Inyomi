@@ -58,9 +58,19 @@ import { useBirthdaySheets } from '@/lib/components/birthday/BirthdaySheetsProvi
 import { NotificationsDrawer } from '@/lib/components/notifications/NotificationsDrawer';
 import { useHolidayOverlay } from '@/lib/hooks/useHolidayOverlay';
 import { APP_IS_RTL, getTextAlign, needsExplicitRTL, position, rtl, spacing } from '@/lib/rtl';
+import { ProfileAvatarCircle } from '@/components/ProfileAvatarCircle';
+import {
+  buildAssociationMap,
+  getSelectableProfiles,
+  isPersonalEventRelevantToProfile,
+  isCommunityEventRelevantToProfile,
+  isPersonalTaskRelevantToProfile,
+  type AssociationMap,
+} from '@/lib/calendarProfileFilter';
 import {
   type CalendarLayerFilters,
   DEFAULT_CALENDAR_LAYER_FILTERS,
+  SHOW_ALL_CALENDAR_LAYER_FILTERS,
   loadCalendarLayerFilters,
   saveCalendarLayerFilters,
 } from '@/lib/storage/calendarLayerFilterPreferences';
@@ -781,6 +791,8 @@ interface CalendarMonthNavBarProps {
   onNextMonth: () => void;
   onTitlePress: () => void;
   showFilterIcon: boolean;
+  /** FIX 9: True when any restrictive filter is active (profile, layer toggle OFF) */
+  hasActiveFilter?: boolean;
   onFilterPress: () => void;
 }
 
@@ -791,6 +803,7 @@ function CalendarMonthNavBar({
   onNextMonth,
   onTitlePress,
   showFilterIcon,
+  hasActiveFilter = false,
   onFilterPress,
 }: CalendarMonthNavBarProps): React.JSX.Element {
   return (
@@ -841,9 +854,16 @@ function CalendarMonthNavBar({
           accessible={true}
           accessibilityRole="button"
           accessibilityLabel="סינון היומן"
-          style={styles.monthNavFilterBtn}
+          style={[
+            styles.monthNavFilterBtn,
+            hasActiveFilter && styles.monthNavFilterBtnActive,
+          ]}
         >
-          <MaterialIcons name="tune" size={22} color="#647b87" />
+          <MaterialIcons
+            name="tune"
+            size={22}
+            color={hasActiveFilter ? colors.primaryDark : '#647b87'}
+          />
         </Pressable>
       ) : null}
     </View>
@@ -865,6 +885,17 @@ interface CalendarFilterPanelProps {
   filters: CalendarLayerFilters;
   onToggle: (key: keyof CalendarLayerFilters) => void;
   rows: FilterRowDef[];
+  // FIX 9: Profile filtering
+  canUseProfileFilter: boolean;
+  profiles: Array<{
+    _id: string;
+    displayName: string;
+    color: string;
+    memberType: 'person' | 'pet';
+  }>;
+  selectedProfileId: string | null;
+  onSelectProfile: (id: string | null) => void;
+  onShowAll: () => void;
 }
 
 function CalendarFilterPanel({
@@ -873,6 +904,11 @@ function CalendarFilterPanel({
   filters,
   onToggle,
   rows,
+  canUseProfileFilter,
+  profiles,
+  selectedProfileId,
+  onSelectProfile,
+  onShowAll,
 }: CalendarFilterPanelProps): React.JSX.Element | null {
   const translateY = useRef(new Animated.Value(400)).current;
   const insets = useSafeAreaInsets();
@@ -968,6 +1004,55 @@ function CalendarFilterPanel({
               </Pressable>
             );
           })}
+
+          {/* FIX 9: Profile filter section */}
+          {profiles.length > 0 ? (
+            <View style={filterPanelStyles.profileSection}>
+              <Text style={filterPanelStyles.profileSectionTitle}>
+                סינון לפי בני משפחה
+              </Text>
+              {canUseProfileFilter ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={filterPanelStyles.profileCarouselContent}
+                  style={filterPanelStyles.profileCarousel}
+                >
+                  {profiles.map((p) => (
+                    <ProfileAvatarCircle
+                      key={p._id}
+                      displayName={p.displayName}
+                      color={p.color}
+                      memberType={p.memberType}
+                      size={40}
+                      selected={selectedProfileId === p._id}
+                      onPress={() => {
+                        onSelectProfile(
+                          selectedProfileId === p._id ? null : p._id
+                        );
+                      }}
+                    />
+                  ))}
+                </ScrollView>
+              ) : (
+                <View style={filterPanelStyles.lockedRow}>
+                  <MaterialIcons name="lock" size={16} color="#9ca3af" />
+                  <Text style={filterPanelStyles.lockedText}>זמין במנוי</Text>
+                </View>
+              )}
+            </View>
+          ) : null}
+
+          {/* "הצג הכל" button */}
+          <Pressable
+            onPress={onShowAll}
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel="הצג הכל"
+            style={filterPanelStyles.showAllBtn}
+          >
+            <Text style={filterPanelStyles.showAllText}>הצג הכל</Text>
+          </Pressable>
 
           <View style={{ height: Math.max(24, insets.bottom) }} />
         </Animated.View>
@@ -1077,6 +1162,52 @@ const filterPanelStyles = StyleSheet.create({
   },
   bottomPad: {
     height: 24,
+  },
+  // FIX 9: Profile filter section
+  profileSection: {
+    paddingTop: 14,
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#f0f0f0',
+  },
+  profileSectionTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6b7280',
+    marginBottom: 10,
+    textAlign: 'right',
+  },
+  profileCarousel: {
+    maxHeight: 52,
+  },
+  profileCarouselContent: {
+    gap: 10,
+    paddingVertical: 2,
+    paddingHorizontal: 2,
+  },
+  lockedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+  },
+  lockedText: {
+    fontSize: 13,
+    color: '#9ca3af',
+    fontWeight: '500',
+  },
+  showAllBtn: {
+    alignItems: 'center',
+    paddingVertical: 14,
+    marginTop: 4,
+  },
+  showAllText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.primary,
   },
 });
 
@@ -1521,6 +1652,10 @@ interface CalendarDayEventsSheetProps {
   ) => void;
   onOpenTaskSheet: (id: string) => void;
   myImportantItemChecks?: Record<string, Record<string, boolean>>;
+  /** FIX 9 empty-state follow-up: active Family Profile filter, if any. */
+  selectedProfileId: string | null;
+  /** FIX 9 empty-state follow-up: canonical "הצג הכל" reset action. */
+  onShowAll: () => void;
 }
 
 function CalendarDayEventsSheet({
@@ -1535,6 +1670,8 @@ function CalendarDayEventsSheet({
   onEventLongPress,
   onOpenTaskSheet,
   myImportantItemChecks = {},
+  selectedProfileId,
+  onShowAll,
 }: CalendarDayEventsSheetProps): React.JSX.Element {
   return (
     <Modal
@@ -1577,10 +1714,17 @@ function CalendarDayEventsSheet({
             contentContainerStyle={sheetStyles.sheetScrollContent}
             showsVerticalScrollIndicator={false}
           >
-            {events.length === 0 &&
-            tasks.length === 0 &&
-            holidays.length === 0 ? (
-              <Text style={sheetStyles.sheetEmpty}>אין אירועים ביום הזה</Text>
+            {events.length === 0 && tasks.length === 0 && holidays.length === 0 ? (
+              selectedProfileId != null ? (
+                // FIX 9 empty-state follow-up: this day has content in
+                // general, but none of it matches the actively selected
+                // Family Profile.
+                <ProfileFilterEmptyState onShowAll={onShowAll} />
+              ) : (
+                <Text style={sheetStyles.sheetEmpty}>
+                  אין אירועים ביום הזה
+                </Text>
+              )
             ) : null}
 
             {/* Holiday rows — read-only, above events */}
@@ -1766,7 +1910,8 @@ export default function CalendarScreen(): React.JSX.Element {
     markAllSeen,
     isLoading: notifLoading,
   } = useNotifications();
-  const { isExpiredFree } = useEffectiveAccess();
+  const { isExpiredFree, isTrialActive, isPersonal, isFamily } = useEffectiveAccess();
+  const canUseProfileFilter = isTrialActive || isPersonal || isFamily;
   const [upgradeModalVisible, setUpgradeModalVisible] = useState(false);
 
   // ── Layer filter state ──────────────────────────────────────────────────────
@@ -1808,6 +1953,49 @@ export default function CalendarScreen(): React.JSX.Element {
       }
     });
   }, []);
+
+  // ── FIX 9: Profile filter state ──────────────────────────────────────────
+  // selectedProfileId: the entity row ID (from members table) currently
+  // filtering the calendar. null = no profile filter active.
+  // Persisted in-session only (not to AsyncStorage — clears on screen unmount).
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+
+  // Guard: clear profile filter when entitlement is lost
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — clear on entitlement change only
+  useEffect(() => {
+    if (!canUseProfileFilter) {
+      setSelectedProfileId(null);
+    }
+  }, [canUseProfileFilter]);
+
+  // FIX 9 empty-state follow-up: single canonical "הצג הכל" reset — restores
+  // all layer toggles + clears the profile filter. Reused by the Calendar
+  // Filter Bottom Sheet's own button AND the new profile-filter empty states
+  // in Timeline / Month day content, so there is only one reset
+  // implementation.
+  const handleShowAllCalendarContent = useCallback(() => {
+    hasUserChangedFiltersRef.current = true;
+    setLayerFilters(SHOW_ALL_CALENDAR_LAYER_FILTERS);
+    saveCalendarLayerFilters(SHOW_ALL_CALENDAR_LAYER_FILTERS);
+    setSelectedProfileId(null);
+    setIsFilterPanelOpen(false);
+  }, []);
+
+  // Profile associations for community-event matching
+  const profileAssociations = useQuery(api.communities.getMyProfileAssociations);
+  const associationMap = useMemo<AssociationMap>(
+    () =>
+      buildAssociationMap(
+        (profileAssociations ?? []).map((a) => ({
+          communityId: a.communityId as string,
+          profileIds: a.profileIds.map((id) => id as string),
+        }))
+      ),
+    [profileAssociations]
+  );
+
+  // Canonical selectable profile list (from family contacts already loaded above)
+  // This is used AFTER familyContacts is loaded — see below for useMemo.
 
   // ── Holiday overlay preferences ────────────────────────────────────────────
   // Loaded from AsyncStorage via loadHolidayOverlayPreferences().
@@ -2081,6 +2269,38 @@ export default function CalendarScreen(): React.JSX.Element {
     return map;
   }, [familyContacts?.members, familyContacts?.selfEntityId]);
 
+  // FIX 9: Canonical selectable profile list for the carousel and filter panel.
+  // Includes self for BOTH admin and joined members — `listMyFamilyContacts`
+  // normalizes the canonical Self representation (synthesizing it from the
+  // admin's own access row when no entity row exists) so this list never
+  // omits the current user. Deduplicates by matchedUserId.
+  const selectableProfiles = useMemo(() => {
+    if (!familyContacts?.members) return [];
+    return getSelectableProfiles(
+      familyContacts.members.map((m) => ({
+        _id: m._id as string,
+        displayName: (m.displayName ?? '') as string,
+        color: (m.color ?? '#36a9e2') as string,
+        memberType: (m.memberType ?? 'person') as 'person' | 'pet',
+        matchedUserId: m.matchedUserId as string | undefined,
+      }))
+    );
+  }, [familyContacts?.members]);
+
+  // FIX 9 FOLLOW-UP: canonical Self profile id — same id used both to
+  // render Self in `selectableProfiles` above and to resolve the
+  // default-to-self community association fallback below. There is only
+  // ONE id for "selected profile = current user".
+  const canonicalSelfProfileId = familyContacts?.selfEntityId as
+    | string
+    | undefined;
+
+  // FIX 9: The selected profile for filter matching
+  const selectedProfile = useMemo(() => {
+    if (!selectedProfileId) return null;
+    return selectableProfiles.find((p) => p._id === selectedProfileId) ?? null;
+  }, [selectedProfileId, selectableProfiles]);
+
   // All community events saved by family members — used for profile circles on
   // timeline event cards without querying per-event (O(family_size) DB calls).
   const familyAllSaved =
@@ -2164,15 +2384,37 @@ export default function CalendarScreen(): React.JSX.Element {
     return map;
   }, [calendarPersonalTasks, displayYear, displayMonth]);
 
-  /** Task-dot count per day — respects both משימות and קהילות chips */
+  /** Check if a task passes the profile filter.
+   * Personal tasks → dual-ID matching. Community tasks → follow parent event community association. */
+  const taskPassesProfileFilter = useCallback(
+    (t: { communityId?: string; assignedToMemberIds?: string[]; assignedToUserIds?: string[] }): boolean => {
+      if (!selectedProfileId || !selectedProfile) return true;
+      const profile = { _id: selectedProfileId, matchedUserId: selectedProfile.matchedUserId };
+      if (t.communityId) {
+        return isCommunityEventRelevantToProfile(
+          { communityId: t.communityId },
+          selectedProfileId,
+          associationMap,
+          canonicalSelfProfileId
+        );
+      }
+      return isPersonalTaskRelevantToProfile(t, profile);
+    },
+    [selectedProfileId, selectedProfile, associationMap, canonicalSelfProfileId],
+  );
+
+  /** Task-dot count per day — respects layer chips + profile filter */
   const filteredCalendarTasksByDay = useMemo(() => {
     if (!layerFilters.showTasks) return {};
-    // All tasks visible: return pre-computed map
-    if (layerFilters.showCommunity) return calendarTasksByDay;
-    // Community tasks hidden: recount from source, skipping communityId tasks
+    const hasProfileFilter = selectedProfileId != null;
+    // Fast path: no layer or profile filtering needed
+    if (layerFilters.showCommunity && !hasProfileFilter) return calendarTasksByDay;
+    // Need to recount from source
     const map: Record<number, number> = {};
     for (const t of calendarPersonalTasks) {
-      if (t.dueDate == null || t.communityId) continue;
+      if (t.dueDate == null) continue;
+      if (!layerFilters.showCommunity && t.communityId) continue;
+      if (hasProfileFilter && !taskPassesProfileFilter(t as { communityId?: string; assignedToMemberIds?: string[]; assignedToUserIds?: string[] })) continue;
       const d = new Date(t.dueDate);
       if (d.getFullYear() !== displayYear || d.getMonth() !== displayMonth)
         continue;
@@ -2187,6 +2429,8 @@ export default function CalendarScreen(): React.JSX.Element {
     calendarPersonalTasks,
     displayYear,
     displayMonth,
+    selectedProfileId,
+    taskPassesProfileFilter,
   ]);
 
   // ── Chip conditional visibility (Phase 2A) ──────────────────────────────────
@@ -2504,18 +2748,135 @@ export default function CalendarScreen(): React.JSX.Element {
     familyContacts?.selfEntityId,
   ]);
 
-  // === Filtered grid (Phase 2A layer chips) ===
+  // === Profile filter: pre-compute visible event IDs ===
+  // When a profile is selected, determine which events are relevant to that profile.
+  // Returns null when no profile filter is active (show all).
+  const profileVisibleEventIds = useMemo((): Set<string> | null => {
+    if (!selectedProfileId || !selectedProfile) return null;
+
+    const visibleIds = new Set<string>();
+    const profile: { _id: string; matchedUserId?: string } = {
+      _id: selectedProfileId,
+      matchedUserId: selectedProfile.matchedUserId,
+    };
+    const myUserId = currentUser?._id as string | undefined;
+
+    // Personal events (includes saved-community-in-space events)
+    for (const ev of personalEvents) {
+      const evS = ev as {
+        allFamily?: boolean;
+        sharedWithFamilyMemberIds?: string[];
+        sharedWithUserIds?: string[];
+        communityId?: string;
+      };
+      if (evS.communityId) {
+        // Saved community event — filter by community association
+        if (
+          isCommunityEventRelevantToProfile(
+            { communityId: evS.communityId },
+            selectedProfileId,
+            associationMap,
+            canonicalSelfProfileId
+          )
+        ) {
+          visibleIds.add(ev._id as string);
+        }
+      } else {
+        // Personal event — dual-ID matching
+        if (isPersonalEventRelevantToProfile(evS, profile)) {
+          visibleIds.add(ev._id as string);
+        }
+      }
+    }
+
+    // Linked events — only visible when the selected profile IS the current user
+    if (profile.matchedUserId && myUserId && profile.matchedUserId === myUserId) {
+      for (const ev of linkedEvents) {
+        visibleIds.add(ev._id as string);
+      }
+    }
+
+    // Aggregate community events
+    for (const ev of aggregateCommunityEvents) {
+      if (
+        isCommunityEventRelevantToProfile(
+          { communityId: ev.communityId },
+          selectedProfileId,
+          associationMap,
+          canonicalSelfProfileId
+        )
+      ) {
+        visibleIds.add(ev._id as string);
+      }
+    }
+
+    return visibleIds;
+  }, [
+    selectedProfileId,
+    selectedProfile,
+    personalEvents,
+    linkedEvents,
+    aggregateCommunityEvents,
+    associationMap,
+    currentUser?._id,
+    canonicalSelfProfileId,
+  ]);
+
+  // === Profile filter: pre-compute visible task IDs ===
+  // Uses task: prefix to match timeline task IDs.
+  const profileVisibleTaskIds = useMemo((): Set<string> | null => {
+    if (!selectedProfileId || !selectedProfile) return null;
+    const visibleIds = new Set<string>();
+    const profile: { _id: string; matchedUserId?: string } = {
+      _id: selectedProfileId,
+      matchedUserId: selectedProfile.matchedUserId,
+    };
+    for (const t of calendarPersonalTasks) {
+      const tRaw = t as { communityId?: string; assignedToMemberIds?: string[]; assignedToUserIds?: string[] };
+      if (tRaw.communityId) {
+        if (
+          isCommunityEventRelevantToProfile(
+            { communityId: tRaw.communityId },
+            selectedProfileId,
+            associationMap,
+            canonicalSelfProfileId
+          )
+        ) {
+          visibleIds.add(`task:${t._id}`);
+        }
+      } else {
+        if (isPersonalTaskRelevantToProfile(tRaw, profile)) {
+          visibleIds.add(`task:${t._id}`);
+        }
+      }
+    }
+    return visibleIds;
+  }, [
+    selectedProfileId,
+    selectedProfile,
+    calendarPersonalTasks,
+    associationMap,
+    canonicalSelfProfileId,
+  ]);
+
+  // === Filtered grid (Phase 2A layer chips + profile filter) ===
   // Structural shape is identical to `grid` — only events within each day are filtered.
   // Community events are identified by `communityId` being set (non-nullish).
   const filteredGrid = useMemo(() => {
-    if (layerFilters.showCommunity) return grid;
+    const needLayerFilter = !layerFilters.showCommunity;
+    const needProfileFilter = profileVisibleEventIds != null;
+    if (!needLayerFilter && !needProfileFilter) return grid;
     return grid.map((week) =>
       week.map((day) => ({
         ...day,
-        events: day.events.filter((ev) => !ev.communityId),
+        events: day.events.filter((ev) => {
+          if (needLayerFilter && ev.communityId) return false;
+          if (needProfileFilter && !profileVisibleEventIds.has(ev.id)) return false;
+          return true;
+        }),
       }))
     );
-  }, [grid, layerFilters.showCommunity]);
+  }, [grid, layerFilters.showCommunity, profileVisibleEventIds]);
 
   // === Holiday overlay (Phase 2B Step 4A) ===
   // Compute the inclusive date range that exactly covers the visible monthly grid,
@@ -2759,6 +3120,8 @@ export default function CalendarScreen(): React.JSX.Element {
         if (t.dueDate == null) return false;
         // Hide community tasks when קהילות chip is OFF (stable: communityId set)
         if (!layerFilters.showCommunity && t.communityId) return false;
+        // Profile filter
+        if (!taskPassesProfileFilter(t as { communityId?: string; assignedToMemberIds?: string[]; assignedToUserIds?: string[] })) return false;
         const d = new Date(t.dueDate);
         return (
           d.getFullYear() === displayYear &&
@@ -2804,6 +3167,7 @@ export default function CalendarScreen(): React.JSX.Element {
     memberMaps,
     layerFilters.showTasks,
     layerFilters.showCommunity,
+    taskPassesProfileFilter,
   ]);
 
   /** Tasks for the expanded day-sheet modal */
@@ -2817,6 +3181,8 @@ export default function CalendarScreen(): React.JSX.Element {
         if (t.dueDate == null) return false;
         // Hide community tasks when קהילות chip is OFF (stable: communityId set)
         if (!layerFilters.showCommunity && t.communityId) return false;
+        // Profile filter
+        if (!taskPassesProfileFilter(t as { communityId?: string; assignedToMemberIds?: string[]; assignedToUserIds?: string[] })) return false;
         const d = new Date(t.dueDate);
         return (
           d.getFullYear() === displayYear &&
@@ -2862,6 +3228,7 @@ export default function CalendarScreen(): React.JSX.Element {
     memberMaps,
     layerFilters.showTasks,
     layerFilters.showCommunity,
+    taskPassesProfileFilter,
   ]);
 
   /**
@@ -2876,6 +3243,7 @@ export default function CalendarScreen(): React.JSX.Element {
     for (const t of calendarPersonalTasks) {
       if (t.dueDate == null) continue;
       if (!layerFilters.showCommunity && t.communityId) continue;
+      if (!taskPassesProfileFilter(t as { communityId?: string; assignedToMemberIds?: string[]; assignedToUserIds?: string[] })) continue;
       const d = new Date(t.dueDate);
       if (d.getFullYear() !== displayYear || d.getMonth() !== displayMonth)
         continue;
@@ -2890,6 +3258,7 @@ export default function CalendarScreen(): React.JSX.Element {
     displayMonth,
     layerFilters.showTasks,
     layerFilters.showCommunity,
+    taskPassesProfileFilter,
   ]);
 
   /** Holidays for the expanded day-sheet modal — pre-computed to reuse in visible condition. */
@@ -3766,7 +4135,8 @@ export default function CalendarScreen(): React.JSX.Element {
   //   community task  → both are true (caught by either chip being OFF)
   const filteredTimelineData = useMemo(() => {
     const { showCommunity, showTasks } = layerFilters;
-    if (showCommunity && showTasks) return timelineData;
+    const hasProfileFilter = profileVisibleEventIds != null || profileVisibleTaskIds != null;
+    if (showCommunity && showTasks && !hasProfileFilter) return timelineData;
     return (
       timelineData
         .map((group) => ({
@@ -3778,13 +4148,21 @@ export default function CalendarScreen(): React.JSX.Element {
             // Task items: covers personal tasks and community tasks.
             // Community tasks are also caught by the rule above when both chips are OFF.
             if (!showTasks && ev.isPersonalTask) return false;
+            // Profile filter
+            if (hasProfileFilter) {
+              if (ev.isPersonalTask) {
+                if (profileVisibleTaskIds && !profileVisibleTaskIds.has(ev.id)) return false;
+              } else {
+                if (profileVisibleEventIds && !profileVisibleEventIds.has(ev.id)) return false;
+              }
+            }
             return true;
           }),
         }))
         // Keep empty today group so the auto-scroll anchor is preserved.
         .filter((group) => group.events.length > 0 || group.isToday)
     );
-  }, [timelineData, layerFilters]);
+  }, [timelineData, layerFilters, profileVisibleEventIds, profileVisibleTaskIds]);
 
   // Extend filteredTimelineData with holiday-only day groups.
   // Days that have holidays but no events/tasks are inserted so they appear in
@@ -3960,27 +4338,71 @@ export default function CalendarScreen(): React.JSX.Element {
                 onNextMonth={goToNextMonth}
                 onPrevMonth={goToPrevMonth}
                 onTitlePress={() => setIsMonthPickerVisible(true)}
-                showFilterIcon={!communityId && visibleFilterRows.length > 0}
+                showFilterIcon={!communityId && (visibleFilterRows.length > 0 || (canUseProfileFilter && selectableProfiles.length > 0))}
+                hasActiveFilter={selectedProfileId != null || !layerFilters.showCommunity || !layerFilters.showTasks}
                 onFilterPress={() => setIsFilterPanelOpen(true)}
               />
             </View>
           ) : null}
 
-          {/* Timeline view: show filter icon in a row below the segmented control */}
-          {viewMode === 'timeline' &&
-          !communityId &&
-          visibleFilterRows.length > 0 ? (
+          {/* Timeline view: filter icon + profile carousel */}
+          {viewMode === 'timeline' && !communityId ? (
             <View style={styles.timelineFilterRow}>
-              <Pressable
-                onPress={() => setIsFilterPanelOpen(true)}
-                hitSlop={8}
-                accessible={true}
-                accessibilityRole="button"
-                accessibilityLabel="סינון היומן"
-                style={styles.timelineFilterBtn}
-              >
-                <MaterialIcons name="tune" size={20} color="#647b87" />
-              </Pressable>
+              {/* Tune icon — active indicator when any restrictive filter is on */}
+              {(visibleFilterRows.length > 0 || (canUseProfileFilter && selectableProfiles.length > 0)) ? (
+                <Pressable
+                  onPress={() => setIsFilterPanelOpen(true)}
+                  hitSlop={8}
+                  accessible={true}
+                  accessibilityRole="button"
+                  accessibilityLabel="סינון היומן"
+                  style={[
+                    styles.timelineFilterBtn,
+                    (selectedProfileId != null ||
+                      !layerFilters.showCommunity ||
+                      !layerFilters.showTasks) && styles.timelineFilterBtnActive,
+                  ]}
+                >
+                  <MaterialIcons
+                    name="tune"
+                    size={20}
+                    color={
+                      selectedProfileId != null ||
+                      !layerFilters.showCommunity ||
+                      !layerFilters.showTasks
+                        ? colors.primary
+                        : '#647b87'
+                    }
+                  />
+                </Pressable>
+              ) : null}
+
+              {/* FIX 9: Profile avatar carousel — eligible users only */}
+              {canUseProfileFilter && selectableProfiles.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.profileCarouselContent}
+                  style={styles.profileCarousel}
+                >
+                  {selectableProfiles.map((p) => (
+                    <ProfileAvatarCircle
+                      key={p._id}
+                      displayName={p.displayName}
+                      color={p.color}
+                      memberType={p.memberType}
+                      size={34}
+                      selected={selectedProfileId === p._id}
+                      onPress={() => {
+                        // Toggle: tap again to deselect
+                        setSelectedProfileId((prev) =>
+                          prev === p._id ? null : p._id
+                        );
+                      }}
+                    />
+                  ))}
+                </ScrollView>
+              ) : null}
             </View>
           ) : null}
         </View>
@@ -3993,6 +4415,8 @@ export default function CalendarScreen(): React.JSX.Element {
             myImportantItemChecks={myImportantItemChecks}
             onEventPress={handleOpenEventDetails}
             onNavigate={handleNavigateToLocation}
+            selectedProfileId={selectedProfileId}
+            onShowAll={handleShowAllCalendarContent}
             onOpenTaskSheet={(id) => {
               setTaskSheetTaskId(id);
               setTaskSheetVisible(true);
@@ -4134,6 +4558,8 @@ export default function CalendarScreen(): React.JSX.Element {
                       myImportantItemChecks={myImportantItemChecks}
                       onEventPress={handleOpenEventDetails}
                       onClose={() => setSelectedDay(null)}
+                      selectedProfileId={selectedProfileId}
+                      onShowAll={handleShowAllCalendarContent}
                       onOpenTaskSheet={(id) => {
                         setTaskSheetTaskId(id);
                         setTaskSheetVisible(true);
@@ -4185,6 +4611,8 @@ export default function CalendarScreen(): React.JSX.Element {
           onClose={closeDayEventsSheet}
           onEventLongPress={handleExpandedEventLongPress}
           onEventNavigate={handleExpandedEventNavigate}
+          selectedProfileId={selectedProfileId}
+          onShowAll={handleShowAllCalendarContent}
           onOpenTaskSheet={(id) => {
             closeDayEventsSheet();
             setTaskSheetTaskId(id);
@@ -4217,6 +4645,11 @@ export default function CalendarScreen(): React.JSX.Element {
           filters={layerFilters}
           onToggle={toggleLayerFilter}
           rows={visibleFilterRows}
+          canUseProfileFilter={canUseProfileFilter}
+          profiles={selectableProfiles}
+          selectedProfileId={selectedProfileId}
+          onSelectProfile={setSelectedProfileId}
+          onShowAll={handleShowAllCalendarContent}
         />
         <UpgradeModal
           visible={upgradeModalVisible}
@@ -5053,6 +5486,10 @@ interface DayEventsListProps {
   onClose: () => void;
   onOpenTaskSheet: (id: string) => void;
   myImportantItemChecks?: Record<string, Record<string, boolean>>;
+  /** FIX 9 empty-state follow-up: active Family Profile filter, if any. */
+  selectedProfileId: string | null;
+  /** FIX 9 empty-state follow-up: canonical "הצג הכל" reset action. */
+  onShowAll: () => void;
 }
 
 function DayEventsList({
@@ -5066,6 +5503,8 @@ function DayEventsList({
   onClose,
   onOpenTaskSheet,
   myImportantItemChecks = {},
+  selectedProfileId,
+  onShowAll,
 }: DayEventsListProps): React.JSX.Element {
   const router = useRouter();
   const { findBirthdayByName, openBirthdayCard } = useBirthdaySheets();
@@ -5465,12 +5904,19 @@ function DayEventsList({
       ))}
 
       {/* Empty State */}
-      {!hasContent && (
-        <View style={dStyles.emptyState}>
-          <MaterialIcons name="calendar-today" size={40} color="#d1d5db" />
-          <Text style={dStyles.emptyText}>אין אירועים מתוכננים ליום זה</Text>
-        </View>
-      )}
+      {!hasContent &&
+        (selectedProfileId != null ? (
+          // FIX 9 empty-state follow-up: this day has content in general,
+          // but none of it matches the actively selected Family Profile.
+          <ProfileFilterEmptyState onShowAll={onShowAll} />
+        ) : (
+          <View style={dStyles.emptyState}>
+            <MaterialIcons name="calendar-today" size={40} color="#d1d5db" />
+            <Text style={dStyles.emptyText}>
+              אין אירועים מתוכננים ליום זה
+            </Text>
+          </View>
+        ))}
       <UpgradeModal
         visible={listUpgradeModalVisible}
         reason="general"
@@ -5535,6 +5981,55 @@ function buildMissingDays(
   return result;
 }
 
+// ===== Profile Filter Empty State (FIX 9 empty-state follow-up) =====
+// Shown ONLY when a Family Profile filter is actively selected AND the
+// filtered Calendar result (Timeline day groups / Month selected-day
+// content) has no matching events or tasks. Does not replace any other
+// existing Calendar empty state (e.g. "no events for this community",
+// "no events today") — those still render when no profile filter is active.
+function ProfileFilterEmptyState({
+  onShowAll,
+  style,
+}: {
+  onShowAll: () => void;
+  style?: StyleProp<ViewStyle>;
+}): React.JSX.Element {
+  return (
+    <View style={[profileFilterEmptyStateStyles.container, style]}>
+      <MaterialIcons name="filter-alt-off" size={40} color="#d1d5db" />
+      <Text style={profileFilterEmptyStateStyles.text}>
+        לא נמצאו אירועים או משימות ששויכו לפרופיל הזה.
+      </Text>
+      {/* Reuses the existing canonical "הצג הכל" action — no second reset
+          implementation. Same button style as the Filter Bottom Sheet. */}
+      <Pressable
+        onPress={onShowAll}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel="הצג הכל"
+        style={filterPanelStyles.showAllBtn}
+      >
+        <Text style={filterPanelStyles.showAllText}>הצג הכל</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const profileFilterEmptyStateStyles = StyleSheet.create({
+  container: {
+    alignItems: 'center',
+    paddingVertical: 32,
+    paddingHorizontal: 32,
+    gap: 10,
+  },
+  text: {
+    fontSize: 14,
+    color: '#9ca3af',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+});
+
 // ===== Timeline View =====
 function TimelineView({
   data,
@@ -5544,6 +6039,8 @@ function TimelineView({
   onNavigate,
   onAddPress,
   onOpenTaskSheet,
+  selectedProfileId,
+  onShowAll,
 }: {
   data: TimelineDayGroup[];
   /** Per-date holiday items. Empty record when showHolidays is off or no categories enabled. */
@@ -5554,6 +6051,10 @@ function TimelineView({
   onNavigate: (location: string, locationUrl?: string) => void;
   onAddPress: (dateStr: string) => void;
   onOpenTaskSheet: (id: string) => void;
+  /** FIX 9 empty-state follow-up: active Family Profile filter, if any. */
+  selectedProfileId: string | null;
+  /** FIX 9 empty-state follow-up: canonical "הצג הכל" reset action. */
+  onShowAll: () => void;
 }): React.JSX.Element {
   const [openGaps, setOpenGaps] = useState<Record<string, boolean>>({});
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
@@ -5605,6 +6106,16 @@ function TimelineView({
   );
 
   if (data.length === 0) {
+    // FIX 9 empty-state follow-up: only overrides the generic empty state
+    // when a Family Profile filter is the reason the result is empty.
+    if (selectedProfileId != null) {
+      return (
+        <ProfileFilterEmptyState
+          onShowAll={onShowAll}
+          style={{ flex: 1, justifyContent: 'center', paddingTop: 80 }}
+        />
+      );
+    }
     return (
       <View
         style={{
@@ -6102,12 +6613,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#f8fafc',
   },
+  monthNavFilterBtnActive: {
+    backgroundColor: colors.primaryLight,
+  },
   timelineFilterRow: {
-    // Column cross-axis: rtl.alignStart = physical RIGHT (measured 2026-07, Section D).
-    alignItems: rtl.alignStart,
+    flexDirection: rtl.flexDirection,
+    alignItems: 'center',
     paddingHorizontal: 12,
     paddingBottom: 4,
     paddingTop: 2,
+    gap: 8,
   },
   timelineFilterBtn: {
     width: 36,
@@ -6116,6 +6631,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#f8fafc',
+  },
+  timelineFilterBtnActive: {
+    backgroundColor: colors.primaryLight,
+  },
+  profileCarousel: {
+    flexGrow: 0,
+    flexShrink: 1,
+  },
+  profileCarouselContent: {
+    gap: 8,
+    alignItems: 'center',
+    paddingVertical: 2,
   },
   monthChevronButton: {
     width: 32,
