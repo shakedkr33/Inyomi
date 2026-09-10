@@ -56,6 +56,35 @@ const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * PRODUCT RULE — Home Community Event accordion visibility.
+ *
+ * Home is a "what's still available to claim / what's already mine"
+ * surface, never a task-management view: only unassigned tasks and tasks
+ * already assigned to the current viewer are shown here — even for
+ * community managers/admins. Tasks assigned to other members are never
+ * shown on Home (they remain visible in full via Community Main / Event
+ * Details, which intentionally keep manager/full visibility).
+ *
+ * Filtered here (upstream of `EventTasksAccordion`) rather than inside
+ * that shared component, because the same component also renders the
+ * Community Bottom Sheet, whose own (unrelated) visibility rules must
+ * stay untouched.
+ */
+function filterHomeVisibleEventTasks<
+  T extends {
+    isAssignedToCurrentUser: boolean;
+    assignedToUserId?: string;
+    assignedToManual?: string;
+  },
+>(tasks: T[]): T[] {
+  return tasks.filter(
+    (t) =>
+      t.isAssignedToCurrentUser ||
+      (!t.assignedToUserId && !t.assignedToManual?.trim())
+  );
+}
+
 function getGreetingByHour(hour: number): string {
   if (hour >= 5 && hour < 12) return 'בוקר טוב';
   if (hour >= 12 && hour < 17) return 'צהריים טובים';
@@ -104,10 +133,15 @@ function getEmptyStateCopy(selectedDate: Date): {
 // Tasks that are derived from community event important items (both the legacy
 // per-item copies and the Sprint 2 bundle task) are shown nested under the
 // event on Home and must not appear as standalone task cards there.
+// Mirrored by the identically-named helper in app/(authenticated)/calendar.tsx
+// — keep both in sync.
 function isEventDerivedImportantItemTask(task: {
   sourceType?: string;
 }): boolean {
-  return task.sourceType === 'community_event_important_item';
+  return (
+    task.sourceType === 'community_event_important_item' ||
+    task.sourceType === 'community_event_important_items_bundle'
+  );
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -776,20 +810,23 @@ export default function HomeScreen() {
     () =>
       homeEventTaskResults.reduce<Record<string, EventTaskAccordionData>>(
         (acc, r) => {
+          const mappedTasks = r.tasks.map((t) => ({
+            id: String(t._id),
+            title: t.title,
+            completed: t.completed,
+            completedAt: t.completedAt,
+            order: t.order,
+            assignedToUserId: t.assignedToUserId
+              ? String(t.assignedToUserId)
+              : undefined,
+            assignedToManual: t.assignedToManual,
+            assigneeDisplay: t.assigneeDisplay,
+            isAssignedToCurrentUser: t.isAssignedToCurrentUser,
+          }));
           acc[String(r.eventId)] = {
-            tasks: r.tasks.map((t) => ({
-              id: String(t._id),
-              title: t.title,
-              completed: t.completed,
-              completedAt: t.completedAt,
-              order: t.order,
-              assignedToUserId: t.assignedToUserId
-                ? String(t.assignedToUserId)
-                : undefined,
-              assignedToManual: t.assignedToManual,
-              assigneeDisplay: t.assigneeDisplay,
-              isAssignedToCurrentUser: t.isAssignedToCurrentUser,
-            })),
+            // Home-only rule: unassigned + mine, never other members'
+            // assigned tasks — see filterHomeVisibleEventTasks doc.
+            tasks: filterHomeVisibleEventTasks(mappedTasks),
             canManageTasks: r.canManageTasks,
             tasksVisibleToParticipants: r.tasksVisibleToParticipants,
           };

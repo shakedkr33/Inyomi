@@ -526,34 +526,29 @@ export function accumulateMainOverviewCandidate<T>(
 }
 
 /**
- * BUG FIX (manual QA) — an all-day community event's `startTime` is
- * stamped at LOCAL MIDNIGHT of its calendar day (see event/new.tsx's
- * community save handler / event-edit's identical convention), which is
- * almost always in the past relative to the current instant once any time
- * has elapsed on that day. A plain `startTime >= now` scan bound (used by
- * listCommunityMainOverview / listCommunityAdditionalEventsPaged to scope
- * their scan to "upcoming" events) therefore excluded TODAY's all-day
- * event from Community Main for the entire day it is happening — even
- * though the exact same event correctly appears on Home, which scopes by
- * day-range rather than instant (see events.listCommunityEventsForDate).
+ * BUG FIX (manual QA, follow-up) — Community Main is a "what is happening
+ * in this community today / next" surface, not a strict "not yet started"
+ * scan. A previous fix made TODAY's all-day event (whose `startTime` is
+ * stamped at local midnight) eligible for the whole day, but a SEPARATE
+ * `startTime >= now` check still applied to TIMED events, so a today
+ * event whose start time (or end time) had already passed still vanished
+ * from Community Main mid-day, even though the identical event correctly
+ * stayed visible on the "אירועים" tab (see event/new.tsx's community save
+ * handler for the all-day startTime-at-local-midnight convention, and
+ * hasEventEndedByNow in lib/eventsTabDateHelpers.ts for the Events tab's
+ * own, unchanged "has this event ended" rule).
  *
- * This helper preserves the EXACT existing "not yet started" rule for
- * timed events (`startTime >= now`) — never changed — but never rejects
- * an all-day event on that basis. Whether an all-day event has "already
- * ended" is intentionally decided ONLY on the client via
- * `hasEventEndedByNow` (device-local timezone), the SAME rule already
- * relied on by the Events tab / Reminders tab (see
- * isEventImportantItemsGroupEligible's doc comment above) — recomputing
- * that in a Convex query would run in the server runtime's timezone, which
- * is not equivalent and can silently disagree with the viewer's device.
+ * The extra `isEventStartTimeEligibleForUpcomingScan(event, now)` instant
+ * check that used to live here has been removed rather than redefined:
+ * `listCommunityMainOverview` / `listCommunityAdditionalEventsPaged`
+ * already scope their indexed scan to `startTime >= localDayStart` (the
+ * viewer's device-local midnight), which is now the ONLY eligibility
+ * boundary these two queries need — any event reached by that scan
+ * belongs to today or a future local day and must remain eligible for the
+ * rest of today, regardless of its own start/end time. This intentionally
+ * makes eligibility for Community Main purely a function of the caller-
+ * supplied `localDayStart`, never the server's own clock.
  */
-export function isEventStartTimeEligibleForUpcomingScan(
-  event: { allDay?: boolean; startTime: number },
-  now: number
-): boolean {
-  if (event.allDay) return true;
-  return event.startTime >= now;
-}
 
 /** True once both categories have reached their limit — the scan loop can stop. */
 export function isMainOverviewAccumulatorSatisfied<T>(

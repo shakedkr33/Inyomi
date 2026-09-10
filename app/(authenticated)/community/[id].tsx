@@ -32,8 +32,16 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import { AppConfirmationDialog } from '@/components/AppConfirmationDialog';
+import {
+  type AuthorizedHomeEventTask,
+  type EventTaskAccordionData,
+  EventTasksAccordion,
+} from '@/components/home/EventTasksAccordion';
 import { ImportantItemsAddToTasksButton } from '@/components/ImportantItemsAddToTasksButton';
 import {
   type JoinApprovalMode,
@@ -45,6 +53,7 @@ import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { selectMainReminderCandidates } from '@/lib/communityMainReminderCandidate';
 import { canManageEventReminderItem } from '@/lib/eventReminderPermissions';
+import { formatCommunityMainTaskCtaText } from '@/lib/eventTasksSummary';
 import {
   formatEventsTabMonthYearLabel,
   getCurrentEventsTabMonth,
@@ -456,8 +465,151 @@ function groupActivitiesByDate(
     .filter((group) => group.items.length > 0);
 }
 
+/**
+ * FIX 8B — member-facing, action-oriented task-status copy shared by the
+ * Community Main carousel cards (MainEventCard/AdditionalEventCard) and the
+ * Community "אירועים" tab card (EventsTabCard). Replaces the previous
+ * technical "X/Y הוקצו" counter with plain-language Hebrew copy describing
+ * (a) how many tasks are still unassigned and (b) how many are assigned to
+ * the viewer themself — combined into one concise line when both are true.
+ * Returns null when there is nothing meaningful to show (no active tasks).
+ */
+function formatCommunityTaskStatusLine(
+  taskSummary: TaskSummary
+): string | null {
+  const assignedTasksCount =
+    taskSummary.assignedTasksCount ?? taskSummary.assigned;
+  const totalTasksCount = taskSummary.totalTasksCount ?? taskSummary.total;
+  if (totalTasksCount <= 0) return null;
+
+  const unassignedCount = Math.max(totalTasksCount - assignedTasksCount, 0);
+  const myCount = taskSummary.myAssignedTasks.length;
+
+  if (unassignedCount <= 0 && myCount <= 0) {
+    return 'כל המשימות שובצו';
+  }
+
+  const myPartCompact =
+    myCount === 1 ? 'משימה אחת' : myCount > 1 ? `${myCount} משימות` : null;
+  const unassignedPartCompact =
+    unassignedCount === 1
+      ? 'אחת ממתינה לשיבוץ'
+      : unassignedCount > 1
+        ? `${unassignedCount} ממתינות לשיבוץ`
+        : null;
+
+  if (myPartCompact && unassignedPartCompact) {
+    return `יש לך ${myPartCompact} · ${unassignedPartCompact}`;
+  }
+  if (myPartCompact) {
+    return `יש לך ${myPartCompact} באירוע`;
+  }
+  if (unassignedCount === 1) {
+    return 'משימה אחת ממתינה לשיבוץ';
+  }
+  return `${unassignedCount} משימות ממתינות לשיבוץ`;
+}
+
+/**
+ * FIX 8B FOLLOW-UP §1 — own-assignment-only variant of
+ * formatCommunityTaskStatusLine, used when the viewer does NOT have full
+ * task visibility (not a manager and `tasksVisibleToParticipants !== true`).
+ * Deliberately never mentions unassigned/total counts — those belong
+ * exclusively to the full-visibility branch below.
+ *
+ * FIX 8B FINAL CTA COPY — used ONLY by `getCommunityMainTaskStatusLine`
+ * (Community Main's CTA copy) when there are no unassigned tasks left but
+ * the viewer has assigned tasks of their own (e.g. "יש לך משימה אחת
+ * באירוע") — distinct from the plain status copy the Events tab still uses
+ * via `formatCommunityTaskStatusLine`, which is intentionally untouched.
+ */
+function formatOwnAssignedOnlyTaskStatusLine(myCount: number): string | null {
+  if (myCount <= 0) return null;
+  return myCount === 1
+    ? 'יש לך משימה אחת באירוע'
+    : `יש לך ${myCount} משימות באירוע`;
+}
+
+// `formatCommunityMainTaskCtaText` (Community Main-only task CTA copy) now
+// lives in `lib/eventTasksSummary.ts` — see its doc comment there — so the
+// mine/available combined-copy rule is unit-testable without a React
+// Native harness and cannot drift from what this screen renders. Imported
+// above via the `@/lib/eventTasksSummary` import group. Deliberately
+// separate from `formatCommunityTaskStatusLine` below, which the Events
+// tab still uses verbatim per the FIX 8B UX CORRECTION spec (§5) —
+// changing the CTA copy must never affect Events tab copy.
+
+/**
+ * FIX 8B UX CORRECTION — `isActionable: false` means the line must render
+ * as static/passive text (e.g. "✓ כל המשימות שובצו" when everything is
+ * assigned and the viewer has nothing of their own) — never as the CTA
+ * pill button, since there is nothing useful to open. `isDone` is kept
+ * separately for `TaskSummaryLine`'s existing `doneStyle` contract.
+ */
+type CommunityMainTaskLine = {
+  text: string;
+  isDone: boolean;
+  isActionable: boolean;
+};
+
+/**
+ * FIX 8B FOLLOW-UP §1 — the ONLY function Community Main's carousel cards
+ * (MainEventCard/AdditionalEventCard) are allowed to derive their visible
+ * task-status copy from. `getTaskCountsForEvents` (→ `taskSummary`) is NOT
+ * visibility-aware on its own — it always returns the event's real total
+ * and unassigned counts. This combines it with `homeTaskEntry`, sourced
+ * from the SAME authorized query (`listEventTasksForHome`) that gates the
+ * task sheet's actual task list, to decide what is safe to reveal:
+ *
+ *   - No `homeTaskEntry` at all → nothing is authorized for this viewer on
+ *     this event → render nothing (never fall back to raw counts).
+ *   - `canManageTasks || tasksVisibleToParticipants` → full CTA copy
+ *     (unassigned + own-assigned counts).
+ *   - Otherwise → own-assignment-only line, built ONLY from
+ *     `taskSummary.myAssignedTasks` — a per-viewer count that is always
+ *     safe to reveal because it never describes other members' tasks or
+ *     the event-wide total/unassigned counts.
+ */
+function getCommunityMainTaskStatusLine(
+  taskSummary: TaskSummary | undefined,
+  homeTaskEntry: EventTaskAccordionData | undefined
+): CommunityMainTaskLine | null {
+  if (!homeTaskEntry) return null;
+
+  const hasFullVisibility =
+    homeTaskEntry.canManageTasks || homeTaskEntry.tasksVisibleToParticipants;
+
+  if (hasFullVisibility) {
+    if (!taskSummary) return null;
+    const assignedTasksCount =
+      taskSummary.assignedTasksCount ?? taskSummary.assigned;
+    const totalTasksCount = taskSummary.totalTasksCount ?? taskSummary.total;
+    if (totalTasksCount <= 0) return null;
+    const unassignedCount = Math.max(totalTasksCount - assignedTasksCount, 0);
+    const myCount = taskSummary.myAssignedTasks.length;
+    const text = formatCommunityMainTaskCtaText(myCount, unassignedCount);
+    const isDone = unassignedCount <= 0;
+    // Nothing actionable ONLY when everything is assigned AND the viewer
+    // has nothing of their own to unclaim — every other combination still
+    // opens a useful task sheet (claim, or view/unclaim own task).
+    const isActionable = !(isDone && myCount <= 0);
+    return { text, isDone, isActionable };
+  }
+
+  const myCount = taskSummary?.myAssignedTasks.length ?? 0;
+  const text = formatOwnAssignedOnlyTaskStatusLine(myCount);
+  if (!text) return null;
+  return { text, isDone: false, isActionable: true };
+}
+
 interface TaskSummaryLineProps {
-  taskSummary: TaskSummary;
+  /**
+   * Raw counts-based summary — used as-is by EventRow, CommunityEventFlyerCard
+   * and EventsTabCard (unchanged FIX 8B behavior). Community Main's carousel
+   * cards no longer use this component at all — see `CommunityMainTaskCta`,
+   * which renders their visibility-safe CTA copy directly.
+   */
+  taskSummary?: TaskSummary;
   copy: 'full' | 'compact';
   style: StyleProp<TextStyle>;
   doneStyle?: StyleProp<TextStyle>;
@@ -465,106 +617,27 @@ interface TaskSummaryLineProps {
 
 function TaskSummaryLine({
   taskSummary,
-  copy,
   style,
   doneStyle,
 }: TaskSummaryLineProps) {
-  const [tooltipVisible, setTooltipVisible] = useState(false);
-  const assignedTasksCount =
-    taskSummary.assignedTasksCount ?? taskSummary.assigned;
-  const totalTasksCount = taskSummary.totalTasksCount ?? taskSummary.total;
-  const myTaskTitles = taskSummary.myAssignedTasks
-    .map((task) => task.title.trim())
-    .filter((title) => title.length > 0);
-  const hasMyAssignedTasks =
-    taskSummary.hasMyAssignedTasks && myTaskTitles.length > 0;
-  const baseText =
-    copy === 'full'
-      ? `${assignedTasksCount}/${totalTasksCount} משימות הוקצו`
-      : `${assignedTasksCount}/${totalTasksCount} הוקצו`;
+  const lineText = taskSummary
+    ? formatCommunityTaskStatusLine(taskSummary)
+    : null;
+  if (!lineText) return null;
 
-  const handleTaskLinePress = useCallback(
-    (event: GestureResponderEvent): void => {
-      event.stopPropagation();
-      setTooltipVisible((visible) => !visible);
-    },
-    []
-  );
-
-  const handleTooltipPress = useCallback(
-    (event: GestureResponderEvent): void => {
-      event.stopPropagation();
-    },
-    []
-  );
-
-  const lineText = (
-    <Text
-      numberOfLines={1}
-      style={[style, assignedTasksCount === totalTasksCount ? doneStyle : null]}
-    >
-      {baseText}
-      {hasMyAssignedTasks ? ' · ' : ''}
-      {hasMyAssignedTasks ? (
-        <Text style={styles.myTasksIndicator}>גם לך</Text>
-      ) : null}
-    </Text>
-  );
+  let isAllAssigned = false;
+  if (taskSummary) {
+    const assignedTasksCount =
+      taskSummary.assignedTasksCount ?? taskSummary.assigned;
+    const totalTasksCount = taskSummary.totalTasksCount ?? taskSummary.total;
+    isAllAssigned =
+      totalTasksCount > 0 && assignedTasksCount >= totalTasksCount;
+  }
 
   return (
-    <>
-      {hasMyAssignedTasks ? (
-        <Pressable
-          accessibilityHint="פותח את המשימות שלך באירוע"
-          accessibilityLabel="גם לך יש משימות באירוע"
-          accessibilityRole="button"
-          hitSlop={{ top: 10, bottom: 10, left: 12, right: 12 }}
-          onPress={handleTaskLinePress}
-          style={styles.taskSummaryPressable}
-        >
-          {lineText}
-        </Pressable>
-      ) : (
-        lineText
-      )}
-      <Modal
-        animationType="fade"
-        onRequestClose={() => setTooltipVisible(false)}
-        transparent
-        visible={tooltipVisible}
-      >
-        <Pressable
-          onPress={() => setTooltipVisible(false)}
-          style={styles.myTasksTooltipBackdrop}
-        >
-          <Pressable
-            accessible={true}
-            accessibilityLabel="המשימות שלך"
-            onPress={handleTooltipPress}
-            style={styles.myTasksTooltip}
-          >
-            {myTaskTitles.length === 1 ? (
-              <Text numberOfLines={3} style={styles.myTasksTooltipText}>
-                {`המשימה שלך: ${myTaskTitles[0]}`}
-              </Text>
-            ) : (
-              <>
-                <Text style={styles.myTasksTooltipTitle}>המשימות שלך:</Text>
-                {myTaskTitles.map((title, index) => (
-                  <Text
-                    key={`${title}-${index}`}
-                    numberOfLines={2}
-                    style={styles.myTasksTooltipText}
-                  >
-                    {`• ${title}`}
-                  </Text>
-                ))}
-              </>
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
-    </>
+    <Text numberOfLines={1} style={[style, isAllAssigned ? doneStyle : null]}>
+      {lineText}
+    </Text>
   );
 }
 
@@ -1912,16 +1985,85 @@ function MainEventChips({ isToday, isTomorrow, isNew }: MainEventChipsProps) {
   );
 }
 
+/**
+ * FIX 8B FINAL CTA COPY + VISUAL TREATMENT — dedicated, unmistakably-a-
+ * button task CTA rendered near the bottom of MainEventCard/
+ * AdditionalEventCard. A solid brand-blue button (not an outline/pill/
+ * text-row): solid `PRIMARY` background, bold white text, near-full width,
+ * minimum 44px touch height, centered content — reads as one solid action
+ * control rather than a status row. Opens the Community Task Bottom Sheet.
+ *
+ * When `line.isActionable` is `false` (nothing useful to do — e.g.
+ * "✓ כל המשימות שובצו" with no task of the viewer's own) it renders as
+ * plain, non-pressable passive text so it never implies tappability where
+ * there is no action.
+ */
+function CommunityMainTaskCta({
+  line,
+  onPress,
+}: {
+  line: CommunityMainTaskLine;
+  onPress: (event: GestureResponderEvent) => void;
+}) {
+  // Root-cause investigation note: this Pressable previously used the
+  // `style={({ pressed }) => [...]}` callback form. Converted to a static
+  // style array driven by local `pressed` state (onPressIn/onPressOut) as
+  // the priority-hypothesis fix for the reported "hit target works, blue
+  // background/text never paints" symptom. See the task's final report for
+  // what static investigation could and could not confirm.
+  const [pressed, setPressed] = useState(false);
+
+  if (!line.isActionable) {
+    return (
+      <Text numberOfLines={1} style={styles.mainEventTaskPassive}>
+        {line.text}
+      </Text>
+    );
+  }
+
+  return (
+    <Pressable
+      accessibilityHint="פותח את רשימת המשימות של האירוע"
+      accessibilityLabel={line.text}
+      accessibilityRole="button"
+      hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+      onPress={onPress}
+      onPressIn={() => setPressed(true)}
+      onPressOut={() => setPressed(false)}
+      style={[
+        styles.mainEventTaskCta,
+        pressed && styles.mainEventTaskCtaPressed,
+      ]}
+    >
+      <MaterialIcons color="#fff" name="assignment-turned-in" size={16} />
+      <Text numberOfLines={1} style={styles.mainEventTaskCtaText}>
+        {line.text}
+      </Text>
+    </Pressable>
+  );
+}
+
 interface MainEventCardProps {
   event: EventDoc;
   rsvpStatus: RsvpStatus;
   isCreator: boolean;
-  taskSummary?: TaskSummary;
+  /**
+   * FIX 8B FOLLOW-UP §1 — precomputed, visibility-safe line (or `null` when
+   * nothing may be shown to this viewer). See `getCommunityMainTaskStatusLine`.
+   */
+  taskStatusLine: CommunityMainTaskLine | null;
   cardWidth: number;
   isNew: boolean;
   isToday: boolean;
   isTomorrow: boolean;
   onOpenDetails: (eventId: Id<'events'>) => void;
+  /**
+   * FIX 8B UX CORRECTION: tapping the task CTA calls this with the event id
+   * to open the dedicated Community Task Bottom Sheet — never expands or
+   * navigates the card itself. Optional so callers that don't support the
+   * sheet (none currently) keep the CTA hidden.
+   */
+  onOpenTaskSheet?: (eventId: Id<'events'>) => void;
 }
 
 /**
@@ -1935,16 +2077,26 @@ function MainEventCard({
   event,
   rsvpStatus,
   isCreator,
-  taskSummary,
+  taskStatusLine,
   cardWidth,
   isNew,
   isToday,
   isTomorrow,
   onOpenDetails,
+  onOpenTaskSheet,
 }: MainEventCardProps) {
   const statusLabel = getMainCardStatusLabel(event, rsvpStatus, isCreator);
-  const taskTotal = taskSummary?.totalTasksCount ?? taskSummary?.total ?? 0;
   const locationLabel = event.location?.trim();
+  const eventId = event._id;
+  // Stop propagation so tapping the task CTA never also triggers the
+  // card's own onOpenDetails press (they're nested Pressables).
+  const handleTaskCtaPress = useCallback(
+    (e: GestureResponderEvent) => {
+      e.stopPropagation();
+      onOpenTaskSheet?.(eventId);
+    },
+    [onOpenTaskSheet, eventId]
+  );
 
   return (
     <Pressable
@@ -1970,12 +2122,10 @@ function MainEventCard({
         <Text numberOfLines={1} style={styles.mainEventStatus}>
           {statusLabel}
         </Text>
-        {taskSummary && taskTotal > 0 ? (
-          <TaskSummaryLine
-            copy="compact"
-            doneStyle={styles.mainEventTaskSummaryDone}
-            style={styles.mainEventTaskSummary}
-            taskSummary={taskSummary}
+        {taskStatusLine ? (
+          <CommunityMainTaskCta
+            line={taskStatusLine}
+            onPress={handleTaskCtaPress}
           />
         ) : null}
       </View>
@@ -2096,10 +2246,16 @@ interface AdditionalEventCardProps {
   isNew: boolean;
   isToday: boolean;
   isTomorrow: boolean;
-  taskSummary?: TaskSummary;
+  /**
+   * FIX 8B FOLLOW-UP §1 — precomputed, visibility-safe line (or `null` when
+   * nothing may be shown to this viewer). See `getCommunityMainTaskStatusLine`.
+   */
+  taskStatusLine: CommunityMainTaskLine | null;
   isAdding: boolean;
   onOpenDetails: (eventId: Id<'events'>) => void;
   onAddToCalendar: (eventId: Id<'events'>) => void;
+  /** FIX 8B UX CORRECTION — see MainEventCardProps.onOpenTaskSheet. */
+  onOpenTaskSheet?: (eventId: Id<'events'>) => void;
 }
 
 /**
@@ -2117,14 +2273,24 @@ function AdditionalEventCard({
   isNew,
   isToday,
   isTomorrow,
-  taskSummary,
+  taskStatusLine,
   isAdding,
   onOpenDetails,
   onAddToCalendar,
+  onOpenTaskSheet,
 }: AdditionalEventCardProps) {
-  const taskTotal = taskSummary?.totalTasksCount ?? taskSummary?.total ?? 0;
   const locationLabel = event.location?.trim();
   const addLabel = getOpenCommunityCalendarActionLabel(false);
+  const eventId = event._id;
+  // Stop propagation so tapping the task CTA never also triggers this
+  // card's own onOpenDetails press (nested Pressables).
+  const handleTaskCtaPress = useCallback(
+    (e: GestureResponderEvent) => {
+      e.stopPropagation();
+      onOpenTaskSheet?.(eventId);
+    },
+    [onOpenTaskSheet, eventId]
+  );
 
   return (
     <View style={[styles.mainEventCard, { width: cardWidth }]}>
@@ -2151,12 +2317,10 @@ function AdditionalEventCard({
             📍 {locationLabel}
           </Text>
         ) : null}
-        {taskSummary && taskTotal > 0 ? (
-          <TaskSummaryLine
-            copy="compact"
-            doneStyle={styles.mainEventTaskSummaryDone}
-            style={styles.mainEventTaskSummary}
-            taskSummary={taskSummary}
+        {taskStatusLine ? (
+          <CommunityMainTaskCta
+            line={taskStatusLine}
+            onPress={handleTaskCtaPress}
           />
         ) : null}
       </Pressable>
@@ -2178,6 +2342,141 @@ function AdditionalEventCard({
         </Text>
       </Pressable>
     </View>
+  );
+}
+
+interface CommunityTaskBottomSheetProps {
+  /** `null` (or no data) means the sheet is closed — never rendered. */
+  event: EventDoc | null;
+  taskData: EventTaskAccordionData | undefined;
+  isLoading: boolean;
+  onClose: () => void;
+  onClaimTask: (taskId: string) => void;
+  onUnclaimTask: (taskId: string) => void;
+}
+
+/**
+ * FIX 8B UX CORRECTION — dedicated Community Main task-participation Bottom
+ * Sheet, replacing the previous `CommunityMainTaskPanel` inline-below-
+ * carousel rendering. Opens as a Modal (same slide-up pattern as the
+ * existing `RsvpBottomSheet` — backdrop press to dismiss, spring-in
+ * animation, `onRequestClose` for the Android hardware back button) ONLY
+ * when the task CTA on a MainEventCard/AdditionalEventCard is tapped —
+ * never on a plain card tap, which must keep opening Event Details.
+ *
+ * Reuses the SAME `EventTasksAccordion` presentational component and
+ * claim/unclaim mutations as the panel it replaces — no forked
+ * task-authorization logic, no new sync mechanism. `canManageTasks` is
+ * intentionally always passed as `false`: this surface is member
+ * participation only (claim/unclaim), never task management or completion
+ * — see `allowCompletion={false}` below (FIX 8B FOLLOW-UP §3). Managers
+ * keep using Event Details / Event Edit for actual task management.
+ */
+function CommunityTaskBottomSheet({
+  event,
+  taskData,
+  isLoading,
+  onClose,
+  onClaimTask,
+  onUnclaimTask,
+}: CommunityTaskBottomSheetProps) {
+  const slideAnim = useRef(new Animated.Value(400)).current;
+  const isOpen = event !== null;
+  // FIX 8B FOLLOW-UP §2 — Android system-navigation overlap fix: the
+  // Modal draws behind Android's system nav bar/gesture area, so the
+  // sheet's own bottom padding must account for `insets.bottom` (already
+  // the app's established pattern — see TaskDetailsBottomSheet). `Math.max`
+  // keeps the existing 24pt look on devices with a small/no inset (e.g.
+  // gesture nav) while growing enough to fully clear 3-button nav bars.
+  const insets = useSafeAreaInsets();
+  const taskSheetBottomPadding = Math.max(24, insets.bottom + 12);
+
+  useEffect(() => {
+    if (isOpen) {
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 80,
+        friction: 12,
+      }).start();
+    } else {
+      slideAnim.setValue(400);
+    }
+  }, [isOpen, slideAnim]);
+
+  if (!event) return null;
+
+  const tasks = taskData?.tasks ?? [];
+
+  return (
+    <Modal animationType="none" onRequestClose={onClose} transparent visible>
+      <Pressable
+        accessibilityLabel="סגירת רשימת המשימות"
+        accessibilityRole="button"
+        onPress={onClose}
+        style={styles.sheetBackdrop}
+      />
+      <Animated.View
+        style={[
+          styles.taskSheet,
+          {
+            paddingBottom: taskSheetBottomPadding,
+            transform: [{ translateY: slideAnim }],
+          },
+        ]}
+      >
+        <View style={styles.sheetHandle} />
+        <View style={styles.taskSheetHeader}>
+          <View style={styles.taskSheetHeaderTextBlock}>
+            <Text numberOfLines={1} style={styles.taskSheetEventTitle}>
+              {event.title}
+            </Text>
+            <Text style={styles.taskSheetSectionTitle}>משימות לאירוע</Text>
+          </View>
+          <Pressable
+            accessible
+            accessibilityLabel="סגירה"
+            accessibilityRole="button"
+            hitSlop={10}
+            onPress={onClose}
+            style={styles.taskSheetCloseBtn}
+          >
+            <MaterialIcons color="#647b87" name="close" size={20} />
+          </Pressable>
+        </View>
+        {isLoading ? (
+          <ActivityIndicator color={PRIMARY} style={{ marginVertical: 24 }} />
+        ) : tasks.length > 0 ? (
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            style={styles.taskSheetScroll}
+          >
+            <EventTasksAccordion
+              allowCompletion={false}
+              canManageTasks={false}
+              eventEndTime={event.endTime}
+              expanded
+              onClaimTask={onClaimTask}
+              onToggle={() => {
+                // No-op: this surface always renders expanded — the
+                // accordion's own collapse/expand affordance is unused
+                // here, and must never close the whole sheet (a past
+                // regression in the panel this replaces).
+              }}
+              onUnclaimTask={onUnclaimTask}
+              tasks={tasks}
+              tasksVisibleToParticipants={
+                taskData?.tasksVisibleToParticipants ?? false
+              }
+            />
+          </ScrollView>
+        ) : (
+          <Text style={styles.taskSheetEmptyText}>
+            אין משימות גלויות עבורך באירוע זה כרגע
+          </Text>
+        )}
+      </Animated.View>
+    </Modal>
   );
 }
 
@@ -2265,22 +2564,19 @@ function TabMain({
       api.events.listRecentCancelledCommunityEvents,
       recentCancelledArgs
     ) ?? [];
-  // BUG FIX (manual QA) — the server query now over-fetches all-day events
-  // (whose startTime sits at local midnight, see
-  // isEventStartTimeEligibleForUpcomingScan's doc comment) and intentionally
-  // defers the "has this all-day event already ended" decision to the
-  // client's device-local-timezone hasEventEndedByNow, exactly like the
-  // "אירועים" tab already does for the identical reason (see that helper's
-  // doc comment + convex/communityCalendarState.ts). Timed-event behavior is
-  // unchanged: hasEventEndedByNow(timed) is false for any event the server
-  // already guaranteed startTime >= now.
-  const myEvents = ((overview?.myEvents ?? []) as EventDoc[]).filter(
-    (e) => !hasEventEndedByNow(e, Date.now())
-  );
+  // BUG FIX (manual QA, follow-up) — Community Main must keep TODAY's
+  // events visible for the viewer's entire local day, even once their
+  // start/end time has passed (unlike the "אירועים" tab, which correctly
+  // moves an ended event into "אירועים שהתקיימו" via hasEventEndedByNow).
+  // The server (`listCommunityMainOverview`) already scopes its scan to
+  // `startTime >= localDayStart` — the viewer's device-local midnight —
+  // which is now the ONLY eligibility boundary for these lists, so no
+  // client-side `hasEventEndedByNow` filtering is applied here any more.
+  // See the doc comment above isMainOverviewAccumulatorSatisfied in
+  // convex/communityCalendarState.ts for the full rationale.
+  const myEvents = (overview?.myEvents ?? []) as EventDoc[];
   const myEventsHasMore = overview?.myEventsHasMore ?? false;
-  const pendingRsvpEvents = (
-    (overview?.pendingRsvpEvents ?? []) as EventDoc[]
-  ).filter((e) => !hasEventEndedByNow(e, Date.now()));
+  const pendingRsvpEvents = (overview?.pendingRsvpEvents ?? []) as EventDoc[];
   const pendingRsvpHasMore = overview?.pendingRsvpHasMore ?? false;
 
   // Dedicated, date-bounded Community Reminder retrieval for "מה חשוב עכשיו"
@@ -2378,12 +2674,10 @@ function TabMain({
 
     setAdditionalEvents((prev) => {
       const ids = new Set(prev.map((e) => e._id as string));
-      // BUG FIX (manual QA) — same client-side "has this all-day event
-      // already ended" deferral as the overview query above; see
-      // myEvents/pendingRsvpEvents's comment for the full explanation.
-      const freshPage = (additionalPage.page as EventDoc[]).filter(
-        (e) => !hasEventEndedByNow(e, Date.now())
-      );
+      // BUG FIX (manual QA, follow-up) — no client-side hasEventEndedByNow
+      // filtering here either; see myEvents/pendingRsvpEvents's comment
+      // above for the full explanation.
+      const freshPage = additionalPage.page as EventDoc[];
       const newItems = freshPage.filter((e) => !ids.has(e._id as string));
       return additionalCursor === null ? freshPage : [...prev, ...newItems];
     });
@@ -2464,6 +2758,131 @@ function TabMain({
       api.eventTasks.getTaskCountsForEvents,
       taskCountEventIds.length > 0 ? { eventIds: taskCountEventIds } : 'skip'
     ) ?? {};
+
+  // ── FIX 8B — Community Main inline task panel ──────────────────────────
+  // Reuses the SAME authorized query Home already uses
+  // (listEventTasksForHome) rather than inventing a second task-visibility
+  // pipeline. Scoped to exactly the events already rendered on this screen
+  // (same id set as taskCountsMap above) — never a community-wide scan.
+  const homeTaskResults = useQuery(
+    api.eventTasks.listEventTasksForHome,
+    taskCountEventIds.length > 0 ? { eventIds: taskCountEventIds } : 'skip'
+  );
+  const isHomeTaskDataLoading =
+    homeTaskResults === undefined && taskCountEventIds.length > 0;
+  const homeTasksByEventId = useMemo(() => {
+    const map: Record<string, EventTaskAccordionData> = {};
+    for (const r of homeTaskResults ?? []) {
+      const tasks: AuthorizedHomeEventTask[] = r.tasks.map((t) => ({
+        id: String(t._id),
+        title: t.title,
+        completed: t.completed,
+        completedAt: t.completedAt,
+        assignedToUserId: t.assignedToUserId
+          ? String(t.assignedToUserId)
+          : undefined,
+        assignedToManual: t.assignedToManual,
+        assigneeDisplay: t.assigneeDisplay,
+        isAssignedToCurrentUser: t.isAssignedToCurrentUser,
+      }));
+      map[String(r.eventId)] = {
+        tasks,
+        canManageTasks: r.canManageTasks,
+        tasksVisibleToParticipants: r.tasksVisibleToParticipants,
+      };
+    }
+    return map;
+  }, [homeTaskResults]);
+
+  // FIX 8B FOLLOW-UP §1 — visibility-safe task-status line per event,
+  // computed ONCE here from the SAME two authorized data sources (never
+  // from raw `taskCountsMap` counts alone). See `getCommunityMainTaskStatusLine`.
+  const communityMainTaskLineByEventId = useMemo(() => {
+    const map: Record<string, CommunityMainTaskLine | null> = {};
+    for (const eventId of taskCountEventIds) {
+      map[eventId as string] = getCommunityMainTaskStatusLine(
+        taskCountsMap[eventId],
+        homeTasksByEventId[eventId as string]
+      );
+    }
+    return map;
+  }, [taskCountEventIds, taskCountsMap, homeTasksByEventId]);
+
+  // FIX 8B UX CORRECTION — a single selected event id is sufficient to open
+  // one Community Task Bottom Sheet at a time (replaces the previous
+  // section-aware `openTaskPanelSelection` inline-panel state — the sheet
+  // is a full-screen Modal overlay, so it no longer needs to know which
+  // carousel section it was opened from).
+  const [selectedTaskEventId, setSelectedTaskEventId] =
+    useState<Id<'events'> | null>(null);
+
+  const eventsById = useMemo(() => {
+    const map = new Map<string, EventDoc>();
+    for (const ev of myEvents) map.set(ev._id as string, ev);
+    for (const ev of pendingRsvpEvents) map.set(ev._id as string, ev);
+    for (const ev of additionalEvents) map.set(ev._id as string, ev);
+    return map;
+  }, [myEvents, pendingRsvpEvents, additionalEvents]);
+
+  // Defensive auto-close: if the open event scrolls out of every loaded
+  // list (e.g. pagination replaced it, or it left the viewer's calendar),
+  // never leave a stale/orphaned sheet open.
+  useEffect(() => {
+    if (selectedTaskEventId && !eventsById.has(selectedTaskEventId)) {
+      setSelectedTaskEventId(null);
+    }
+  }, [selectedTaskEventId, eventsById]);
+
+  const handleOpenTaskSheet = useCallback((eventId: Id<'events'>) => {
+    setSelectedTaskEventId(eventId);
+  }, []);
+  const handleCloseTaskSheet = useCallback(() => {
+    setSelectedTaskEventId(null);
+  }, []);
+
+  // Same mutations + in-flight guarding pattern as
+  // HomeDailyCommandCenter's handleClaimEventTask/handleUnclaimEventTask —
+  // intentionally not a second implementation of the underlying semantics,
+  // just a second UI entry point to the same Convex mutations. FIX 8B
+  // FOLLOW-UP §3 — Community Main is claim/unclaim-only, so no
+  // `toggleCompleted` mutation/handler is wired here any more.
+  const claimEventTaskMutation = useMutation(api.eventTasks.claimEventTask);
+  const unclaimEventTaskMutation = useMutation(api.eventTasks.unclaimEventTask);
+  const pendingTaskActionIds = useRef(new Set<string>());
+
+  const handleClaimEventTask = useCallback(
+    async (taskId: string): Promise<void> => {
+      if (pendingTaskActionIds.current.has(taskId)) return;
+      pendingTaskActionIds.current.add(taskId);
+      try {
+        await claimEventTaskMutation({ id: taskId as Id<'eventTasks'> });
+      } catch (_error) {
+        Alert.alert('שגיאה', 'לא ניתן להשתבץ למשימה כרגע');
+      } finally {
+        pendingTaskActionIds.current.delete(taskId);
+      }
+    },
+    [claimEventTaskMutation]
+  );
+
+  const handleUnclaimEventTask = useCallback(
+    async (taskId: string): Promise<void> => {
+      if (pendingTaskActionIds.current.has(taskId)) return;
+      pendingTaskActionIds.current.add(taskId);
+      try {
+        await unclaimEventTaskMutation({ id: taskId as Id<'eventTasks'> });
+      } catch (_error) {
+        Alert.alert('שגיאה', 'לא ניתן להסיר הקצאה כרגע');
+      } finally {
+        pendingTaskActionIds.current.delete(taskId);
+      }
+    },
+    [unclaimEventTaskMutation]
+  );
+
+  const selectedTaskEvent = selectedTaskEventId
+    ? (eventsById.get(selectedTaskEventId as string) ?? null)
+    : null;
 
   const isEventNew = useCallback(
     (ev: EventDoc) => isEventNewSincePreviousVisit(ev, previousVisitAt),
@@ -2592,164 +3011,187 @@ function TabMain({
   );
 
   return (
-    <ScrollView
-      contentContainerStyle={styles.tabContent}
-      showsVerticalScrollIndicator={false}
-      style={styles.tabScroll}
-    >
-      {/* ── מה חשוב עכשיו — hidden entirely when there is nothing to show */}
-      {importantNowItems.length > 0 ? (
-        <View>
-          <SectionHeader title="מה חשוב עכשיו" />
-          <View style={styles.importantNowList}>
-            {importantNowItems.map((item) => (
-              <ImportantNowRow item={item} key={item.key} />
-            ))}
+    <>
+      <ScrollView
+        contentContainerStyle={styles.tabContent}
+        showsVerticalScrollIndicator={false}
+        style={styles.tabScroll}
+      >
+        {/* ── מה חשוב עכשיו — hidden entirely when there is nothing to show */}
+        {importantNowItems.length > 0 ? (
+          <View>
+            <SectionHeader title="מה חשוב עכשיו" />
+            <View style={styles.importantNowList}>
+              {importantNowItems.map((item) => (
+                <ImportantNowRow item={item} key={item.key} />
+              ))}
+            </View>
           </View>
-        </View>
-      ) : null}
+        ) : null}
 
-      {/* ── האירועים שלי — horizontal carousel, always shown (core section) */}
-      <View>
-        <SectionHeader
-          actionLabel="הצג הכל"
-          onAction={onSeeMoreEvents}
-          title="האירועים שלי"
-        />
-        {isLoadingOverview ? (
-          <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
-        ) : myEvents.length === 0 ? (
-          <View style={styles.emptySmall}>
-            <Text style={styles.emptySmallText}>
-              {myEventsHasMore
-                ? // The scan hit its safety cap without proof there are no
-                  // matching events further out — showing the flat "no
-                  // events" claim here would be a false negative (see the
-                  // Stage 2A scale-edge-case investigation). Point at the
-                  // existing "הצג הכל" action above instead of asserting
-                  // emptiness we can't actually confirm.
-                  'יש אירועים נוספים לצפייה'
-                : 'עדיין אין אירועים ביומן שלך בקהילה זו'}
-            </Text>
-          </View>
-        ) : (
-          <ScrollView
-            contentContainerStyle={styles.mainCarouselContent}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-          >
-            {myEvents.map((ev) => (
-              <MainEventCard
-                cardWidth={carouselCardWidth}
-                event={ev}
-                isCreator={isEventCreator(ev)}
-                isNew={isEventNew(ev)}
-                isToday={isEventOnLocalDay(ev, todayKey)}
-                isTomorrow={isEventOnLocalDay(ev, tomorrowKey)}
-                key={ev._id}
-                onOpenDetails={onOpenEventDetails}
-                rsvpStatus={rsvpMap[ev._id] ?? 'none'}
-                taskSummary={taskCountsMap[ev._id]}
-              />
-            ))}
-            {myEventsHasMore ? (
-              <Pressable
-                accessible
-                accessibilityLabel="הצג את כל האירועים שלי"
-                accessibilityRole="button"
-                onPress={onSeeMoreEvents}
-                style={[styles.mainSeeMoreCard, { width: carouselCardWidth }]}
-              >
-                <Ionicons color={PRIMARY} name="chevron-back" size={20} />
-                <Text style={styles.mainSeeMoreText}>הצג הכל</Text>
-              </Pressable>
-            ) : null}
-          </ScrollView>
-        )}
-      </View>
-
-      {/* ── מחכים לתגובה — short vertical list, hidden entirely when empty */}
-      {pendingRsvpEvents.length > 0 ? (
+        {/* ── האירועים שלי — horizontal carousel, always shown (core section) */}
         <View>
           <SectionHeader
-            actionLabel={pendingRsvpHasMore ? 'הצג הכל' : undefined}
-            onAction={pendingRsvpHasMore ? onSeeMoreEvents : undefined}
-            subtitle="אירועים שדורשים אישור הגעה ממך"
-            title="מחכים לתגובה"
+            actionLabel="הצג הכל"
+            onAction={onSeeMoreEvents}
+            title="האירועים שלי"
           />
           {isLoadingOverview ? (
             <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
+          ) : myEvents.length === 0 ? (
+            <View style={styles.emptySmall}>
+              <Text style={styles.emptySmallText}>
+                {myEventsHasMore
+                  ? // The scan hit its safety cap without proof there are no
+                    // matching events further out — showing the flat "no
+                    // events" claim here would be a false negative (see the
+                    // Stage 2A scale-edge-case investigation). Point at the
+                    // existing "הצג הכל" action above instead of asserting
+                    // emptiness we can't actually confirm.
+                    'יש אירועים נוספים לצפייה'
+                  : 'עדיין אין אירועים ביומן שלך בקהילה זו'}
+              </Text>
+            </View>
           ) : (
-            <View style={{ gap: 8 }}>
-              {pendingRsvpEvents.map((ev) => (
-                <MainPendingRsvpRow
+            <ScrollView
+              contentContainerStyle={styles.mainCarouselContent}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+            >
+              {myEvents.map((ev) => (
+                <MainEventCard
+                  cardWidth={carouselCardWidth}
                   event={ev}
-                  flyerDetailsOnly={isEventCreator(ev)}
+                  isCreator={isEventCreator(ev)}
                   isNew={isEventNew(ev)}
                   isToday={isEventOnLocalDay(ev, todayKey)}
                   isTomorrow={isEventOnLocalDay(ev, tomorrowKey)}
                   key={ev._id}
                   onOpenDetails={onOpenEventDetails}
-                  onRsvpSelect={onInlineRsvp}
+                  onOpenTaskSheet={handleOpenTaskSheet}
+                  rsvpStatus={rsvpMap[ev._id] ?? 'none'}
+                  taskStatusLine={
+                    communityMainTaskLineByEventId[ev._id as string] ?? null
+                  }
                 />
               ))}
-            </View>
+              {myEventsHasMore ? (
+                <Pressable
+                  accessible
+                  accessibilityLabel="הצג את כל האירועים שלי"
+                  accessibilityRole="button"
+                  onPress={onSeeMoreEvents}
+                  style={[styles.mainSeeMoreCard, { width: carouselCardWidth }]}
+                >
+                  <Ionicons color={PRIMARY} name="chevron-back" size={20} />
+                  <Text style={styles.mainSeeMoreText}>הצג הכל</Text>
+                </Pressable>
+              ) : null}
+            </ScrollView>
           )}
         </View>
-      ) : null}
 
-      {/* ── אירועים נוספים — QA FIX (Issue 2): upcoming community events not
+        {/* ── מחכים לתגובה — short vertical list, hidden entirely when empty */}
+        {pendingRsvpEvents.length > 0 ? (
+          <View>
+            <SectionHeader
+              actionLabel={pendingRsvpHasMore ? 'הצג הכל' : undefined}
+              onAction={pendingRsvpHasMore ? onSeeMoreEvents : undefined}
+              subtitle="אירועים שדורשים אישור הגעה ממך"
+              title="מחכים לתגובה"
+            />
+            {isLoadingOverview ? (
+              <ActivityIndicator
+                color={PRIMARY}
+                style={{ marginVertical: 16 }}
+              />
+            ) : (
+              <View style={{ gap: 8 }}>
+                {pendingRsvpEvents.map((ev) => (
+                  <MainPendingRsvpRow
+                    event={ev}
+                    flyerDetailsOnly={isEventCreator(ev)}
+                    isNew={isEventNew(ev)}
+                    isToday={isEventOnLocalDay(ev, todayKey)}
+                    isTomorrow={isEventOnLocalDay(ev, tomorrowKey)}
+                    key={ev._id}
+                    onOpenDetails={onOpenEventDetails}
+                    onRsvpSelect={onInlineRsvp}
+                  />
+                ))}
+              </View>
+            )}
+          </View>
+        ) : null}
+
+        {/* ── אירועים נוספים — QA FIX (Issue 2): upcoming community events not
           yet in the viewer's personal calendar. Horizontal, genuinely
           paginated list — NOT capped to 2-3 events (see
           listCommunityAdditionalEventsPaged). Hidden entirely once loading
           settles and there is nothing eligible to discover. */}
-      {isLoadingAdditional && additionalEvents.length === 0 ? (
-        <View>
-          <SectionHeader
-            subtitle="אירועי קהילה שעדיין לא הוספת ליומן שלך"
-            title="אירועים נוספים"
-          />
-          <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
-        </View>
-      ) : additionalEvents.length > 0 ? (
-        <View>
-          <SectionHeader
-            subtitle="אירועי קהילה שעדיין לא הוספת ליומן שלך"
-            title="אירועים נוספים"
-          />
-          <FlatList<EventDoc>
-            contentContainerStyle={styles.mainCarouselContent}
-            data={additionalEvents}
-            horizontal
-            keyExtractor={(ev) => ev._id}
-            ListFooterComponent={
-              additionalLoadingMore ? (
-                <ActivityIndicator
-                  color={PRIMARY}
-                  style={{ marginHorizontal: 16 }}
+        {isLoadingAdditional && additionalEvents.length === 0 ? (
+          <View>
+            <SectionHeader
+              subtitle="אירועי קהילה שעדיין לא הוספת ליומן שלך"
+              title="אירועים נוספים"
+            />
+            <ActivityIndicator color={PRIMARY} style={{ marginVertical: 16 }} />
+          </View>
+        ) : additionalEvents.length > 0 ? (
+          <View>
+            <SectionHeader
+              subtitle="אירועי קהילה שעדיין לא הוספת ליומן שלך"
+              title="אירועים נוספים"
+            />
+            <FlatList<EventDoc>
+              contentContainerStyle={styles.mainCarouselContent}
+              data={additionalEvents}
+              horizontal
+              keyExtractor={(ev) => ev._id}
+              ListFooterComponent={
+                additionalLoadingMore ? (
+                  <ActivityIndicator
+                    color={PRIMARY}
+                    style={{ marginHorizontal: 16 }}
+                  />
+                ) : null
+              }
+              onEndReached={handleLoadMoreAdditional}
+              onEndReachedThreshold={0.5}
+              renderItem={({ item: ev }) => (
+                <AdditionalEventCard
+                  cardWidth={carouselCardWidth}
+                  event={ev}
+                  isAdding={addingEventId === (ev._id as string)}
+                  isNew={isEventNew(ev)}
+                  isToday={isEventOnLocalDay(ev, todayKey)}
+                  isTomorrow={isEventOnLocalDay(ev, tomorrowKey)}
+                  onAddToCalendar={handleAddToCalendar}
+                  onOpenDetails={onOpenEventDetails}
+                  onOpenTaskSheet={handleOpenTaskSheet}
+                  taskStatusLine={
+                    communityMainTaskLineByEventId[ev._id as string] ?? null
+                  }
                 />
-              ) : null
-            }
-            onEndReached={handleLoadMoreAdditional}
-            onEndReachedThreshold={0.5}
-            renderItem={({ item: ev }) => (
-              <AdditionalEventCard
-                cardWidth={carouselCardWidth}
-                event={ev}
-                isAdding={addingEventId === (ev._id as string)}
-                isNew={isEventNew(ev)}
-                isToday={isEventOnLocalDay(ev, todayKey)}
-                isTomorrow={isEventOnLocalDay(ev, tomorrowKey)}
-                onAddToCalendar={handleAddToCalendar}
-                onOpenDetails={onOpenEventDetails}
-                taskSummary={taskCountsMap[ev._id]}
-              />
-            )}
-            showsHorizontalScrollIndicator={false}
-          />
-        </View>
-      ) : null}
-    </ScrollView>
+              )}
+              showsHorizontalScrollIndicator={false}
+            />
+          </View>
+        ) : null}
+      </ScrollView>
+      <CommunityTaskBottomSheet
+        event={selectedTaskEvent}
+        isLoading={isHomeTaskDataLoading}
+        onClaimTask={handleClaimEventTask}
+        onClose={handleCloseTaskSheet}
+        onUnclaimTask={handleUnclaimEventTask}
+        taskData={
+          selectedTaskEvent
+            ? homeTasksByEventId[selectedTaskEvent._id as string]
+            : undefined
+        }
+      />
+    </>
   );
 }
 
@@ -5054,6 +5496,14 @@ const styles = StyleSheet.create({
   mainChipTextTomorrow: { fontSize: 11, fontWeight: '700', color: '#475569' },
   mainCarouselContent: {
     flexDirection: 'row-reverse',
+    // Without this, the row's default cross-axis `alignItems: 'stretch'`
+    // forces every card in the carousel to match the tallest sibling's
+    // height, so a single card with an actionable task CTA (naturally
+    // taller than a card without one) would inflate every other compact
+    // card in the same row too. `flex-start` lets each card keep its own
+    // natural/minHeight instead of being stretched by neighbors —
+    // required for "cards without a task CTA remain compact".
+    alignItems: 'flex-start',
     gap: 12,
     paddingLeft: 16,
   },
@@ -5089,19 +5539,97 @@ const styles = StyleSheet.create({
     textAlign: rtl.textAlign,
     marginBottom: 6,
   },
-  mainEventFooter: { marginTop: 'auto', gap: 2 },
+  mainEventFooter: { marginTop: 'auto', gap: 6 },
   mainEventStatus: {
     fontSize: 12,
     fontWeight: '600',
     color: PRIMARY,
     textAlign: rtl.textAlign,
   },
-  mainEventTaskSummary: {
-    fontSize: 12,
-    color: '#9ca3af',
+  // ── FIX 8B FINAL CTA COPY + VISUAL TREATMENT — Community Main task CTA
+  // (solid brand-blue button, unmistakably a control — not a pill/text
+  // row or outline) ────────────────────────────────────────────────────
+  mainEventTaskCta: {
+    flexDirection: rtl.flexDirection,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 44,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: PRIMARY,
+  },
+  mainEventTaskCtaPressed: { backgroundColor: '#2a8bbd', opacity: 0.92 },
+  mainEventTaskCtaText: {
+    flexShrink: 1,
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
     textAlign: rtl.textAlign,
   },
-  mainEventTaskSummaryDone: { color: '#16a34a' },
+  mainEventTaskPassive: {
+    fontSize: 12,
+    color: '#6b7280',
+    textAlign: rtl.textAlign,
+  },
+  // ── FIX 8B UX CORRECTION — Community Task Bottom Sheet ──────────────────
+  taskSheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    maxHeight: '78%',
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 12,
+    // Base value only — overridden at render time with a safe-area-aware
+    // value (see `taskSheetBottomPadding` in CommunityTaskBottomSheet) so
+    // Android system navigation never covers the last task row/action.
+    paddingBottom: 24,
+  },
+  taskSheetHeader: {
+    flexDirection: rtl.flexDirection,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+  },
+  taskSheetHeaderTextBlock: { flex: 1, minWidth: 0, gap: 2 },
+  taskSheetEventTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1f2937',
+    textAlign: rtl.textAlign,
+    writingDirection: 'rtl',
+  },
+  taskSheetSectionTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: PRIMARY,
+    textAlign: rtl.textAlign,
+    writingDirection: 'rtl',
+  },
+  taskSheetCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f1f5f9',
+  },
+  taskSheetScroll: { flexGrow: 0 },
+  taskSheetEmptyText: {
+    paddingHorizontal: 20,
+    paddingVertical: 24,
+    fontSize: 13,
+    color: '#9ca3af',
+    textAlign: rtl.textAlign,
+    writingDirection: 'rtl',
+  },
   additionalEventPressable: { flex: 1 },
   additionalEventAddBtn: {
     marginTop: 10,
@@ -5441,52 +5969,6 @@ const styles = StyleSheet.create({
   },
   flyerMetaLast: {
     marginBottom: 0,
-  },
-  taskSummaryPressable: {
-    width: '100%',
-  },
-  myTasksIndicator: {
-    color: PRIMARY,
-    fontWeight: '800',
-    textDecorationLine: 'underline',
-  },
-  myTasksTooltipBackdrop: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-    backgroundColor: 'rgba(15,23,42,0.08)',
-  },
-  myTasksTooltip: {
-    minWidth: 220,
-    maxWidth: 300,
-    alignItems: rtl.alignStart,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 6,
-    gap: 6,
-  },
-  myTasksTooltipTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#111827',
-    textAlign: rtl.textAlign,
-    writingDirection: 'rtl',
-  },
-  myTasksTooltipText: {
-    fontSize: 13,
-    color: '#374151',
-    lineHeight: 19,
-    textAlign: rtl.textAlign,
-    writingDirection: 'rtl',
   },
   flyerCtaWrap: {
     paddingHorizontal: 10,

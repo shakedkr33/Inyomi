@@ -14,6 +14,7 @@ import {
 import { CommunityEventNameTag } from '@/components/CommunityEventNameTag';
 import {
   type AuthorizedHomeEventTask,
+  buildEventTasksSummaryLabel,
   type EventTaskAccordionData,
   EventTasksAccordion,
 } from '@/components/home/EventTasksAccordion';
@@ -158,9 +159,9 @@ interface UnifiedTimelineCardProps {
   onToggleEventTasks?: () => void;
   /** Toggle completion of an event task by its ID. */
   onToggleEventTaskCompleted?: (taskId: string) => void;
-  /** Called when user taps "+ אני אקח" on an eligible unassigned event task. */
+  /** Called when user taps "אני אקח" on an eligible unassigned event task. */
   onClaimEventTask?: (taskId: string) => void;
-  /** Called when user taps "בטל הקצאה" on their own incomplete event task. */
+  /** Called when user taps "ביטול הקצאה" on their own incomplete event task. */
   onUnclaimEventTask?: (taskId: string) => void;
   /**
    * Called when the viewer taps the personal-dismiss "X" on a general
@@ -542,6 +543,12 @@ const UnifiedTimelineCard = ({
     item.type === 'event' && importantItems.length > 0;
   const hasEventTasks =
     item.type === 'event' && (eventTasksData?.tasks.length ?? 0) > 0;
+  // Home-only summary: mine/unassigned breakdown built from the already
+  // Home-filtered task list (see filterHomeVisibleEventTasks in
+  // app/(authenticated)/index.tsx) — replaces the generic "משימות האירוע · X".
+  const eventTasksSummaryLabel = hasEventTasks
+    ? buildEventTasksSummaryLabel(eventTasksData?.tasks ?? [])
+    : undefined;
   const hasNavigation = hasNavigableEventLocation(
     item.location,
     item.locationUrl
@@ -744,6 +751,16 @@ const UnifiedTimelineCard = ({
           />
         ) : null}
 
+        {hasEventImportantItems ? (
+          <View style={styles.importantItemsWrapper}>
+            <HomeImportantItemsPreview
+              alreadyAdded={importantItemsAlreadyAdded}
+              eventId={String(item.id)}
+              items={importantItems}
+            />
+          </View>
+        ) : null}
+
         {hasEventTasks && eventTasksData ? (
           <EventTasksAccordion
             tasks={eventTasksData.tasks}
@@ -754,20 +771,12 @@ const UnifiedTimelineCard = ({
             expanded={eventTasksExpanded ?? false}
             onToggle={onToggleEventTasks ?? (() => {})}
             onToggleCompleted={onToggleEventTaskCompleted ?? (() => {})}
-            eventStartTime={item.startAt}
+            eventEndTime={item.endAt}
             onClaimTask={onClaimEventTask}
             onUnclaimTask={onUnclaimEventTask}
+            summaryLabel={eventTasksSummaryLabel}
+            emphasized
           />
-        ) : null}
-
-        {hasEventImportantItems ? (
-          <View style={styles.importantItemsWrapper}>
-            <HomeImportantItemsPreview
-              alreadyAdded={importantItemsAlreadyAdded}
-              eventId={String(item.id)}
-              items={importantItems}
-            />
-          </View>
         ) : null}
 
         {showMaybeRsvpRow ? (
@@ -1018,6 +1027,15 @@ const UnifiedTimelineCard = ({
             taskId={item.id}
           />
         ) : null}
+        {hasEventImportantItems ? (
+          <View style={styles.importantItemsWrapper}>
+            <HomeImportantItemsPreview
+              alreadyAdded={importantItemsAlreadyAdded}
+              eventId={String(item.id)}
+              items={importantItems}
+            />
+          </View>
+        ) : null}
         {hasEventTasks && eventTasksData ? (
           <EventTasksAccordion
             tasks={eventTasksData.tasks}
@@ -1028,19 +1046,12 @@ const UnifiedTimelineCard = ({
             expanded={eventTasksExpanded ?? false}
             onToggle={onToggleEventTasks ?? (() => {})}
             onToggleCompleted={onToggleEventTaskCompleted ?? (() => {})}
-            eventStartTime={item.startAt}
+            eventEndTime={item.endAt}
             onClaimTask={onClaimEventTask}
             onUnclaimTask={onUnclaimEventTask}
+            summaryLabel={eventTasksSummaryLabel}
+            emphasized
           />
-        ) : null}
-        {hasEventImportantItems ? (
-          <View style={styles.importantItemsWrapper}>
-            <HomeImportantItemsPreview
-              alreadyAdded={importantItemsAlreadyAdded}
-              eventId={String(item.id)}
-              items={importantItems}
-            />
-          </View>
         ) : null}
         <View style={styles.rsvpRowCardSection}>
           {(
@@ -1105,6 +1116,15 @@ const UnifiedTimelineCard = ({
             taskId={item.id}
           />
         ) : null}
+        {hasEventImportantItems ? (
+          <View style={styles.importantItemsWrapper}>
+            <HomeImportantItemsPreview
+              alreadyAdded={importantItemsAlreadyAdded}
+              eventId={String(item.id)}
+              items={importantItems}
+            />
+          </View>
+        ) : null}
         {hasEventTasks && eventTasksData ? (
           <EventTasksAccordion
             tasks={eventTasksData.tasks}
@@ -1115,19 +1135,12 @@ const UnifiedTimelineCard = ({
             expanded={eventTasksExpanded ?? false}
             onToggle={onToggleEventTasks ?? (() => {})}
             onToggleCompleted={onToggleEventTaskCompleted ?? (() => {})}
-            eventStartTime={item.startAt}
+            eventEndTime={item.endAt}
             onClaimTask={onClaimEventTask}
             onUnclaimTask={onUnclaimEventTask}
+            summaryLabel={eventTasksSummaryLabel}
+            emphasized
           />
-        ) : null}
-        {hasEventImportantItems ? (
-          <View style={styles.importantItemsWrapper}>
-            <HomeImportantItemsPreview
-              alreadyAdded={importantItemsAlreadyAdded}
-              eventId={String(item.id)}
-              items={importantItems}
-            />
-          </View>
         ) : null}
         <View style={styles.compactNavActionRow}>
           <Pressable
@@ -1287,6 +1300,15 @@ const UnifiedTimelineCard = ({
         >
           {compactContent}
         </Pressable>
+        {hasEventImportantItems ? (
+          <View style={styles.importantItemsWrapper}>
+            <HomeImportantItemsPreview
+              alreadyAdded={importantItemsAlreadyAdded}
+              eventId={String(item.id)}
+              items={importantItems}
+            />
+          </View>
+        ) : null}
         {hasEventTasks && eventTasksData ? (
           <EventTasksAccordion
             tasks={eventTasksData.tasks}
@@ -1297,19 +1319,12 @@ const UnifiedTimelineCard = ({
             expanded={eventTasksExpanded ?? false}
             onToggle={onToggleEventTasks ?? (() => {})}
             onToggleCompleted={onToggleEventTaskCompleted ?? (() => {})}
-            eventStartTime={item.startAt}
+            eventEndTime={item.endAt}
             onClaimTask={onClaimEventTask}
             onUnclaimTask={onUnclaimEventTask}
+            summaryLabel={eventTasksSummaryLabel}
+            emphasized
           />
-        ) : null}
-        {hasEventImportantItems ? (
-          <View style={styles.importantItemsWrapper}>
-            <HomeImportantItemsPreview
-              alreadyAdded={importantItemsAlreadyAdded}
-              eventId={String(item.id)}
-              items={importantItems}
-            />
-          </View>
         ) : null}
       </View>
     );

@@ -19,7 +19,6 @@ import {
   finalizeMainOverviewHasMore,
   isCancelledEventRemovedFromCommunityDisplay,
   isEligibleForAdditionalCommunityEvent,
-  isEventStartTimeEligibleForUpcomingScan,
   isMainOverviewAccumulatorSatisfied,
   loadActiveSavedEventIds,
   loadOptOutEventIds,
@@ -835,11 +834,12 @@ export const listByCommunity = query({
 //     scan listByCommunity/listByCommunityPaged already use, starting the
 //     indexed lower bound at the caller-supplied `localDayStart` (the
 //     viewer's device-local midnight — see lib/eventsTabDateHelpers.ts's
-//     getLocalDayStart) rather than `now` itself, so today's all-day event
-//     (whose `startTime` is stamped at local midnight — see
-//     isEventStartTimeEligibleForUpcomingScan's doc comment) is still
-//     reached, WITHOUT pulling yesterday's already-ended all-day events
-//     into the scan (a previous flat `now - 48h` lookback did).
+//     getLocalDayStart) rather than `now` itself, so TODAY's event (timed
+//     or all-day) remains reachable for the viewer's entire local day —
+//     see the BUG FIX (manual QA, follow-up) doc comment above
+//     isMainOverviewAccumulatorSatisfied in communityCalendarState.ts —
+//     WITHOUT pulling yesterday's already-ended events into the scan (a
+//     previous flat `now - 48h` lookback did).
 //   - Feed each scanned event through the pure accumulator helpers in
 //     communityCalendarState.ts one at a time, so the scan can stop as soon
 //     as BOTH categories are filled (isMainOverviewAccumulatorSatisfied) —
@@ -877,16 +877,24 @@ const EMPTY_MAIN_OVERVIEW: {
 export const listCommunityMainOverview = query({
   args: {
     communityId: v.id('communities'),
-    /** Client clock (Date.now()) — never Date.now() inside the handler. */
+    /**
+     * Client clock (Date.now()) — accepted for API-shape compatibility
+     * with existing callers, but intentionally UNUSED by this handler: see
+     * the BUG FIX (manual QA, follow-up) doc comment above
+     * isMainOverviewAccumulatorSatisfied in communityCalendarState.ts —
+     * Community Main eligibility is decided entirely by `localDayStart`
+     * now, never by comparing an event's own start/end time to the
+     * server's or the viewer's current instant.
+     */
     now: v.number(),
     /**
      * 00:00:00.000 of the viewer's LOCAL calendar day, computed client-side
      * (see lib/eventsTabDateHelpers.ts's getLocalDayStart) — the scan's
-     * indexed lower bound. Replaces a previous flat `now - 48h` lookback:
-     * that widened the scan's window enough to always reach today's
-     * all-day event (stamped at local midnight), but also let YESTERDAY's
-     * already-ended all-day events consume scan/accumulator capacity. The
-     * server must not derive this from its own timezone.
+     * indexed lower bound AND, since the follow-up bug fix above, the
+     * ONLY eligibility boundary this query applies: any event reached by
+     * the `startTime >= localDayStart` scan belongs to today (or later)
+     * and stays eligible all local day, regardless of its own start/end
+     * time. The server must not derive this from its own timezone.
      */
     localDayStart: v.number(),
     myEventsLimit: v.optional(v.number()),
@@ -894,7 +902,7 @@ export const listCommunityMainOverview = query({
   },
   handler: async (
     ctx,
-    { communityId, now, localDayStart, myEventsLimit, pendingRsvpLimit }
+    { communityId, localDayStart, myEventsLimit, pendingRsvpLimit }
   ) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return EMPTY_MAIN_OVERVIEW;
@@ -938,8 +946,12 @@ export const listCommunityMainOverview = query({
 
       for (const ev of page.page) {
         scanned++;
+        // BUG FIX (manual QA, follow-up) — no further "has this event's
+        // start/end time passed?" check here: `startTime >= localDayStart`
+        // (the query above) is the ONLY Community Main eligibility
+        // boundary now. See the doc comment above
+        // isMainOverviewAccumulatorSatisfied in communityCalendarState.ts.
         if (ev.status === 'cancelled') continue;
-        if (!isEventStartTimeEligibleForUpcomingScan(ev, now)) continue;
         const idStr = ev._id as string;
         const state = computeCommunityEventPersonalCalendarState({
           isCreator: ev.createdBy === userId,
@@ -1035,20 +1047,23 @@ export const listCommunityAdditionalEventsPaged = query({
     communityId: v.id('communities'),
     cursor: v.union(v.string(), v.null()),
     numItems: v.optional(v.number()),
-    /** Client clock (Date.now()) — never Date.now() inside the handler. */
+    /**
+     * Client clock (Date.now()) — accepted for API-shape compatibility
+     * with existing callers, but intentionally UNUSED by this handler; see
+     * listCommunityMainOverview's identical arg doc comment above.
+     */
     now: v.number(),
     /**
      * 00:00:00.000 of the viewer's LOCAL calendar day — see
-     * listCommunityMainOverview's identical arg doc comment above. Keeps
-     * yesterday's already-ended all-day events out of the paginated source
-     * set entirely, instead of relying on client-side post-page filtering.
+     * listCommunityMainOverview's identical arg doc comment above. This is
+     * now the ONLY eligibility boundary this query applies: keeps
+     * yesterday's already-ended events out of the paginated source set
+     * entirely, while today's events (timed or all-day) remain eligible
+     * all local day regardless of their own start/end time.
      */
     localDayStart: v.number(),
   },
-  handler: async (
-    ctx,
-    { communityId, cursor, numItems, now, localDayStart }
-  ) => {
+  handler: async (ctx, { communityId, cursor, numItems, localDayStart }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) {
       return { page: [], isDone: true, continueCursor: '' };
@@ -1081,8 +1096,10 @@ export const listCommunityAdditionalEventsPaged = query({
       });
 
     const eligible = pageResult.page.filter((ev) => {
+      // BUG FIX (manual QA, follow-up) — no further "has this event's
+      // start/end time passed?" check here; see listCommunityMainOverview's
+      // identical comment above its scan loop.
       if (ev.status === 'cancelled') return false;
-      if (!isEventStartTimeEligibleForUpcomingScan(ev, now)) return false;
       const idStr = ev._id as string;
       const rsvpStatus = rsvpByEventId.get(idStr);
       const state = computeCommunityEventPersonalCalendarState({

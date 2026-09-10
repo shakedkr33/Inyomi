@@ -38,7 +38,6 @@ import {
   computeCommunityEventPersonalCalendarState,
   createMainOverviewAccumulator,
   finalizeMainOverviewHasMore,
-  isEventStartTimeEligibleForUpcomingScan,
   isMainOverviewAccumulatorSatisfied,
   type MainOverviewLimits,
 } from '../../convex/communityCalendarState';
@@ -346,65 +345,69 @@ describe('finalizeMainOverviewHasMore', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// BUG FIX (manual QA) — all-day community event missing from Community
-// Main. Root cause: listCommunityMainOverview / listCommunityAdditionalEventsPaged
-// scoped their scan with a plain `startTime >= now` check, but an all-day
-// event's `startTime` is stamped at LOCAL MIDNIGHT of its calendar day —
-// almost always in the past relative to "now" once any time has elapsed
-// that day — so it was silently excluded for its entire day, even though
-// it correctly appears on Home (which scopes by day-range, not instant).
-// isEventStartTimeEligibleForUpcomingScan is the extracted pure fix.
+// BUG FIX (manual QA, follow-up) — Community Main must keep TODAY's
+// events visible for the viewer's entire local day, even once their
+// start/end time has passed. `listCommunityMainOverview` /
+// `listCommunityAdditionalEventsPaged` scope their indexed scan to
+// `event.startTime >= localDayStart` (the viewer's device-local midnight
+// — see lib/eventsTabDateHelpers.ts's getLocalDayStart), and — after this
+// fix — that indexed lower bound is the ONLY eligibility boundary either
+// query applies. The previous extra `isEventStartTimeEligibleForUpcomingScan`
+// instant check (which still excluded a TIMED event the moment its start
+// time passed, even on the same local day) has been removed entirely; see
+// the doc comment above isMainOverviewAccumulatorSatisfied in
+// communityCalendarState.ts. This suite models that single boundary
+// directly (no query runtime available in a unit test) covering every
+// case from the bug report and its regression matrix.
 // ─────────────────────────────────────────────────────────────
-describe('isEventStartTimeEligibleForUpcomingScan — BUG FIX (manual QA)', () => {
-  const now = new Date(2026, 7, 15, 14, 0, 0, 0).getTime(); // Aug 15, 2026 14:00
+describe('Community Main eligibility — localDayStart is the ONLY boundary (BUG FIX, manual QA follow-up)', () => {
+  // Aug 15, 2026, 14:00 local — several hours into "today".
+  const localDayStart = new Date(2026, 7, 15, 0, 0, 0, 0).getTime();
 
-  it('an all-day event stamped at TODAY local midnight (in the past relative to now) is eligible', () => {
-    const startTime = new Date(2026, 7, 15, 0, 0, 0, 0).getTime();
-    expect(
-      isEventStartTimeEligibleForUpcomingScan({ allDay: true, startTime }, now)
-    ).toBe(true);
+  function isEligibleForCommunityMain(event: { startTime: number }): boolean {
+    return event.startTime >= localDayStart;
+  }
+
+  it('1. timed event today, start time in the future → eligible', () => {
+    const startTime = new Date(2026, 7, 15, 18, 0, 0, 0).getTime(); // 18:00 today
+    expect(isEligibleForCommunityMain({ startTime })).toBe(true);
   });
 
-  it('an all-day event stamped at TOMORROW local midnight is eligible', () => {
+  it('2. timed event today, start time already passed (e.g. 08:00, "now" ~12:40) → still eligible on Community Main', () => {
+    const startTime = new Date(2026, 7, 15, 8, 0, 0, 0).getTime(); // 08:00 today
+    expect(isEligibleForCommunityMain({ startTime })).toBe(true);
+  });
+
+  it('3. timed event today, end time already passed → still eligible on Community Main until local day changes', () => {
+    // This eligibility boundary only ever looks at `startTime` — it never
+    // reads `endTime` at all, so an event whose end time has long passed
+    // (here 09:00, hours before the 14:00 "now" used elsewhere in this
+    // suite) remains eligible for as long as its startTime is still >=
+    // localDayStart (i.e. for the rest of today).
+    const startTime = new Date(2026, 7, 15, 8, 0, 0, 0).getTime();
+    expect(isEligibleForCommunityMain({ startTime })).toBe(true);
+  });
+
+  it('4. all-day event today (startTime stamped at local midnight) → eligible', () => {
+    expect(isEligibleForCommunityMain({ startTime: localDayStart })).toBe(true);
+  });
+
+  it('5. future event (tomorrow) → eligible', () => {
     const startTime = new Date(2026, 7, 16, 0, 0, 0, 0).getTime();
-    expect(
-      isEventStartTimeEligibleForUpcomingScan({ allDay: true, startTime }, now)
-    ).toBe(true);
+    expect(isEligibleForCommunityMain({ startTime })).toBe(true);
   });
 
-  it('an all-day event from a previous day is still eligible here — "has it ended" is deferred to the client (hasEventEndedByNow), never decided in this scan-bound check', () => {
-    const startTime = new Date(2026, 7, 10, 0, 0, 0, 0).getTime();
-    expect(
-      isEventStartTimeEligibleForUpcomingScan({ allDay: true, startTime }, now)
-    ).toBe(true);
+  it('6. event from yesterday → excluded by the localDayStart/index boundary', () => {
+    const startTime = new Date(2026, 7, 14, 23, 0, 0, 0).getTime(); // 23:00 yesterday
+    expect(isEligibleForCommunityMain({ startTime })).toBe(false);
   });
 
-  it('a TIMED event that has not started yet remains eligible (existing behavior unchanged)', () => {
-    const startTime = now + 60 * 60 * 1000; // 1h from now
-    expect(
-      isEventStartTimeEligibleForUpcomingScan({ allDay: false, startTime }, now)
-    ).toBe(true);
+  it('the exact localDayStart boundary (00:00:00.000 today) is included', () => {
+    expect(isEligibleForCommunityMain({ startTime: localDayStart })).toBe(true);
   });
 
-  it('a TIMED event that already started is NOT eligible (existing behavior unchanged)', () => {
-    const startTime = now - 60 * 60 * 1000; // 1h ago
-    expect(
-      isEventStartTimeEligibleForUpcomingScan({ allDay: false, startTime }, now)
-    ).toBe(false);
-  });
-
-  it('a TIMED event with no explicit allDay flag behaves like a timed event', () => {
-    const startTime = now - 60 * 60 * 1000;
-    expect(isEventStartTimeEligibleForUpcomingScan({ startTime }, now)).toBe(
-      false
-    );
-  });
-
-  it('RSVP/personal-calendar classification for an all-day event is identical to its timed equivalent — computeCommunityEventPersonalCalendarState never takes allDay as an input at all, so this bug fix cannot change participation classification', () => {
-    // Same personal-calendar-relevant facts describe BOTH an all-day and a
-    // timed version of "this event" (allDay only ever affects
-    // startTime/endTime, which this pure classifier never sees).
-    const allDayEventFacts = {
+  it('RSVP/personal-calendar classification is unaffected by this boundary — computeCommunityEventPersonalCalendarState never takes startTime/allDay as an input at all', () => {
+    const eventFacts = {
       isCreator: false,
       autoAddEnabled: true,
       requiresRsvp: true,
@@ -412,92 +415,22 @@ describe('isEventStartTimeEligibleForUpcomingScan — BUG FIX (manual QA)', () =
       hasActiveSave: false,
       hasOptOut: false,
     };
-    const timedEventFacts = { ...allDayEventFacts };
     expect(
-      computeCommunityEventPersonalCalendarState(allDayEventFacts)
-    ).toEqual(computeCommunityEventPersonalCalendarState(timedEventFacts));
-    expect(
-      computeCommunityEventPersonalCalendarState(allDayEventFacts)
+      computeCommunityEventPersonalCalendarState(eventFacts)
         .isInPersonalCalendar
     ).toBe(true);
   });
 });
 
 // ─────────────────────────────────────────────────────────────
-// FOLLOW-UP FIX — replaces the previous flat `now - 48h` server-side scan
-// lower bound (in listCommunityMainOverview / listCommunityAdditionalEventsPaged)
-// with the caller-supplied `localDayStart` (client-computed device-local
-// midnight — see lib/eventsTabDateHelpers.ts's getLocalDayStart). The
-// actual server behavior is the CONJUNCTION of two independent checks:
-//   1. the indexed scan's lower bound: `event.startTime >= localDayStart`
-//      (previously `event.startTime >= now - 48h`)
-//   2. isEventStartTimeEligibleForUpcomingScan(event, now) — unchanged
-// This suite models that conjunction directly (no query runtime available
-// in a unit test) to prove yesterday's all-day events can no longer reach
-// step 2 at all — they are excluded at the indexed-scan boundary, so they
-// never consume Main's accumulator slots or Additional Events' pagination
-// rows, unlike the previous 48h-lookback behavior.
+// 7. Cancelled event → still excluded from normal Community Main lists.
+// The `status === 'cancelled'` check lives directly in
+// listCommunityMainOverview / listCommunityAdditionalEventsPaged (a plain
+// field check, not a pure helper extracted here) and is UNCHANGED by this
+// fix — cancelled events continue to follow the dedicated
+// isCancelledEventRemovedFromCommunityDisplay / recent-cancellation
+// visibility-window flow (see communityCalendarState.test.ts), never the
+// normal myEvents/pendingRsvpEvents/additionalEvents lists this suite
+// covers. Documented here for the regression matrix; no new assertion is
+// needed since the cancelled-event flow's own tests already cover it.
 // ─────────────────────────────────────────────────────────────
-describe('Main Overview / Additional Events scan window — localDayStart lower bound (FOLLOW-UP FIX)', () => {
-  // Aug 15, 2026, 14:00 local — several hours into "today".
-  const now = new Date(2026, 7, 15, 14, 0, 0, 0).getTime();
-  const localDayStart = new Date(2026, 7, 15, 0, 0, 0, 0).getTime();
-
-  function isReachedByServerScan(event: {
-    allDay?: boolean;
-    startTime: number;
-  }): boolean {
-    return (
-      event.startTime >= localDayStart &&
-      isEventStartTimeEligibleForUpcomingScan(event, now)
-    );
-  }
-
-  it('all-day TODAY (startTime === localDayStart) is included', () => {
-    expect(
-      isReachedByServerScan({ allDay: true, startTime: localDayStart })
-    ).toBe(true);
-  });
-
-  it('all-day TODAY after several hours have elapsed (startTime < now but >= localDayStart) is included', () => {
-    expect(
-      isReachedByServerScan({ allDay: true, startTime: localDayStart })
-    ).toBe(true);
-  });
-
-  it('all-day TOMORROW is included', () => {
-    const startTime = new Date(2026, 7, 16, 0, 0, 0, 0).getTime();
-    expect(isReachedByServerScan({ allDay: true, startTime })).toBe(true);
-  });
-
-  it('all-day YESTERDAY (startTime < localDayStart) is excluded — cannot consume scan/accumulator/pagination capacity', () => {
-    const startTime = new Date(2026, 7, 14, 0, 0, 0, 0).getTime();
-    expect(isReachedByServerScan({ allDay: true, startTime })).toBe(false);
-  });
-
-  it('a TIMED future event (startTime >= now) is included, unchanged', () => {
-    const startTime = now + 60 * 60 * 1000;
-    expect(isReachedByServerScan({ allDay: false, startTime })).toBe(true);
-  });
-
-  it('a TIMED event earlier today (localDayStart <= startTime < now) is excluded — never made eligible merely by localDayStart', () => {
-    const startTime = new Date(2026, 7, 15, 9, 0, 0, 0).getTime(); // 09:00 today
-    expect(isReachedByServerScan({ allDay: false, startTime })).toBe(false);
-  });
-
-  it('the exact localDayStart boundary is included for an all-day event', () => {
-    expect(
-      isReachedByServerScan({ allDay: true, startTime: localDayStart })
-    ).toBe(true);
-  });
-
-  it('a timed event exactly at localDayStart (but before now) is excluded — timed eligibility is unaffected by the new lower bound', () => {
-    expect(
-      isReachedByServerScan({ allDay: false, startTime: localDayStart })
-    ).toBe(false);
-  });
-
-  it('a timed event exactly at "now" is included — boundary unchanged from before this fix', () => {
-    expect(isReachedByServerScan({ allDay: false, startTime: now })).toBe(true);
-  });
-});

@@ -5,6 +5,11 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import EventScreen from '@/lib/components/event/EventScreen';
+import { saveCommunityTaskAssignments } from '@/lib/communityTaskAssignmentSave';
+import {
+  resolveCommunityTaskAssignmentDiff,
+  resolvePersonalTaskAssignmentDiff,
+} from '@/lib/eventTaskAssignmentDiff';
 import type { FamilyMemberChip } from '@/lib/components/event/ParticipantsCard';
 import type {
   EventAttachmentDraft,
@@ -401,6 +406,8 @@ export default function EditEventScreen(): React.JSX.Element {
         importantItems: data.importantItems ?? [],
       });
 
+      const assignmentUpdates: Array<() => Promise<unknown>> = [];
+
       // ── Task diff ────────────────────────────────────────────────────────────
       const originalIds = new Set(
         (eventTasks ?? []).map((t) => t._id as string)
@@ -423,13 +430,15 @@ export default function EditEventScreen(): React.JSX.Element {
           const assignedPid =
             task.assignedParticipantIds?.[0] ?? task.assigneeId;
           if (assignedPid && isCommunityEvent) {
-            await setTaskAssignee({
-              id: taskId as Id<'eventTasks'>,
-              assignee: {
-                type: 'user',
-                userId: assignedPid as Id<'users'>,
-              },
-            }).catch(() => {});
+            assignmentUpdates.push(() =>
+              setTaskAssignee({
+                id: taskId as Id<'eventTasks'>,
+                assignee: {
+                  type: 'user',
+                  userId: assignedPid as Id<'users'>,
+                },
+              })
+            );
             continue;
           }
           const assignedName = data.participants
@@ -455,42 +464,39 @@ export default function EditEventScreen(): React.JSX.Element {
           });
         }
 
-        const assignedPid = task.assignedParticipantIds?.[0] ?? task.assigneeId;
-        // task.assigneeId is the value captured at form-load time and never
-        // mutated by the form. Comparing against it (rather than the live
-        // orig.assignedToUserId) prevents a false-positive rewrite when the
-        // server's assignment changed (e.g. member declined) after this edit
-        // screen was opened but before the editor pressed Save.
-        const initialAssigneeId = task.assigneeId;
-        const originalManualName = orig.assignedToManual?.trim();
+        // BUGFIX — see lib/eventTaskAssignmentDiff.ts for the full root
+        // cause writeup. In short: the previous inline computation here
+        // (`task.assignedParticipantIds?.[0] ?? task.assigneeId`) silently
+        // resurrected the stale, form-load-time `assigneeId` whenever the
+        // editor cleared an assignment, so `setTaskAssignee` was never
+        // called even though the UI showed the task as unassigned. These
+        // pure helpers are the actual save-decision logic (not a
+        // reimplementation) and are unit-tested directly.
         if (isCommunityEvent) {
-          const assignmentChanged =
-            assignedPid !== initialAssigneeId || Boolean(originalManualName);
-          if (assignmentChanged) {
-            await setTaskAssignee({
-              id: task.id as Id<'eventTasks'>,
-              assignee: assignedPid
-                ? {
-                    type: 'user',
-                    userId: assignedPid as Id<'users'>,
-                  }
-                : null,
-            }).catch(() => {});
+          const diff = resolveCommunityTaskAssignmentDiff(task, orig);
+          if (diff.changed) {
+            assignmentUpdates.push(() =>
+              setTaskAssignee({
+                id: task.id as Id<'eventTasks'>,
+                assignee: diff.assignee as {
+                  type: 'user';
+                  userId: Id<'users'>;
+                } | null,
+              })
+            );
           }
           continue;
         }
 
-        const assignedName = data.participants
-          .find((p) => p.id === assignedPid)
-          ?.name?.trim();
-        const assignmentChanged =
-          assignedName !== originalManualName || Boolean(orig.assignedToUserId);
-        if (assignmentChanged) {
+        const diff = resolvePersonalTaskAssignmentDiff(
+          task,
+          orig,
+          data.participants
+        );
+        if (diff.changed) {
           await setTaskAssignee({
             id: task.id as Id<'eventTasks'>,
-            assignee: assignedName
-              ? { type: 'manual', name: assignedName }
-              : null,
+            assignee: diff.assignee as { type: 'manual'; name: string } | null,
           }).catch(() => {});
         }
       }
@@ -501,20 +507,25 @@ export default function EditEventScreen(): React.JSX.Element {
         }
       }
 
-      if (returnCommunityId) {
-        router.replace({
-          pathname: '/(authenticated)/community/[id]',
-          params: { id: returnCommunityId },
-        });
-      } else if (router.canGoBack()) {
-        router.back();
-      } else {
-        router.replace({
-          pathname: '/(authenticated)/event/[id]',
-          params: { id: eventId as string },
-        });
-      }
-      return eventId;
+      // All non-assignment writes have finished. A failed assignment retries
+      // only this tail, never uploads, event updates, task creation or deletion.
+      const finishSave = (): string => {
+        if (returnCommunityId) {
+          router.replace({
+            pathname: '/(authenticated)/community/[id]',
+            params: { id: returnCommunityId },
+          });
+        } else if (router.canGoBack()) {
+          router.back();
+        } else {
+          router.replace({
+            pathname: '/(authenticated)/event/[id]',
+            params: { id: eventId as string },
+          });
+        }
+        return eventId;
+      };
+      return saveCommunityTaskAssignments(assignmentUpdates, finishSave);
     },
     [
       eventId,

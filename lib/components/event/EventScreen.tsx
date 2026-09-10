@@ -25,6 +25,7 @@ import {
 // Alert is still used for save errors
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '@/constants/theme';
+import { CommunityTaskAssignmentSaveError } from '@/lib/communityTaskAssignmentSave';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import {
@@ -257,6 +258,8 @@ export default function EventScreen({
   const [duplicateDateError, setDuplicateDateError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const isSavingRef = useRef(false);
+  const [pendingAssignmentSave, setPendingAssignmentSave] =
+    useState<CommunityTaskAssignmentSaveError | null>(null);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [importantItemDraft, setImportantItemDraft] = useState('');
   // Keyboard height tracking for the suggestion overlay positioning
@@ -407,7 +410,10 @@ export default function EventScreen({
     setIsSaving(true);
     try {
       if (onSave) {
-        const newEventId = await onSave(event);
+        const newEventId = await (pendingAssignmentSave
+          ? pendingAssignmentSave.retry()
+          : onSave(event));
+        setPendingAssignmentSave(null);
         if (showSuccessSheet) {
           // FIXED: show success/share sheet instead of navigating away immediately
           setSavedEvent({ ...event });
@@ -425,8 +431,13 @@ export default function EventScreen({
         }
       }
     } catch (err) {
-      console.error('[EventScreen] save error:', err);
-      Alert.alert('שגיאה', 'לא ניתן לשמור. נסה שוב.');
+      if (err instanceof CommunityTaskAssignmentSaveError) {
+        setPendingAssignmentSave(err);
+        Alert.alert('השמירה הושלמה חלקית', err.message);
+      } else {
+        console.error('[EventScreen] save error:', err);
+        Alert.alert('שגיאה', 'לא ניתן לשמור. אפשר לנסות שוב.');
+      }
     } finally {
       isSavingRef.current = false;
       setIsSaving(false);
@@ -511,6 +522,7 @@ export default function EventScreen({
   };
 
   const handleBack = (): void => {
+    if (isSavingRef.current) return;
     if (isCreate && isFormDirty()) {
       setDiscardOpen(true);
     } else {
@@ -630,6 +642,11 @@ export default function EventScreen({
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <ScrollView
+          pointerEvents={pendingAssignmentSave || isSaving ? 'none' : 'auto'}
+          accessibilityElementsHidden={Boolean(pendingAssignmentSave) || isSaving}
+          importantForAccessibility={
+            pendingAssignmentSave || isSaving ? 'no-hide-descendants' : 'auto'
+          }
           ref={scrollViewRef}
           style={s.scroll}
           contentContainerStyle={s.scrollContent}
@@ -1047,6 +1064,11 @@ export default function EventScreen({
         {/* ── Sticky footer — inside KAV so it rides above the keyboard ── */}
         {isCreate && (
           <View style={s.footer}>
+            {pendingAssignmentSave ? (
+              <Text style={{ textAlign: 'right', marginBottom: 8 }}>
+                {pendingAssignmentSave.message}
+              </Text>
+            ) : null}
             <Pressable
               style={[
                 s.footerSaveBtn,
@@ -1059,7 +1081,7 @@ export default function EventScreen({
               }
               accessible={true}
               accessibilityRole="button"
-              accessibilityLabel={isSaving ? 'שומר...' : 'שמור אירוע'}
+              accessibilityLabel={isSaving ? 'שמירה...' : pendingAssignmentSave ? 'ניסיון נוסף להשלמת השיוך' : 'שמור אירוע'}
             >
               <Text
                 style={[
@@ -1069,7 +1091,7 @@ export default function EventScreen({
                     s.footerSaveBtnTextDisabled,
                 ]}
               >
-                {isSaving ? 'שומר...' : 'שמור אירוע'}
+                {isSaving ? 'שמירה...' : pendingAssignmentSave ? 'ניסיון נוסף להשלמת השיוך' : 'שמור אירוע'}
               </Text>
             </Pressable>
           </View>
@@ -1102,10 +1124,12 @@ export default function EventScreen({
         >
           <Pressable style={s.discardBox} onPress={() => undefined}>
             <Text style={s.discardTitle}>
-              {initialData ? 'ביטול שינויים' : 'יציאה ללא שמירה'}
+              {pendingAssignmentSave ? 'יציאה אחרי שמירה חלקית' : initialData ? 'ביטול שינויים' : 'יציאה ללא שמירה'}
             </Text>
             <Text style={s.discardMessage}>
-              {initialData
+              {pendingAssignmentSave
+                ? 'השינויים שכבר נשמרו יישארו. עדכוני השיוך שנותרו לא יישמרו ביציאה. לצאת?'
+                : initialData
                 ? 'האם ברצונך לבטל את השינויים שביצעת?'
                 : 'האם ברצונך למחוק את הנתונים שהכנסת?'}
             </Text>
@@ -1116,10 +1140,10 @@ export default function EventScreen({
                 onPress={confirmDiscard}
                 accessible={true}
                 accessibilityRole="button"
-                accessibilityLabel={initialData ? 'בטל שינויים' : 'מחק וצא'}
+                accessibilityLabel={pendingAssignmentSave ? 'יציאה' : initialData ? 'בטל שינויים' : 'מחק וצא'}
               >
                 <Text style={s.discardBtnDestructiveText}>
-                  {initialData ? 'בטל שינויים' : 'מחק וצא'}
+                  {pendingAssignmentSave ? 'יציאה' : initialData ? 'בטל שינויים' : 'מחק וצא'}
                 </Text>
               </Pressable>
               <View style={s.discardBtnDivider} />

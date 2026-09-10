@@ -590,6 +590,35 @@ export function assertCommunityTaskAssigneeAllowed(
 }
 
 // ─────────────────────────────────────────────────────────────
+// WHO may CLEAR (unassign) an event task — independent of
+// assertCommunityTaskAssigneeAllowed above, which only governs WHO may be
+// the target assignee. Extracted as a pure function (no ctx/db) purely so
+// this authorization can be unit-tested directly — see
+// tests/convex/eventTaskAssignmentDiff.test.ts — without a Convex test
+// harness. `setAssignee` below calls this function verbatim; it is not a
+// parallel reimplementation of the authorization.
+// ─────────────────────────────────────────────────────────────
+export function getTaskAssignmentClearAuthorization(params: {
+  canManageAssignments: boolean;
+  isAssignedUser: boolean;
+  hasManual: boolean;
+}): { allowed: true } | { allowed: false; reason: string } {
+  if (!params.canManageAssignments && !params.isAssignedUser) {
+    return {
+      allowed: false,
+      reason: 'רק הממונה או יוצר האירוע יכולים לבטל הקצאה',
+    };
+  }
+  if (params.hasManual && !params.canManageAssignments) {
+    return {
+      allowed: false,
+      reason: 'רק יוצר האירוע יכול לשנות הקצאה ידנית',
+    };
+  }
+  return { allowed: true };
+}
+
+// ─────────────────────────────────────────────────────────────
 // הקצאת משימה או ביטול הקצאה
 // assignee: { type: 'user', userId } | { type: 'manual', name } | null
 // ─────────────────────────────────────────────────────────────
@@ -649,10 +678,12 @@ export const setAssignee = mutation({
     assertCommunityTaskAssigneeAllowed(event, assignee, isTargetActiveMember);
 
     if (assignee === null) {
-      if (!canManageAssignments && !isAssignedUser)
-        throw new Error('רק הממונה או יוצר האירוע יכולים לבטל הקצאה');
-      if (hasManual && !canManageAssignments)
-        throw new Error('רק יוצר האירוע יכול לשנות הקצאה ידנית');
+      const clearAuthz = getTaskAssignmentClearAuthorization({
+        canManageAssignments,
+        isAssignedUser,
+        hasManual,
+      });
+      if (!clearAuthz.allowed) throw new Error(clearAuthz.reason);
       await ctx.db.patch(id, {
         assignedToUserId: undefined,
         assignedToManual: undefined,

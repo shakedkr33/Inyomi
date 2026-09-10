@@ -211,6 +211,14 @@ interface CalendarEvent {
   profileCirclesContext?: 'sharedWith' | 'alsoAddedToCalendar';
   /** "חשוב לזכור" items — only populated for community events */
   importantItems?: ImportantItem[];
+  /**
+   * FIX — Community Event tasks assigned to the current viewer — only
+   * populated for community events. Mirrors Timeline's `myAssignedTasks`
+   * (see `TimelineEventRow`) so Monthly (day sheet / selected-day panel)
+   * can reach parity: only MY assigned tasks, never unassigned or other
+   * members' tasks (server query already scopes to the viewer).
+   */
+  myAssignedTasks?: AssignedEventTask[];
 }
 
 interface BirthdayInfo {
@@ -1592,45 +1600,61 @@ function CalendarDayEventsSheet({
 
             {events.map((ev) => {
               const kind = ev.eventVisualKind ?? 'personal';
+              // FIX — Monthly/Timeline parity: render MY assigned Community
+              // Event tasks here too (mirrors Timeline's InlineEventTasksSection).
+              const hasSheetAssignedTasks =
+                !ev.cancelled && (ev.myAssignedTasks?.length ?? 0) > 0;
               const hasSheetImportantItems =
-                !ev.cancelled &&
-                (ev.importantItems?.length ?? 0) > 0;
+                !ev.cancelled && (ev.importantItems?.length ?? 0) > 0;
+              const hasSheetExpansion =
+                hasSheetAssignedTasks || hasSheetImportantItems;
               return (
                 <View key={ev.listKey ?? ev.id}>
-                <Pressable
-                  style={[
-                    sheetStyles.sheetRow,
-                    kind === 'community' && sheetStyles.sheetRowCommunity,
-                    kind === 'shared' && sheetStyles.sheetRowShared,
-                    hasSheetImportantItems && { marginBottom: 0, borderBottomLeftRadius: 0, borderBottomRightRadius: 0 },
-                  ]}
-                  onPress={() => onEventNavigate(ev)}
-                  onLongPress={(pressEvent) => onEventLongPress(ev, pressEvent)}
-                  delayLongPress={340}
-                  accessible={true}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${ev.time !== '' ? `${ev.time} ` : ''}${ev.title}`}
-                >
-                  <View style={sheetStyles.sheetEventLine}>
-                    {ev.time !== '' ? (
-                      <Text style={sheetStyles.sheetEventTime}>{ev.time}</Text>
-                    ) : null}
-                    <Text
-                      numberOfLines={1}
-                      style={[
-                        sheetStyles.sheetEventTitle,
-                        ev.cancelled && sheetStyles.sheetEventTitleCancelled,
-                      ]}
-                    >
-                      {ev.title}
-                    </Text>
-                  </View>
-                </Pressable>
-                {hasSheetImportantItems ? (
-                  <InlineImportantItemsSection
-                    items={ev.importantItems ?? []}
-                  />
-                ) : null}
+                  <Pressable
+                    accessibilityLabel={`${ev.time !== '' ? `${ev.time} ` : ''}${ev.title}`}
+                    accessibilityRole="button"
+                    accessible={true}
+                    delayLongPress={340}
+                    onLongPress={(pressEvent) =>
+                      onEventLongPress(ev, pressEvent)
+                    }
+                    onPress={() => onEventNavigate(ev)}
+                    style={[
+                      sheetStyles.sheetRow,
+                      kind === 'community' && sheetStyles.sheetRowCommunity,
+                      kind === 'shared' && sheetStyles.sheetRowShared,
+                      hasSheetExpansion && {
+                        marginBottom: 0,
+                        borderBottomLeftRadius: 0,
+                        borderBottomRightRadius: 0,
+                      },
+                    ]}
+                  >
+                    <View style={sheetStyles.sheetEventLine}>
+                      {ev.time !== '' ? (
+                        <Text style={sheetStyles.sheetEventTime}>
+                          {ev.time}
+                        </Text>
+                      ) : null}
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          sheetStyles.sheetEventTitle,
+                          ev.cancelled && sheetStyles.sheetEventTitleCancelled,
+                        ]}
+                      >
+                        {ev.title}
+                      </Text>
+                    </View>
+                  </Pressable>
+                  {hasSheetAssignedTasks ? (
+                    <InlineEventTasksSection tasks={ev.myAssignedTasks ?? []} />
+                  ) : null}
+                  {hasSheetImportantItems ? (
+                    <InlineImportantItemsSection
+                      items={ev.importantItems ?? []}
+                    />
+                  ) : null}
                 </View>
               );
             })}
@@ -1929,6 +1953,30 @@ export default function CalendarScreen(): React.JSX.Element {
       api.events.listCommunityEventsForDate,
       !isFiltered ? { from: monthRange.from, to: monthRange.to } : 'skip'
     ) ?? [];
+
+  // FIX — Monthly/Timeline parity: my assigned Community Event tasks for
+  // the displayed month, grouped per event. Same query + shape as
+  // `timelineAssignedEventTasks` below — Monthly (day sheet + selected-day
+  // panel) previously never fetched this at all, which is the exact root
+  // cause of Community Event subtasks being entirely missing there.
+  const monthAssignedEventTasks =
+    useQuery(
+      api.eventTasks.listMyAssignedEventTasksForDate,
+      !isFiltered ? { from: monthRange.from, to: monthRange.to } : 'skip'
+    ) ?? [];
+
+  const monthTasksByEventId = useMemo(() => {
+    const map: Record<string, AssignedEventTask[]> = {};
+    for (const t of monthAssignedEventTasks) {
+      if (!map[t.eventId]) map[t.eventId] = [];
+      map[t.eventId].push({
+        id: t._id,
+        title: t.title,
+        completed: t.completed,
+      });
+    }
+    return map;
+  }, [monthAssignedEventTasks]);
 
   const timelinePersonalEvents =
     useQuery(api.events.listByDateRange, {
@@ -2367,6 +2415,11 @@ export default function CalendarScreen(): React.JSX.Element {
               return rawItems && rawItems.length > 0 ? rawItems : undefined;
             })()
           : undefined,
+        // FIX — Monthly/Timeline parity: only ever MY assigned Community
+        // Event tasks (server query already scopes to the viewer).
+        myAssignedTasks: isSavedCommunityInSpace
+          ? monthTasksByEventId[ev._id as string]
+          : undefined,
       };
       if (!eventsByDay[day].some((e) => e.id === personalRow.id)) {
         eventsByDay[day].push(personalRow);
@@ -2423,6 +2476,8 @@ export default function CalendarScreen(): React.JSX.Element {
           ev.importantItems && ev.importantItems.length > 0
             ? ev.importantItems
             : undefined,
+        // FIX — Monthly/Timeline parity — see personalRow comment above.
+        myAssignedTasks: monthTasksByEventId[ev._id as string],
       };
       if (!eventsByDay[day].some((e) => e.id === communityRow.id)) {
         eventsByDay[day].push(communityRow);
@@ -2440,6 +2495,7 @@ export default function CalendarScreen(): React.JSX.Element {
     personalEvents,
     linkedEvents,
     aggregateCommunityEvents,
+    monthTasksByEventId,
     currentUser?._id,
     familyProfilesByUserId,
     familyProfilesByMemberId,
@@ -5217,172 +5273,186 @@ function DayEventsList({
           myPersonalRsvpStatus: event.myPersonalRsvpStatus,
         });
         const eventTitle = getCalendarEventTitle(event);
+        // FIX — Monthly/Timeline parity: my assigned Community Event tasks
+        // also need the "flat card" treatment so the section attaches
+        // seamlessly below, same as importantItems already does.
+        const hasAssignedTasks =
+          !event.cancelled && (event.myAssignedTasks?.length ?? 0) > 0;
         const hasImportantItems =
-          !event.cancelled &&
-          (event.importantItems?.length ?? 0) > 0;
+          !event.cancelled && (event.importantItems?.length ?? 0) > 0;
+        const hasExpansion = hasAssignedTasks || hasImportantItems;
         return (
           <View
             key={event.listKey ?? event.id}
             style={[
-              hasImportantItems ? dStyles.unifiedCardOuter : undefined,
-              hasImportantItems &&
+              hasExpansion ? dStyles.unifiedCardOuter : undefined,
+              hasExpansion &&
                 rsvpVisual.kind !== 'normal' &&
                 dStyles.pendingPersonalInviteCard,
             ]}
           >
-          <Pressable
-            style={[
-              hasImportantItems ? dStyles.cardFlatPressable : dStyles.card,
-              !hasImportantItems &&
-                rsvpVisual.kind !== 'normal' &&
-                dStyles.pendingPersonalInviteCard,
-            ]}
-            onPress={() => onEventPress(event)}
-            accessible={true}
-            accessibilityRole="button"
-            accessibilityLabel={`${event.title}, ${event.time}, ${duration} דקות`}
-          >
-            {ANDROID_MATCH_IOS_LAYOUT ? (
-              <>
-                <View style={dStyles.timeCol}>
-                  <Text style={dStyles.timeText}>{event.time}</Text>
-                  <Text style={dStyles.durationText}>{duration} דק׳</Text>
-                </View>
-                <View
-                  style={[
-                    dStyles.divider,
-                    { backgroundColor: `${event.categoryColor}50` },
-                  ]}
-                />
-                <View style={dStyles.content}>
-                  {event.communityName ? (
-                    <View style={{ marginBottom: 4 }}>
-                      <CommunityEventNameTag name={event.communityName} />
-                    </View>
-                  ) : null}
-                  <Text style={dStyles.eventTitle}>{eventTitle}</Text>
-                  <PersonalRsvpBadge
-                    badgeStyle={dStyles.pendingRsvpBadge}
-                    textStyle={dStyles.pendingRsvpBadgeText}
-                    visual={rsvpVisual}
+            <Pressable
+              style={[
+                hasExpansion ? dStyles.cardFlatPressable : dStyles.card,
+                !hasExpansion &&
+                  rsvpVisual.kind !== 'normal' &&
+                  dStyles.pendingPersonalInviteCard,
+              ]}
+              onPress={() => onEventPress(event)}
+              accessible={true}
+              accessibilityRole="button"
+              accessibilityLabel={`${event.title}, ${event.time}, ${duration} דקות`}
+            >
+              {ANDROID_MATCH_IOS_LAYOUT ? (
+                <>
+                  <View style={dStyles.timeCol}>
+                    <Text style={dStyles.timeText}>{event.time}</Text>
+                    <Text style={dStyles.durationText}>{duration} דק׳</Text>
+                  </View>
+                  <View
+                    style={[
+                      dStyles.divider,
+                      { backgroundColor: `${event.categoryColor}50` },
+                    ]}
                   />
-                  {event.location != null && event.location !== '' && (
-                    <View style={dStyles.locationRow}>
-                      <View style={dStyles.locationDot} />
-                      <Text style={dStyles.locationText}>{event.location}</Text>
-                    </View>
-                  )}
-                  {(event.profileCircles?.length ?? 0) > 0 ||
-                  (event.profileCirclesExtraCount ?? 0) > 0 ? (
-                    <View style={{ marginTop: 4 }}>
-                      <ProfileCircles
-                        profiles={event.profileCircles ?? []}
-                        extraCount={event.profileCirclesExtraCount ?? 0}
-                        context={event.profileCirclesContext ?? 'sharedWith'}
-                      />
-                    </View>
-                  ) : (event.assigneeColors?.length ?? 0) > 0 ? (
-                    <View style={dStyles.assigneeDots}>
-                      {event.assigneeColors?.slice(0, 4).map((color) => (
-                        <View
-                          key={color}
-                          style={[
-                            dStyles.assigneeDot,
-                            { backgroundColor: color },
-                          ]}
+                  <View style={dStyles.content}>
+                    {event.communityName ? (
+                      <View style={{ marginBottom: 4 }}>
+                        <CommunityEventNameTag name={event.communityName} />
+                      </View>
+                    ) : null}
+                    <Text style={dStyles.eventTitle}>{eventTitle}</Text>
+                    <PersonalRsvpBadge
+                      badgeStyle={dStyles.pendingRsvpBadge}
+                      textStyle={dStyles.pendingRsvpBadgeText}
+                      visual={rsvpVisual}
+                    />
+                    {event.location != null && event.location !== '' && (
+                      <View style={dStyles.locationRow}>
+                        <View style={dStyles.locationDot} />
+                        <Text style={dStyles.locationText}>
+                          {event.location}
+                        </Text>
+                      </View>
+                    )}
+                    {(event.profileCircles?.length ?? 0) > 0 ||
+                    (event.profileCirclesExtraCount ?? 0) > 0 ? (
+                      <View style={{ marginTop: 4 }}>
+                        <ProfileCircles
+                          profiles={event.profileCircles ?? []}
+                          extraCount={event.profileCirclesExtraCount ?? 0}
+                          context={event.profileCirclesContext ?? 'sharedWith'}
                         />
-                      ))}
-                    </View>
-                  ) : null}
-                </View>
-                <View
-                  style={[
-                    dStyles.iconBox,
-                    { backgroundColor: `${event.categoryColor}20` },
-                  ]}
-                >
-                  <MaterialIcons
-                    name={iconName as 'event'}
-                    size={20}
-                    color={event.categoryColor}
+                      </View>
+                    ) : (event.assigneeColors?.length ?? 0) > 0 ? (
+                      <View style={dStyles.assigneeDots}>
+                        {event.assigneeColors?.slice(0, 4).map((color) => (
+                          <View
+                            key={color}
+                            style={[
+                              dStyles.assigneeDot,
+                              { backgroundColor: color },
+                            ]}
+                          />
+                        ))}
+                      </View>
+                    ) : null}
+                  </View>
+                  <View
+                    style={[
+                      dStyles.iconBox,
+                      { backgroundColor: `${event.categoryColor}20` },
+                    ]}
+                  >
+                    <MaterialIcons
+                      name={iconName as 'event'}
+                      size={20}
+                      color={event.categoryColor}
+                    />
+                  </View>
+                </>
+              ) : (
+                <>
+                  <View style={dStyles.timeCol}>
+                    <Text style={dStyles.timeText}>{event.time}</Text>
+                    <Text style={dStyles.durationText}>{duration} דק׳</Text>
+                  </View>
+                  <View
+                    style={[
+                      dStyles.divider,
+                      { backgroundColor: `${event.categoryColor}50` },
+                    ]}
                   />
-                </View>
-              </>
-            ) : (
-              <>
-                <View style={dStyles.timeCol}>
-                  <Text style={dStyles.timeText}>{event.time}</Text>
-                  <Text style={dStyles.durationText}>{duration} דק׳</Text>
-                </View>
-                <View
-                  style={[
-                    dStyles.divider,
-                    { backgroundColor: `${event.categoryColor}50` },
-                  ]}
-                />
-                <View style={dStyles.content}>
-                  {event.communityName ? (
-                    <View style={{ marginBottom: 4 }}>
-                      <CommunityEventNameTag name={event.communityName} />
-                    </View>
-                  ) : null}
-                  <Text style={dStyles.eventTitle}>{eventTitle}</Text>
-                  <PersonalRsvpBadge
-                    badgeStyle={dStyles.pendingRsvpBadge}
-                    textStyle={dStyles.pendingRsvpBadgeText}
-                    visual={rsvpVisual}
-                  />
-                  {event.location != null && event.location !== '' && (
-                    <View style={dStyles.locationRow}>
-                      <View style={dStyles.locationDot} />
-                      <Text style={dStyles.locationText}>{event.location}</Text>
-                    </View>
-                  )}
-                  {(event.profileCircles?.length ?? 0) > 0 ||
-                  (event.profileCirclesExtraCount ?? 0) > 0 ? (
-                    <View style={{ marginTop: 4 }}>
-                      <ProfileCircles
-                        profiles={event.profileCircles ?? []}
-                        extraCount={event.profileCirclesExtraCount ?? 0}
-                        context={event.profileCirclesContext ?? 'sharedWith'}
-                      />
-                    </View>
-                  ) : (event.assigneeColors?.length ?? 0) > 0 ? (
-                    <View style={dStyles.assigneeDots}>
-                      {event.assigneeColors?.slice(0, 4).map((color) => (
-                        <View
-                          key={color}
-                          style={[
-                            dStyles.assigneeDot,
-                            { backgroundColor: color },
-                          ]}
+                  <View style={dStyles.content}>
+                    {event.communityName ? (
+                      <View style={{ marginBottom: 4 }}>
+                        <CommunityEventNameTag name={event.communityName} />
+                      </View>
+                    ) : null}
+                    <Text style={dStyles.eventTitle}>{eventTitle}</Text>
+                    <PersonalRsvpBadge
+                      badgeStyle={dStyles.pendingRsvpBadge}
+                      textStyle={dStyles.pendingRsvpBadgeText}
+                      visual={rsvpVisual}
+                    />
+                    {event.location != null && event.location !== '' && (
+                      <View style={dStyles.locationRow}>
+                        <View style={dStyles.locationDot} />
+                        <Text style={dStyles.locationText}>
+                          {event.location}
+                        </Text>
+                      </View>
+                    )}
+                    {(event.profileCircles?.length ?? 0) > 0 ||
+                    (event.profileCirclesExtraCount ?? 0) > 0 ? (
+                      <View style={{ marginTop: 4 }}>
+                        <ProfileCircles
+                          profiles={event.profileCircles ?? []}
+                          extraCount={event.profileCirclesExtraCount ?? 0}
+                          context={event.profileCirclesContext ?? 'sharedWith'}
                         />
-                      ))}
-                    </View>
-                  ) : null}
-                </View>
-                <View
-                  style={[
-                    dStyles.iconBox,
-                    { backgroundColor: `${event.categoryColor}20` },
-                  ]}
-                >
-                  <MaterialIcons
-                    name={iconName as 'event'}
-                    size={20}
-                    color={event.categoryColor}
-                  />
-                </View>
-              </>
-            )}
-          </Pressable>
-          {hasImportantItems ? (
-            <View style={dStyles.importantItemsInset}>
-              <InlineImportantItemsSection
-                items={event.importantItems ?? []}
-              />
-            </View>
-          ) : null}
+                      </View>
+                    ) : (event.assigneeColors?.length ?? 0) > 0 ? (
+                      <View style={dStyles.assigneeDots}>
+                        {event.assigneeColors?.slice(0, 4).map((color) => (
+                          <View
+                            key={color}
+                            style={[
+                              dStyles.assigneeDot,
+                              { backgroundColor: color },
+                            ]}
+                          />
+                        ))}
+                      </View>
+                    ) : null}
+                  </View>
+                  <View
+                    style={[
+                      dStyles.iconBox,
+                      { backgroundColor: `${event.categoryColor}20` },
+                    ]}
+                  >
+                    <MaterialIcons
+                      name={iconName as 'event'}
+                      size={20}
+                      color={event.categoryColor}
+                    />
+                  </View>
+                </>
+              )}
+            </Pressable>
+            {hasAssignedTasks ? (
+              <View style={dStyles.importantItemsInset}>
+                <InlineEventTasksSection tasks={event.myAssignedTasks ?? []} />
+              </View>
+            ) : null}
+            {hasImportantItems ? (
+              <View style={dStyles.importantItemsInset}>
+                <InlineImportantItemsSection
+                  items={event.importantItems ?? []}
+                />
+              </View>
+            ) : null}
           </View>
         );
       })}

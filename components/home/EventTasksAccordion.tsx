@@ -7,13 +7,22 @@
  * - Managers see all tasks + a quiet visibility-status row
  * - Members see their own tasks (visibility disabled) or all tasks (visibility enabled)
  * - Checkboxes call the parent-supplied onToggleCompleted handler
- * - Self-claim / self-unclaim actions appear for eligible future-event tasks
+ * - Self-claim / self-unclaim actions appear for eligible tasks until the
+ *   event ENDS (a currently in-progress event still allows claim/unclaim)
  * - RTL-correct Hebrew layout
  */
 import { MaterialIcons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { buildEventTasksSummaryLabel } from '@/lib/eventTasksSummary';
 import { getTextAlign, rtl } from '@/lib/rtl';
 import { colors as tc } from '@/theme/colors';
+
+// Re-exported so existing callers (e.g. HomeDailyCommandCenter) can keep
+// importing it alongside the other accordion types/component from this
+// module. The implementation itself lives in a plain .ts module (no RN
+// imports) so it can be unit-tested without a React Native test harness —
+// see tests/convex/eventTasksAccordionSummary.test.ts.
+export { buildEventTasksSummaryLabel };
 
 export type AuthorizedHomeEventTask = {
   id: string;
@@ -38,13 +47,55 @@ interface EventTasksAccordionProps {
   tasksVisibleToParticipants: boolean;
   expanded: boolean;
   onToggle: () => void;
-  onToggleCompleted: (taskId: string) => void;
-  /** Canonical Unix-ms event start time — gates claim/unclaim actions. */
+  /**
+   * Optional override for the header summary text. When omitted, falls
+   * back to the original generic "משימות האירוע · X" label — this keeps
+   * existing callers (e.g. the Community task Bottom Sheet) pixel- and
+   * copy-identical. Home passes a smarter mine/unassigned breakdown built
+   * with `buildEventTasksSummaryLabel` below.
+   */
+  summaryLabel?: string;
+  /**
+   * When true, renders a slightly more prominent header affordance
+   * (stronger chevron, clearer divider/section separation) so users
+   * understand the accordion is expandable. Defaults to `false` so
+   * existing callers (Community Bottom Sheet) are visually unchanged.
+   */
+  emphasized?: boolean;
+  /**
+   * Optional so surfaces that disable completion entirely (via
+   * `allowCompletion={false}`) don't need to pass a handler that will
+   * never be called. Required in practice whenever `allowCompletion` is
+   * `true` (the default) and at least one task is completable.
+   */
+  onToggleCompleted?: (taskId: string) => void;
+  /**
+   * Canonical Unix-ms event start time. No longer gates claim/unclaim
+   * (see `eventEndTime`) — retained for any other future/legitimate use;
+   * currently unused for the claim/unclaim gate itself.
+   */
   eventStartTime?: number;
-  /** Called when the user taps "+ אני אקח" on an eligible unassigned task. */
+  /**
+   * FIX 8B FOLLOW-UP — canonical Unix-ms event end time. Gates
+   * claim/unclaim actions: available until the event ENDS (not until it
+   * starts), so a still-in-progress event's unassigned tasks remain
+   * claimable. Both Community and Home call sites source this from the
+   * same `events.endTime` schema field (`v.number()`, always present for
+   * community events), so `undefined` is not expected in practice.
+   */
+  eventEndTime?: number;
+  /** Called when the user taps "אני אקח" on an eligible unassigned task. */
   onClaimTask?: (taskId: string) => void;
-  /** Called when the user taps "בטל הקצאה" on their own incomplete task. */
+  /** Called when the user taps "ביטול הקצאה" on their own incomplete task. */
   onUnclaimTask?: (taskId: string) => void;
+  /**
+   * FIX 8B FOLLOW-UP §3 — when `false`, the completion checkbox always
+   * renders as a disabled, read-only indicator (no `onToggleCompleted`
+   * call), regardless of `canManageTasks` / assignment. Defaults to `true`
+   * so existing Home behavior is preserved exactly. Community Main passes
+   * `false`: that surface is claim/unclaim-only, never a completion UI.
+   */
+  allowCompletion?: boolean;
 }
 
 export function EventTasksAccordion({
@@ -53,39 +104,51 @@ export function EventTasksAccordion({
   tasksVisibleToParticipants,
   expanded,
   onToggle,
+  summaryLabel,
+  emphasized = false,
   onToggleCompleted,
-  eventStartTime,
+  eventStartTime: _eventStartTime,
+  eventEndTime,
   onClaimTask,
   onUnclaimTask,
+  allowCompletion = true,
 }: EventTasksAccordionProps): React.JSX.Element | null {
   if (tasks.length === 0) return null;
 
-  const summaryLabel = `משימות האירוע · ${tasks.length}`;
+  const resolvedSummaryLabel =
+    summaryLabel ?? `משימות האירוע · ${tasks.length}`;
 
-  // Event has started when the canonical start timestamp is in the past.
-  // If startTime is unavailable (e.g. all-day edge case), block actions conservatively.
-  const eventHasStarted =
-    eventStartTime !== undefined && eventStartTime <= Date.now();
+  // FIX 8B FOLLOW-UP — claim/unclaim gate is EVENT END, not event start:
+  // a still-in-progress event's unassigned tasks remain claimable. If
+  // endTime is unavailable, block actions conservatively (see prop doc —
+  // not expected to happen for the current Community/Home call sites,
+  // which both source this from the required `events.endTime` field).
+  const eventHasEnded =
+    eventEndTime !== undefined && eventEndTime <= Date.now();
 
   return (
     <>
       {/* Divider between card body and accordion */}
-      <View style={styles.divider} />
+      <View style={[styles.divider, emphasized && styles.dividerEmphasized]} />
 
       {/* Accordion header */}
       <Pressable
         accessible={true}
-        accessibilityLabel={`${summaryLabel}, ${expanded ? 'סגירת רשימת משימות' : 'פתיחת רשימת משימות'}`}
+        accessibilityLabel={`${resolvedSummaryLabel}, ${expanded ? 'סגירת רשימת משימות' : 'פתיחת רשימת משימות'}`}
         accessibilityRole="button"
         hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
         onPress={onToggle}
-        style={styles.headerRow}
+        style={[styles.headerRow, emphasized && styles.headerRowEmphasized]}
       >
-        <Text style={styles.headerText}>{summaryLabel}</Text>
+        <Text
+          style={[styles.headerText, emphasized && styles.headerTextEmphasized]}
+        >
+          {resolvedSummaryLabel}
+        </Text>
         <MaterialIcons
-          color={tc.textSecondary}
+          color={emphasized ? tc.primary : tc.textSecondary}
           name={expanded ? 'expand-less' : 'expand-more'}
-          size={20}
+          size={emphasized ? 24 : 20}
         />
       </Pressable>
 
@@ -97,12 +160,16 @@ export function EventTasksAccordion({
             <View style={styles.visibilityRow}>
               <MaterialIcons
                 color={tc.textSecondary}
-                name={tasksVisibleToParticipants ? 'visibility' : 'lock-outline'}
+                name={
+                  tasksVisibleToParticipants ? 'visibility' : 'lock-outline'
+                }
                 size={14}
               />
               <View style={styles.visibilityTextBlock}>
                 <Text style={styles.visibilityTitle}>
-                  {tasksVisibleToParticipants ? 'גלוי למשתתפים' : 'גלוי לפי הקצאה'}
+                  {tasksVisibleToParticipants
+                    ? 'גלוי למשתתפים'
+                    : 'גלוי לפי הקצאה'}
                 </Text>
                 <Text style={styles.visibilityDesc}>
                   {tasksVisibleToParticipants
@@ -119,19 +186,20 @@ export function EventTasksAccordion({
               Boolean(task.assignedToUserId) ||
               Boolean(task.assignedToManual?.trim());
 
-            // Self-claim: visible only when task is unassigned and event hasn't started.
+            // Self-claim: visible only when task is unassigned and the event
+            // hasn't ended yet (event currently in progress still counts).
             const isClaimable =
               !isAssigned &&
-              !eventHasStarted &&
-              eventStartTime !== undefined &&
+              !eventHasEnded &&
+              eventEndTime !== undefined &&
               onClaimTask !== undefined;
 
-            // Self-unclaim: only own task, incomplete, event not started.
+            // Self-unclaim: only own task, incomplete, event not ended.
             const canUnclaimHere =
               task.isAssignedToCurrentUser &&
               !task.completed &&
-              !eventHasStarted &&
-              eventStartTime !== undefined &&
+              !eventHasEnded &&
+              eventEndTime !== undefined &&
               onUnclaimTask !== undefined;
 
             // Informational label used when no action is shown.
@@ -143,58 +211,82 @@ export function EventTasksAccordion({
                   ? 'הוקצה'
                   : 'לא הוקצה';
 
-            // Managers may complete any task; regular members only their own assigned task.
+            // Managers may complete any task; regular members only their own
+            // assigned task — but never when this surface disables
+            // completion entirely (`allowCompletion={false}`, e.g.
+            // Community Main — FIX 8B FOLLOW-UP §3).
             const canComplete =
-              canManageTasks || task.isAssignedToCurrentUser;
+              allowCompletion &&
+              (canManageTasks || task.isAssignedToCurrentUser);
 
             return (
               <View
                 key={task.id}
                 style={[styles.taskRow, index > 0 && styles.taskRowDivider]}
               >
-                {/* Checkbox — disabled/read-only when not authorized */}
-                {canComplete ? (
-                  <Pressable
-                    accessible={true}
-                    accessibilityLabel={task.title}
-                    accessibilityRole="checkbox"
-                    accessibilityState={{ checked: task.completed }}
-                    hitSlop={11}
-                    onPress={() => onToggleCompleted(task.id)}
-                    style={styles.checkboxTouch}
-                  >
-                    <View
-                      style={[
-                        styles.checkbox,
-                        task.completed && styles.checkboxDone,
-                      ]}
+                {/*
+                 * FIX 8B FINAL POLISH — when `allowCompletion` is `false`
+                 * (e.g. Community Main), no checkbox is rendered at all —
+                 * not even a disabled/read-only placeholder. That surface
+                 * is claim/unclaim only and must never visually suggest
+                 * completion is managed from there. Home
+                 * (`allowCompletion` defaults to `true`) is unaffected.
+                 */}
+                {allowCompletion ? (
+                  canComplete ? (
+                    <Pressable
+                      accessible={true}
+                      accessibilityLabel={task.title}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: task.completed }}
+                      hitSlop={11}
+                      onPress={() => onToggleCompleted?.(task.id)}
+                      style={styles.checkboxTouch}
                     >
-                      {task.completed ? (
-                        <MaterialIcons color="#FFFFFF" name="check" size={16} />
-                      ) : null}
-                    </View>
-                  </Pressable>
-                ) : (
-                  <View
-                    accessible={true}
-                    accessibilityLabel={task.title}
-                    accessibilityRole="checkbox"
-                    accessibilityState={{ checked: task.completed, disabled: true }}
-                    style={styles.checkboxTouch}
-                  >
+                      <View
+                        style={[
+                          styles.checkbox,
+                          task.completed && styles.checkboxDone,
+                        ]}
+                      >
+                        {task.completed ? (
+                          <MaterialIcons
+                            color="#FFFFFF"
+                            name="check"
+                            size={16}
+                          />
+                        ) : null}
+                      </View>
+                    </Pressable>
+                  ) : (
                     <View
-                      style={[
-                        styles.checkbox,
-                        styles.checkboxDisabled,
-                        task.completed && styles.checkboxDoneDisabled,
-                      ]}
+                      accessible={true}
+                      accessibilityLabel={task.title}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{
+                        checked: task.completed,
+                        disabled: true,
+                      }}
+                      style={styles.checkboxTouch}
                     >
-                      {task.completed ? (
-                        <MaterialIcons color="#FFFFFF" name="check" size={16} />
-                      ) : null}
+                      <View
+                        style={[
+                          styles.checkbox,
+                          styles.checkboxDisabled,
+                          task.completed && styles.checkboxDoneDisabled,
+                        ]}
+                      >
+                        {task.completed ? (
+                          <MaterialIcons
+                            color="#FFFFFF"
+                            name="check"
+                            size={16}
+                          />
+                        ) : null}
+                      </View>
                     </View>
-                  </View>
-                )}
+                  )
+                ) : null}
 
                 {/* Title + assignment label / action */}
                 <View style={styles.taskBody}>
@@ -209,7 +301,7 @@ export function EventTasksAccordion({
                   </Text>
 
                   {isClaimable ? (
-                    /* + אני אקח — primary claim action */
+                    /* אני אקח — primary claim action */
                     <Pressable
                       accessible={true}
                       accessibilityLabel="אני אקח"
@@ -221,21 +313,24 @@ export function EventTasksAccordion({
                       ]}
                     >
                       <View style={styles.claimAction}>
-                        <Text style={styles.claimActionText}>+ אני אקח</Text>
+                        <Text style={styles.claimActionText}>אני אקח</Text>
                       </View>
                     </Pressable>
                   ) : canUnclaimHere ? (
-                    /* ✓ הוקצה אליי + בטל הקצאה — own incomplete task, future event */
+                    /* ✓ הוקצה אליי + ביטול הקצאה — own incomplete task, event not yet ended */
                     <View style={styles.ownAssignmentRow}>
                       <Text
                         numberOfLines={1}
-                        style={[styles.assignmentLabel, styles.assignmentLabelMe]}
+                        style={[
+                          styles.assignmentLabel,
+                          styles.assignmentLabelMe,
+                        ]}
                       >
                         ✓ הוקצה אליי
                       </Text>
                       <Pressable
                         accessible={true}
-                        accessibilityLabel="בטל הקצאה"
+                        accessibilityLabel="ביטול הקצאה"
                         accessibilityRole="button"
                         hitSlop={{ top: 6, bottom: 6, left: 8, right: 8 }}
                         onPress={() => onUnclaimTask?.(task.id)}
@@ -245,7 +340,9 @@ export function EventTasksAccordion({
                         ]}
                       >
                         <View style={styles.unclaimAction}>
-                          <Text style={styles.unclaimActionText}>בטל הקצאה</Text>
+                          <Text style={styles.unclaimActionText}>
+                            ביטול הקצאה
+                          </Text>
                         </View>
                       </Pressable>
                     </View>
@@ -255,7 +352,8 @@ export function EventTasksAccordion({
                       numberOfLines={1}
                       style={[
                         styles.assignmentLabel,
-                        task.isAssignedToCurrentUser && styles.assignmentLabelMe,
+                        task.isAssignedToCurrentUser &&
+                          styles.assignmentLabelMe,
                         !isAssigned && styles.assignmentLabelUnassigned,
                       ]}
                     >
@@ -277,6 +375,12 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: '#E5E9EB',
   },
+  // FIX — Home accordion affordance: a slightly heavier divider makes the
+  // section break between "חשוב לזכור" (above) and this accordion clearer.
+  dividerEmphasized: {
+    height: 1.5,
+    backgroundColor: '#D6DEE3',
+  },
   headerRow: {
     flexDirection: rtl.flexDirection,
     alignItems: 'center',
@@ -286,6 +390,11 @@ const styles = StyleSheet.create({
     gap: 8,
     minHeight: 44,
   },
+  // FIX — Home-only: quiet background tint so the expandable header reads
+  // as its own actionable section rather than blending into the card body.
+  headerRowEmphasized: {
+    backgroundColor: '#F3F8FB',
+  },
   headerText: {
     flex: 1,
     fontSize: 13,
@@ -293,6 +402,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: getTextAlign(),
     writingDirection: 'rtl',
+  },
+  headerTextEmphasized: {
+    fontSize: 14,
+    color: tc.primary,
   },
   expandedContent: {
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -396,7 +509,7 @@ const styles = StyleSheet.create({
   assignmentLabelUnassigned: {
     color: '#ADB3B5',
   },
-  // ── Claim action (+ אני אקח) ──────────────────────────────────────────────
+  // ── Claim action (אני אקח) ────────────────────────────────────────────────
   claimPressable: {
     alignSelf: 'flex-start',
   },
@@ -420,7 +533,7 @@ const styles = StyleSheet.create({
   actionPressed: {
     opacity: 0.84,
   },
-  // ── Own-assignment row (✓ הוקצה אליי + בטל הקצאה) ────────────────────────
+  // ── Own-assignment row (✓ הוקצה אליי + ביטול הקצאה) ──────────────────────
   ownAssignmentRow: {
     flexDirection: rtl.flexDirection,
     alignItems: 'center',
