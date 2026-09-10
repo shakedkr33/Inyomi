@@ -4,13 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
-import EventScreen from '@/lib/components/event/EventScreen';
 import { saveCommunityTaskAssignments } from '@/lib/communityTaskAssignmentSave';
+import EventScreen from '@/lib/components/event/EventScreen';
+import type { FamilyMemberChip } from '@/lib/components/event/ParticipantsCard';
 import {
   resolveCommunityTaskAssignmentDiff,
   resolvePersonalTaskAssignmentDiff,
 } from '@/lib/eventTaskAssignmentDiff';
-import type { FamilyMemberChip } from '@/lib/components/event/ParticipantsCard';
+import { reconcileEventTaskOrder } from '@/lib/eventTaskOrderReconcile';
 import type {
   EventAttachmentDraft,
   EventData,
@@ -288,6 +289,7 @@ export default function EditEventScreen(): React.JSX.Element {
   const updateEventTask = useMutation(api.eventTasks.update);
   const removeEventTask = useMutation(api.eventTasks.remove);
   const setTaskAssignee = useMutation(api.eventTasks.setAssignee);
+  const reorderEventTasks = useMutation(api.eventTasks.reorder);
 
   const isCommunityEvent = Boolean(event?.communityId);
 
@@ -417,6 +419,12 @@ export default function EditEventScreen(): React.JSX.Element {
         currentTasks.filter((t) => originalIds.has(t.id)).map((t) => t.id)
       );
 
+      // Maps each newly-created task's local (temporary) id to the real
+      // eventTasks id it was persisted under, so the reorder call below can
+      // resolve every task in `currentTasks` (existing + brand new) to its
+      // real backend id — see lib/eventTaskOrderReconcile.ts.
+      const newTaskRealIds = new Map<string, Id<'eventTasks'>>();
+
       const newTasks = currentTasks.filter((t) => !originalIds.has(t.id));
       if (newTasks.length > 0) {
         const taskIds = await createEventTasks({
@@ -427,6 +435,7 @@ export default function EditEventScreen(): React.JSX.Element {
           const task = newTasks[i];
           const taskId = taskIds[i];
           if (!taskId) continue;
+          newTaskRealIds.set(task.id, taskId as Id<'eventTasks'>);
           const assignedPid =
             task.assignedParticipantIds?.[0] ?? task.assigneeId;
           if (assignedPid && isCommunityEvent) {
@@ -507,6 +516,26 @@ export default function EditEventScreen(): React.JSX.Element {
         }
       }
 
+      // ── Persist task order ──────────────────────────────────────────────
+      // FIX 8C — `currentTasks` is the form's final local array (already
+      // reflecting every add/delete/drag-reorder this session), so its
+      // array position IS the desired final order. Resolve each task's
+      // local id (real id for existing tasks, temporary id for tasks just
+      // created above) to its real backend id and persist that order —
+      // deleted tasks are already absent from `currentTasks` and therefore
+      // never appear here. See lib/eventTaskOrderReconcile.ts for why this
+      // reconciliation is needed and convex/eventTasks.ts `reorder` for the
+      // normalization strategy (legacy/duplicate order values are always
+      // fully rebuilt, never trusted).
+      const orderedTaskIds = reconcileEventTaskOrder(currentTasks, (localId) =>
+        originalIds.has(localId)
+          ? (localId as Id<'eventTasks'>)
+          : newTaskRealIds.get(localId)
+      );
+      if (orderedTaskIds.length > 0) {
+        await reorderEventTasks({ eventId, orderedIds: orderedTaskIds });
+      }
+
       // All non-assignment writes have finished. A failed assignment retries
       // only this tail, never uploads, event updates, task creation or deletion.
       const finishSave = (): string => {
@@ -538,6 +567,7 @@ export default function EditEventScreen(): React.JSX.Element {
       updateEventTask,
       removeEventTask,
       setTaskAssignee,
+      reorderEventTasks,
       router,
       returnCommunityId,
     ]

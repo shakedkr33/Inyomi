@@ -11,7 +11,27 @@ import { createUserNotifications } from './userNotifications';
 
 // ─────────────────────────────────────────────────────────────
 // Helper: manager check usable from both queries and mutations
+//
+// The decision itself (`canManageEventTasksPure`) is extracted as a pure
+// function — no ctx/db — so it can be unit-tested directly (see
+// tests/convex/eventTaskReorder.test.ts), the same way
+// assertCommunityTaskAssigneeAllowed and getTaskAssignmentClearAuthorization
+// below are. `isEventTaskManager` just resolves the membership doc and
+// delegates; it is not a parallel reimplementation of the rule.
 // ─────────────────────────────────────────────────────────────
+export function canManageEventTasksPure(
+  event: { createdBy: Id<'users'>; communityId?: Id<'communities'> },
+  userId: Id<'users'>,
+  membershipInfo: { isActiveMember: boolean; role?: string }
+): boolean {
+  if (event.createdBy === userId) return true;
+  if (!event.communityId) return false;
+  return (
+    membershipInfo.isActiveMember &&
+    (membershipInfo.role === 'owner' || membershipInfo.role === 'admin')
+  );
+}
+
 async function isEventTaskManager(
   ctx: QueryCtx | MutationCtx,
   event: { createdBy: Id<'users'>; communityId?: Id<'communities'> },
@@ -24,10 +44,10 @@ async function isEventTaskManager(
     event.communityId,
     userId
   );
-  return (
-    isActiveCommunityMember(membership) &&
-    (membership.role === 'owner' || membership.role === 'admin')
-  );
+  return canManageEventTasksPure(event, userId, {
+    isActiveMember: isActiveCommunityMember(membership),
+    role: membership?.role,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -336,9 +356,7 @@ export const listEventTasksForHome = query({
       })
     );
 
-    return results.filter(
-      (r): r is NonNullable<typeof r> => r !== null
-    );
+    return results.filter((r): r is NonNullable<typeof r> => r !== null);
   },
 });
 
@@ -1149,5 +1167,74 @@ export const remove = mutation({
       throw new Error('אין הרשאה למחוק משימות');
 
     await ctx.db.delete(id);
+  },
+});
+
+// ─────────────────────────────────────────────────────────────
+// FIX 8C — Event task reordering (Personal + Community, shared UI)
+//
+// Normalization strategy: the reorder mutation does NOT read or trust any
+// previously-stored `order` value. It fully rebuilds `order` for the whole
+// event from the client's final array position on every call. This means:
+//   - Legacy tasks with a missing `order` are handled the same as any other
+//     task — their prior (absent) value is irrelevant, they simply get the
+//     sequential slot matching their position in `orderedIds`.
+//   - Duplicate/colliding `order` values (e.g. from `createBatch`, which
+//     assigns `order: i` starting at 0 for newly created tasks regardless
+//     of how many tasks already exist) self-heal on the next reorder call,
+//     since every task's order is rewritten from scratch.
+//   - The Event Edit save handler (app/(authenticated)/event-edit/[id].tsx)
+//     calls this on every save that has at least one task, so the DB never
+//     retains stale/duplicate order values after a save.
+//
+// `computeEventTaskOrderPatches` is the pure reconciliation: it (a) drops
+// any id not actually belonging to this event (defense in depth — a stale
+// client array can never write another event's/task's order), and (b)
+// de-duplicates, so a buggy client payload can never create two tasks with
+// the same order value. Extracted with no ctx/db so it is directly
+// unit-tested — see tests/convex/eventTaskReorder.test.ts.
+// ─────────────────────────────────────────────────────────────
+export function computeEventTaskOrderPatches(
+  existingIds: ReadonlySet<Id<'eventTasks'>>,
+  orderedIds: ReadonlyArray<Id<'eventTasks'>>
+): Array<{ id: Id<'eventTasks'>; order: number }> {
+  const seen = new Set<Id<'eventTasks'>>();
+  const patches: Array<{ id: Id<'eventTasks'>; order: number }> = [];
+  let order = 0;
+  for (const id of orderedIds) {
+    if (!existingIds.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    patches.push({ id, order });
+    order += 1;
+  }
+  return patches;
+}
+
+export const reorder = mutation({
+  args: {
+    eventId: v.id('events'),
+    orderedIds: v.array(v.id('eventTasks')),
+  },
+  returns: v.null(),
+  handler: async (ctx, { eventId, orderedIds }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('לא מחובר למערכת');
+
+    const event = await ctx.db.get(eventId);
+    if (!event) throw new Error('אירוע לא נמצא');
+    if (!(await canManageEventTasks(ctx, event, userId)))
+      throw new Error('אין הרשאה לשנות את סדר המשימות');
+
+    const existingTasks = await ctx.db
+      .query('eventTasks')
+      .withIndex('by_event', (q) => q.eq('eventId', eventId))
+      .collect();
+    const existingIds = new Set(existingTasks.map((t) => t._id));
+
+    const patches = computeEventTaskOrderPatches(existingIds, orderedIds);
+    await Promise.all(
+      patches.map(({ id, order }) => ctx.db.patch(id, { order }))
+    );
+    return null;
   },
 });

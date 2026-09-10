@@ -8,10 +8,15 @@ import {
   Switch,
   Text,
   TextInput,
+  TouchableOpacity,
   View,
 } from 'react-native';
-import type { EventTask, Participant } from '@/lib/types/event';
+import type { RenderItemParams } from 'react-native-draggable-flatlist';
+import DraggableFlatList, {
+  OpacityDecorator,
+} from 'react-native-draggable-flatlist';
 import { rtl } from '@/lib/rtl';
+import type { EventTask, Participant } from '@/lib/types/event';
 
 const PRIMARY = '#36a9e2';
 const TINT = '#e8f5fd';
@@ -120,6 +125,15 @@ export function RelatedTasksSection({
       .filter((p): p is Participant => p != null);
   };
 
+  // ── Drag & drop reorder ──────────────────────────────────────────────────
+  // Reordering only updates local form state via `onChange` — exactly like
+  // add/delete/toggle/assign above — and is persisted together with the
+  // rest of the form on Save (Event Edit's existing save pipeline), not
+  // immediately. There is no separate "save order" action.
+  const handleDragEnd = ({ data }: { data: EventTask[] }): void => {
+    onChange(data);
+  };
+
   // ── Render helpers ────────────────────────────────────────────────────────
   const renderAssigneeAvatars = (task: EventTask): React.ReactNode => {
     const assignees = resolveAssignees(task);
@@ -170,61 +184,92 @@ export function RelatedTasksSection({
         </View>
       )}
 
-      {/* ── Task List ── */}
-      {tasks.map((task) => (
-        <View key={task.id} style={s.taskRow}>
-          {/* Checkbox + title */}
-          <Pressable
-            onPress={() => toggleTask(task.id)}
-            style={s.taskCheckArea}
-            accessible={true}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: task.completed }}
-            accessibilityLabel={task.title}
-          >
-            <View style={[s.checkbox, task.completed && s.checkboxDone]}>
-              {task.completed && (
-                <MaterialIcons name="check" size={14} color="#fff" />
-              )}
+      {/* ── Task List ──
+          DraggableFlatList with scrollEnabled=false so the parent
+          ScrollView (EventScreen) handles scrolling; drag still works
+          fine — same pattern as InlineSubtasksEditor's subtask list. */}
+      <DraggableFlatList
+        data={tasks}
+        keyExtractor={(task) => task.id}
+        renderItem={({
+          item: task,
+          drag,
+          isActive,
+        }: RenderItemParams<EventTask>) => (
+          <OpacityDecorator activeOpacity={0.75}>
+            <View style={[s.taskRow, isActive && s.taskRowActive]}>
+              {/* Drag handle — same icon/interaction as InlineSubtasksEditor */}
+              <TouchableOpacity
+                onPressIn={drag}
+                style={s.dragHandle}
+                accessible={true}
+                accessibilityLabel="גרור לסידור מחדש"
+                hitSlop={6}
+              >
+                <MaterialIcons name="drag-handle" size={20} color="#b0bec5" />
+              </TouchableOpacity>
+
+              {/* Checkbox + title */}
+              <Pressable
+                onPress={() => toggleTask(task.id)}
+                style={s.taskCheckArea}
+                accessible={true}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: task.completed }}
+                accessibilityLabel={task.title}
+              >
+                <View style={[s.checkbox, task.completed && s.checkboxDone]}>
+                  {task.completed && (
+                    <MaterialIcons name="check" size={14} color="#fff" />
+                  )}
+                </View>
+                <Text
+                  style={[s.taskTitle, task.completed && s.taskTitleDone]}
+                  numberOfLines={1}
+                >
+                  {task.title}
+                </Text>
+                {task.colorDot != null && (
+                  <View
+                    style={[s.colorDot, { backgroundColor: task.colorDot }]}
+                  />
+                )}
+                {/* Compact assignee avatars */}
+                {renderAssigneeAvatars(task)}
+              </Pressable>
+
+              {/* "הקצה" button */}
+              <Pressable
+                onPress={() => openAssignSheet(task)}
+                style={s.assignBtn}
+                accessible={true}
+                accessibilityRole="button"
+                accessibilityLabel={`הקצה משימה: ${task.title}`}
+                hitSlop={6}
+              >
+                <Text style={s.assignBtnText}>הקצה</Text>
+              </Pressable>
+
+              {/* Delete */}
+              <Pressable
+                onPress={() => deleteTask(task.id)}
+                style={s.deleteBtn}
+                accessible={true}
+                accessibilityRole="button"
+                accessibilityLabel={`מחק משימה: ${task.title}`}
+                hitSlop={8}
+              >
+                <MaterialIcons name="close" size={16} color="#94a3b8" />
+              </Pressable>
             </View>
-            <Text
-              style={[s.taskTitle, task.completed && s.taskTitleDone]}
-              numberOfLines={1}
-            >
-              {task.title}
-            </Text>
-            {task.colorDot != null && (
-              <View style={[s.colorDot, { backgroundColor: task.colorDot }]} />
-            )}
-            {/* Compact assignee avatars */}
-            {renderAssigneeAvatars(task)}
-          </Pressable>
-
-          {/* "הקצה" button */}
-          <Pressable
-            onPress={() => openAssignSheet(task)}
-            style={s.assignBtn}
-            accessible={true}
-            accessibilityRole="button"
-            accessibilityLabel={`הקצה משימה: ${task.title}`}
-            hitSlop={6}
-          >
-            <Text style={s.assignBtnText}>הקצה</Text>
-          </Pressable>
-
-          {/* Delete */}
-          <Pressable
-            onPress={() => deleteTask(task.id)}
-            style={s.deleteBtn}
-            accessible={true}
-            accessibilityRole="button"
-            accessibilityLabel={`מחק משימה: ${task.title}`}
-            hitSlop={8}
-          >
-            <MaterialIcons name="close" size={16} color="#94a3b8" />
-          </Pressable>
-        </View>
-      ))}
+          </OpacityDecorator>
+        )}
+        onDragEnd={handleDragEnd}
+        scrollEnabled={false}
+        activationDistance={8}
+        disableScrollViewPanResponder={true}
+        containerStyle={{ overflow: 'visible' }}
+      />
 
       {/* ── Add Task ── */}
       <Pressable
@@ -522,6 +567,16 @@ const s = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f8fafc',
     gap: 6,
+    borderRadius: 8,
+  },
+  taskRowActive: {
+    backgroundColor: '#f0f9ff',
+  },
+  dragHandle: {
+    width: 28,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   taskCheckArea: {
     flex: 1,
