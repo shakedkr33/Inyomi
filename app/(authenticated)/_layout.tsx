@@ -403,7 +403,6 @@ export default function AuthenticatedLayout() {
       profileColor: onboardingData.personalColor ?? '#36a9e2',
       spaceType: onboardingData.spaceType ?? 'personal',
       challenges: onboardingData.challenges ?? [],
-      sources: onboardingData.sources ?? [],
       childCount: onboardingData.childCount,
       familyContacts: onboardingData.familyData?.familyMembers,
     })
@@ -421,7 +420,6 @@ export default function AuthenticatedLayout() {
     onboardingData.personalColor,
     onboardingData.spaceType,
     onboardingData.challenges,
-    onboardingData.sources,
     onboardingData.childCount,
     onboardingData.familyData,
     finishOnboarding,

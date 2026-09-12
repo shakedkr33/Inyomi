@@ -27,7 +27,6 @@ interface OnboardingData {
   spaceType?: 'personal' | 'couple' | 'family' | 'business'; // שלב 1
   childCount?: number; // שלב מותנה
   challenges?: string[]; // שלב 2
-  sources?: string[]; // שלב 3
   fullName?: string; // שלב 4 (legacy)
   profileColor?: string; // שלב 4 (legacy)
   firstName?: string; // שלב 4

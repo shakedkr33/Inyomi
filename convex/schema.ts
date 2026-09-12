@@ -51,7 +51,6 @@ export default defineSchema({
     ),
     ownerId: v.id('users'),
     onboardingChallenges: v.optional(v.array(v.string())),
-    primarySources: v.optional(v.array(v.string())),
     createdAt: v.number(),
   }).index('by_owner', ['ownerId']),
 

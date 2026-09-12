@@ -36,7 +36,6 @@ export const finishOnboarding = mutation({
     profileColor: v.string(),
     spaceType: v.string(),
     challenges: v.array(v.string()),
-    sources: v.array(v.string()),
     childCount: v.optional(v.number()),
     // FIXED: family profile persistence — stores family contacts as JSON blob
     familyContacts: v.optional(v.any()),
@@ -88,7 +87,6 @@ export const finishOnboarding = mutation({
       type: args.spaceType as 'personal' | 'couple' | 'family' | 'business',
       ownerId: userId,
       onboardingChallenges: args.challenges,
-      primarySources: args.sources,
       createdAt: Date.now(),
     });
 

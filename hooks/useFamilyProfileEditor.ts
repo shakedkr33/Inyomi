@@ -428,7 +428,6 @@ export function useFamilyProfileEditor(
       profileColor: personalColor,
       spaceType: data.spaceType ?? 'personal',
       challenges: data.challenges ?? [],
-      sources: data.sources ?? [],
       childCount: data.childCount,
     });
   };

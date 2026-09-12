@@ -5,6 +5,7 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-n
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../constants/theme';
 import { useOnboarding } from '../contexts/OnboardingContext';
+import { markOnboardingSeen } from '../lib/onboardingState';
 import { APP_IS_RTL, tw } from '@/lib/rtl';
 import { colors as tc } from '@/theme/colors';
 
@@ -61,9 +62,12 @@ export default function OnboardingStep2() {
     });
   };
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     updateData({ challenges: selected });
-    router.replace('/onboarding-step3');
+    try {
+      await markOnboardingSeen();
+    } catch {}
+    router.replace('/(auth)/sign-in');
   };
 
   return (
@@ -103,8 +107,7 @@ export default function OnboardingStep2() {
       {/* Horizontal padding lives on contentContainerStyle (not className)
           so the scrollable content — including the option cards — gets a
           reliable, symmetric paddingHorizontal instead of depending on how
-          ScrollView's own `style` padding interacts with RTL. Matches the
-          existing pattern in onboarding-step3 / onboarding-premium. */}
+          ScrollView's own `style` padding interacts with RTL. */}
       <ScrollView
         className="flex-1"
         contentContainerStyle={{ paddingHorizontal: 24 }}
