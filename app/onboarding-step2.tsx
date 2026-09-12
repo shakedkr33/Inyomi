@@ -19,13 +19,13 @@ const MAX_SELECTIONS = 2;
 const challenges = [
   {
     id: 'incoming_from_everywhere',
-    title: 'לרכז משימות ואירועים שמגיעים מכל מקום',
+    title: 'לרכז ולתעד אירועים ומשימות שמגיעים מכל מקום',
     desc: 'וואטסאפ, SMS, מיילים והודעות',
     icon: 'inbox',
   },
   {
     id: 'remember_tasks_and_appointments',
-    title: 'לזכור משימות, תורים ודברים שצריך לעשות',
+    title: 'לזכור מטלות, תורים ודברים שצריך לעשות',
     desc: 'בלי שדברים חשובים יתפספסו',
     icon: 'event-available',
   },
@@ -37,8 +37,8 @@ const challenges = [
   },
   {
     id: 'everything_in_one_place',
-    title: 'לנהל הכול במקום אחד',
-    desc: 'יומן, משימות, תורים וסידורים בלי לעבור בין כמה מקומות',
+    title: 'להתנהל בין יותר מדי מקומות',
+    desc: 'יומן, פתקים, הודעות, מיילים ואפליקציות שונות',
     icon: 'dashboard',
   },
 ] as const;
