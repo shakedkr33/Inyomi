@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../constants/theme';
 import { useOnboarding } from '../contexts/OnboardingContext';
 import { APP_IS_RTL, tw } from '@/lib/rtl';
+import { colors as tc } from '@/theme/colors';
 
 const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
 
@@ -31,26 +32,31 @@ export default function OnboardingStep1() {
     <SafeAreaView style={[{ flex: 1, backgroundColor: '#f6f7f8' }, ANDROID_MATCH_IOS_LAYOUT && styles.safeAreaRtl]}>
       {/* Header & Progress */}
       <View className="pt-4 px-4">
-        <View className={`${tw.flexRow} items-center justify-between mb-4`}>
+        {/* direction: 'ltr' pins this row's child order to physical
+            left-to-right so the back button stays on the physical LEFT
+            regardless of native RTL auto-flip (I18nManager.isRTL). */}
+        <View
+          className="flex-row items-center justify-between mb-4"
+          style={{ direction: 'ltr' }}
+        >
           <Pressable
             onPress={() => router.replace('/(auth)/sign-in')}
             className="p-2"
           >
-            <MaterialIcons
-              name="arrow-forward"
-              size={24}
-              color={colors.slate}
-            />
+            {/* "arrow-back" is the icon library's stable left-pointing
+                glyph — used as-is (no transform) so it reliably points
+                physical LEFT and is never re-mirrored by RTL. */}
+            <MaterialIcons name="arrow-back" size={24} color={colors.slate} />
           </Pressable>
           <Text style={{ color: colors.slate }} className="text-sm font-medium">
-            שלב 1 מתוך 3
+            שלב 1 מתוך 2
           </Text>
           <View className="w-10" />
         </View>
         <View className="w-full bg-gray-200 h-1.5 rounded-full overflow-hidden">
           <View
-            className="h-full w-1/3 rounded-full"
-            style={{ backgroundColor: colors.sage }}
+            className="h-full w-1/2 rounded-full"
+            style={{ backgroundColor: tc.primary }}
           />
         </View>
       </View>
@@ -61,7 +67,7 @@ export default function OnboardingStep1() {
           style={{ color: colors.slate }}
           className="text-[28px] font-extrabold text-center leading-tight"
         >
-          עבור מי אנחנו בונים את הלו"ז?
+          עבור מי ננהל כאן את הלו"ז?
         </Text>
       </View>
 
@@ -73,9 +79,14 @@ export default function OnboardingStep1() {
           className="items-center mb-5"
         >
           <View
-            className={`w-28 h-28 rounded-full items-center justify-center shadow-sm ${selected === 'personal' ? 'border-4 border-[#36a9e2] bg-[#e8f5fd]' : 'border-2 border-gray-200 bg-white'}`}
+            className="w-28 h-28 rounded-full items-center justify-center shadow-sm border-2"
+            style={
+              selected === 'personal'
+                ? { borderWidth: 4, borderColor: tc.primary, backgroundColor: tc.primaryLight }
+                : { borderColor: '#e5e7eb', backgroundColor: 'white' }
+            }
           >
-            <MaterialIcons name="person" size={48} color={colors.sage} />
+            <MaterialIcons name="person" size={48} color={tc.primary} />
           </View>
           <Text
             style={{ color: colors.slate }}
@@ -92,9 +103,14 @@ export default function OnboardingStep1() {
             className="items-center"
           >
             <View
-              className={`w-28 h-28 rounded-full items-center justify-center shadow-sm ${selected === 'couple' ? 'border-4 border-[#36a9e2] bg-[#e8f5fd]' : 'border-2 border-gray-200 bg-white'}`}
+              className="w-28 h-28 rounded-full items-center justify-center shadow-sm border-2"
+              style={
+                selected === 'couple'
+                  ? { borderWidth: 4, borderColor: tc.primary, backgroundColor: tc.primaryLight }
+                  : { borderColor: '#e5e7eb', backgroundColor: 'white' }
+              }
             >
-              <MaterialIcons name="group" size={48} color={colors.sage} />
+              <MaterialIcons name="group" size={48} color={tc.primary} />
             </View>
             <Text
               style={{ color: colors.slate }}
@@ -109,12 +125,17 @@ export default function OnboardingStep1() {
             className="items-center"
           >
             <View
-              className={`w-28 h-28 rounded-full items-center justify-center shadow-sm ${selected === 'family' ? 'border-4 border-[#36a9e2] bg-[#e8f5fd]' : 'border-2 border-gray-200 bg-white'}`}
+              className="w-28 h-28 rounded-full items-center justify-center shadow-sm border-2"
+              style={
+                selected === 'family'
+                  ? { borderWidth: 4, borderColor: tc.primary, backgroundColor: tc.primaryLight }
+                  : { borderColor: '#e5e7eb', backgroundColor: 'white' }
+              }
             >
               <MaterialIcons
                 name="family-restroom"
                 size={48}
-                color={colors.sage}
+                color={tc.primary}
               />
             </View>
             <Text
@@ -139,14 +160,14 @@ export default function OnboardingStep1() {
           <MaterialIcons
             name="auto-awesome"
             size={20}
-            color={colors.sage}
+            color={tc.primary}
             style={{ marginLeft: 12 }}
           />
           <Text
             style={{ color: colors.slate }}
             className={`text-sm font-medium flex-1 leading-relaxed ${tw.textStart}`}
           >
-            זה יעזור לנו להתאים לך את הלוז בצורה טובה יותר
+            כך נוכל להתאים את InYomi למה שחשוב ביום־יום
           </Text>
         </View>
       </View>
@@ -158,7 +179,7 @@ export default function OnboardingStep1() {
           disabled={!selected}
           className="w-full h-16 rounded-full flex-row items-center justify-center gap-3 shadow-lg"
           style={{
-            backgroundColor: selected ? colors.sage : '#d1d5db',
+            backgroundColor: selected ? tc.primary : '#d1d5db',
           }}
         >
           <MaterialIcons name="chevron-left" size={24} color="white" />

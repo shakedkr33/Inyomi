@@ -6,29 +6,41 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../constants/theme';
 import { useOnboarding } from '../contexts/OnboardingContext';
 import { APP_IS_RTL, tw } from '@/lib/rtl';
+import { colors as tc } from '@/theme/colors';
 
 const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
 
+const MAX_SELECTIONS = 2;
+
+// Internal stable IDs kept separate from the Hebrew display copy so this
+// answer can later be used for analytics/personalization without depending
+// on display text.
 const challenges = [
   {
-    id: 'remembering',
-    title: 'לזכור מה צריך להביא/לקחת',
-    desc: 'ה-AI תזכיר לך ציוד לחוגים, למסגרות או לעבודה',
-    icon: 'assignment',
+    id: 'incoming_from_everywhere',
+    title: 'לרכז משימות ואירועים שמגיעים מכל מקום',
+    desc: 'וואטסאפ, SMS, מיילים והודעות',
+    icon: 'inbox',
   },
   {
-    id: 'sync',
-    title: 'סנכרון לו"ז עם בן/בת הזוג',
-    desc: 'תיאום משימות משפחתיות',
-    icon: 'calendar-today',
+    id: 'remember_tasks_and_appointments',
+    title: 'לזכור משימות, תורים ודברים שצריך לעשות',
+    desc: 'בלי שדברים חשובים יתפספסו',
+    icon: 'event-available',
   },
   {
-    id: 'home_tasks',
-    title: 'ניהול משימות הבית',
-    desc: 'ניקיון, קניות וסידורים',
-    icon: 'home-work',
+    id: 'shared_schedule_coordination',
+    title: 'לתאם את הלו"ז המשותף',
+    desc: 'תיאום בין בני הבית, מי עושה מה ומתי',
+    icon: 'sync-alt',
   },
-];
+  {
+    id: 'everything_in_one_place',
+    title: 'לנהל הכול במקום אחד',
+    desc: 'יומן, משימות, תורים וסידורים בלי לעבור בין כמה מקומות',
+    icon: 'dashboard',
+  },
+] as const;
 
 export default function OnboardingStep2() {
   const router = useRouter();
@@ -36,9 +48,17 @@ export default function OnboardingStep2() {
   const [selected, setSelected] = useState<string[]>(data.challenges || []);
 
   const toggleSelection = (id: string) => {
-    setSelected((prev) =>
-      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
-    );
+    setSelected((prev) => {
+      if (prev.includes(id)) {
+        return prev.filter((i) => i !== id);
+      }
+      if (prev.length >= MAX_SELECTIONS) {
+        // Already at the max — ignore the tap instead of silently
+        // replacing one of the existing selections.
+        return prev;
+      }
+      return [...prev, id];
+    });
   };
 
   const handleContinue = () => {
@@ -48,46 +68,61 @@ export default function OnboardingStep2() {
 
   return (
     <SafeAreaView style={[{ flex: 1, backgroundColor: '#f6f7f8' }, ANDROID_MATCH_IOS_LAYOUT && styles.safeAreaRtl]}>
-      {/* Header */}
+      {/* Header & Progress */}
       <View className="pt-4 px-6">
-        <View className={`${tw.flexRow} items-center justify-between mb-4`}>
+        {/* direction: 'ltr' pins this row's child order to physical
+            left-to-right so the back button stays on the physical LEFT
+            regardless of native RTL auto-flip (I18nManager.isRTL) —
+            matches onboarding-step1. */}
+        <View
+          className="flex-row items-center justify-between mb-4"
+          style={{ direction: 'ltr' }}
+        >
           <Pressable
             onPress={() => router.replace('/onboarding-step1')}
             className="p-2"
           >
-            <MaterialIcons
-              name="arrow-forward"
-              size={24}
-              color={colors.slate}
-            />
+            {/* "arrow-back" is the icon library's stable left-pointing
+                glyph — used as-is (no transform) so it reliably points
+                physical LEFT and is never re-mirrored by RTL. */}
+            <MaterialIcons name="arrow-back" size={24} color={colors.slate} />
           </Pressable>
-          <Text style={{ color: colors.sage }} className="font-bold">
-            שלב 2 מתוך 3
+          <Text style={{ color: colors.slate }} className="text-sm font-medium">
+            שלב 2 מתוך 2
           </Text>
           <View className="w-10" />
         </View>
-        <View className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
+        <View className="w-full bg-gray-200 h-1.5 rounded-full overflow-hidden">
           <View
-            className="h-full w-2/3 rounded-full"
-            style={{ backgroundColor: colors.sage }}
+            className="h-full w-full rounded-full"
+            style={{ backgroundColor: tc.primary }}
           />
         </View>
       </View>
 
-      <ScrollView className="flex-1 px-6" showsVerticalScrollIndicator={false}>
-        {/* Title & Description */}
-        <View className="py-6">
+      {/* Horizontal padding lives on contentContainerStyle (not className)
+          so the scrollable content — including the option cards — gets a
+          reliable, symmetric paddingHorizontal instead of depending on how
+          ScrollView's own `style` padding interacts with RTL. Matches the
+          existing pattern in onboarding-step3 / onboarding-premium. */}
+      <ScrollView
+        className="flex-1"
+        contentContainerStyle={{ paddingHorizontal: 24 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Title & Instruction */}
+        <View className="pt-6 pb-6">
           <Text
             style={{ color: colors.slate }}
-            className="text-3xl font-extrabold text-center leading-tight"
+            className="text-[28px] font-extrabold text-center leading-tight"
           >
-            מה האתגר היומי הגדול ביותר שלך?
+            מה הכי מעמיס ביום־יום?
           </Text>
           <Text
-            style={{ color: colors.sage }}
+            style={{ color: tc.primary }}
             className="text-center font-bold mt-2"
           >
-            ניתן לבחור יותר מאתגר אחד
+            אפשר לבחור עד 2 אפשרויות
           </Text>
         </View>
 
@@ -102,31 +137,29 @@ export default function OnboardingStep2() {
                 style={[styles.card, isSelected && styles.selectedCard]}
               >
                 {isSelected && (
-                  <View style={styles.checkBadge}>
+                  <View style={[styles.checkBadge, { backgroundColor: tc.primary }]}>
                     <MaterialIcons name="check" size={14} color="white" />
                   </View>
                 )}
 
-                <View className={`${tw.flexRow} items-center p-5`}>
+                <View className={`${tw.flexRow} items-center gap-4 p-5`}>
                   <View
                     className="w-14 h-14 rounded-full items-center justify-center"
                     style={{
-                      backgroundColor: isSelected
-                        ? colors.sage
-                        : 'rgba(74, 159, 226, 0.1)',
+                      backgroundColor: isSelected ? tc.primary : tc.primaryLight,
                     }}
                   >
                     <MaterialIcons
-                      name={item.icon as any}
+                      name={item.icon}
                       size={28}
-                      color={isSelected ? 'white' : colors.sage}
+                      color={isSelected ? 'white' : tc.primary}
                     />
                   </View>
 
-                  <View className="flex-1 mr-4">
+                  <View className="flex-1">
                     <Text
                       style={{ color: colors.slate }}
-                      className={`${tw.textStart} text-xl font-bold`}
+                      className={`${tw.textStart} text-lg font-bold`}
                     >
                       {item.title}
                     </Text>
@@ -153,14 +186,14 @@ export default function OnboardingStep2() {
           <MaterialIcons
             name="auto-awesome"
             size={20}
-            color={colors.sage}
+            color={tc.primary}
             style={{ marginLeft: 12 }}
           />
           <Text
             style={{ color: colors.slate }}
             className={`text-sm font-medium flex-1 leading-relaxed ${tw.textStart}`}
           >
-            ספר/י לנו קצת על עצמך כדי שנוכל להתאים את המערכת בדיוק לצרכים שלך
+            כך נוכל לעזור לעשות יותר סדר בחיים
           </Text>
         </View>
       </View>
@@ -172,7 +205,7 @@ export default function OnboardingStep2() {
           disabled={selected.length === 0}
           className="w-full h-16 rounded-3xl flex-row items-center justify-center shadow-lg"
           style={{
-            backgroundColor: selected.length > 0 ? colors.sage : '#d1d5db',
+            backgroundColor: selected.length > 0 ? tc.primary : '#d1d5db',
           }}
         >
           <MaterialIcons
@@ -193,20 +226,24 @@ const styles = StyleSheet.create({
     direction: 'rtl',
   },
   card: {
+    // Stretch to the full (already symmetrically padded) content width
+    // from contentContainerStyle above. `width: '100%'` previously used
+    // here did not fix centering because the actual asymmetry came from
+    // the ScrollView's own padding, not from the card's own sizing.
+    alignSelf: 'stretch',
     backgroundColor: 'white',
     borderRadius: 24,
     borderWidth: 1,
     borderColor: '#f0f0f0',
   },
   selectedCard: {
-    borderColor: '#4A9FE2',
+    borderColor: tc.primary,
     borderWidth: 2,
   },
   checkBadge: {
     position: 'absolute',
     top: -10,
     left: -10,
-    backgroundColor: '#4A9FE2',
     width: 24,
     height: 24,
     borderRadius: 12,
