@@ -1,12 +1,19 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Image,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import {
   SafeAreaView,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
+import { getOnboardingDraft } from '@/lib/onboardingState';
 import { APP_IS_RTL } from '@/lib/rtl';
-import { getHasSeenOnboarding } from '@/lib/onboardingState';
 
 const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
 
@@ -17,9 +24,9 @@ export default function WelcomeScreen() {
   const [isCheckingOnboarding, setIsCheckingOnboarding] = useState(true);
 
   useEffect(() => {
-    getHasSeenOnboarding()
-      .then((hasSeenOnboarding) => {
-        if (hasSeenOnboarding) {
+    getOnboardingDraft()
+      .then((draft) => {
+        if (draft) {
           router.replace('/(auth)/sign-in');
           return;
         }
@@ -35,12 +42,21 @@ export default function WelcomeScreen() {
     router.replace('/onboarding-step1');
   };
 
+  // Returning-user path: skip onboarding entirely and go straight to Sign In.
+  const goToSignIn = () => {
+    if (isNavigating.current) return;
+    isNavigating.current = true;
+    router.replace('/(auth)/sign-in');
+  };
+
   if (isCheckingOnboarding) {
     return null;
   }
 
   return (
-    <SafeAreaView style={[styles.safe, ANDROID_MATCH_IOS_LAYOUT && styles.safeAreaRtl]}>
+    <SafeAreaView
+      style={[styles.safe, ANDROID_MATCH_IOS_LAYOUT && styles.safeAreaRtl]}
+    >
       <View style={styles.content}>
         <View style={styles.phoneSection}>
           <View style={styles.phoneMockup}>
@@ -64,14 +80,29 @@ export default function WelcomeScreen() {
         </View>
       </View>
 
-      <Pressable
-        onPress={goToOnboarding}
-        style={[styles.cta, { bottom: insets.bottom + 24 }]}
-        accessibilityRole="button"
-        accessibilityLabel="בואו נתחיל"
-      >
-        <Text style={styles.ctaText}>בואו נתחיל</Text>
-      </Pressable>
+      <View style={[styles.bottomArea, { bottom: insets.bottom + 24 }]}>
+        <Pressable
+          onPress={goToOnboarding}
+          style={styles.cta}
+          accessible={true}
+          accessibilityRole="button"
+          accessibilityLabel="בואו נתחיל"
+        >
+          <Text style={styles.ctaText}>בואו נתחיל</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={goToSignIn}
+          style={styles.secondaryLink}
+          accessible={true}
+          accessibilityRole="button"
+          accessibilityLabel="כבר יש לי חשבון? התחברות"
+          accessibilityHint="דילוג על ההיכרות והמעבר ישירות למסך התחברות"
+          hitSlop={8}
+        >
+          <Text style={styles.secondaryLinkText}>כבר יש לי חשבון? התחברות</Text>
+        </Pressable>
+      </View>
     </SafeAreaView>
   );
 }
@@ -147,16 +178,19 @@ const styles = StyleSheet.create({
     maxWidth: 320,
   },
 
-  cta: {
+  bottomArea: {
     position: 'absolute',
     left: 24,
     right: 24,
+    zIndex: 50,
+  },
+
+  cta: {
     height: 60,
     backgroundColor: '#36A9E2',
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 50,
     borderWidth: 1,
     borderColor: '#2497d3',
   },
@@ -165,5 +199,21 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 20,
     fontWeight: '800',
+  },
+
+  // Secondary, lower-emphasis action — must not visually compete with the
+  // primary CTA above it.
+  secondaryLink: {
+    marginTop: 16,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  secondaryLinkText: {
+    color: '#5b6672',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });

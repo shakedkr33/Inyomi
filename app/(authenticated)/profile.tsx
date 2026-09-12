@@ -30,6 +30,7 @@ import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { api } from '@/convex/_generated/api';
 import { useEffectiveAccess } from '@/hooks/useEffectiveAccess';
 import { getAvatarInitials } from '@/lib/avatarInitials';
+import { clearOnboardingDraft } from '@/lib/onboardingState';
 import { APP_IS_RTL, rtl } from '@/lib/rtl';
 
 const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
@@ -246,9 +247,7 @@ function SubscriptionStatusCard({
         </View>
         <Text style={styles.subTitle}>גישה חינמית</Text>
         <Text style={styles.subSubtitle}>קהילות נשארות זמינות</Text>
-        <Text style={styles.subNote}>
-          לניהול משפחתי מלא אפשר לשדרג למנוי
-        </Text>
+        <Text style={styles.subNote}>לניהול משפחתי מלא אפשר לשדרג למנוי</Text>
         <TouchableOpacity
           onPress={onUpgradePress}
           accessible={true}
@@ -295,7 +294,7 @@ export default function ProfileScreen() {
     trialDaysRemaining,
   } = useEffectiveAccess();
 
-  const { data: onboardingData } = useOnboarding();
+  const { data: onboardingData, resetData } = useOnboarding();
   const isSpaceFamily = onboardingData.spaceType === 'family';
   const rawFirstName = onboardingData.firstName ?? '';
   const rawLastName = onboardingData.lastName ?? '';
@@ -325,6 +324,18 @@ export default function ProfileScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              // FIXED: Stage 1 — clear temporary onboarding state BEFORE
+              // signOut() so a second person using this device never
+              // inherits it. Done deterministically here rather than
+              // relying on code that runs after auth-state navigation may
+              // have already unmounted this screen. This only clears the
+              // local pre-auth draft + in-memory OnboardingContext (never
+              // server-side user/profile/onboarding data). If signOut then
+              // fails, the still-signed-in user's profile display simply
+              // re-hydrates from the server (see the authenticated
+              // layout's existing hydrateFromServer effect).
+              await clearOnboardingDraft();
+              resetData();
               await signOut();
             } catch {
               Alert.alert('שגיאה', 'אירעה שגיאה בהתנתקות');
@@ -457,9 +468,7 @@ export default function ProfileScreen() {
         <ProfileFamilyCard
           title={isSpaceFamily ? 'המשפחה שלי' : 'הפרופיל שלי'}
           subtitle={
-            isSpaceFamily
-              ? 'ניהול בני משפחה והרשאות'
-              : 'פרטים אישיים והגדרות'
+            isSpaceFamily ? 'ניהול בני משפחה והרשאות' : 'פרטים אישיים והגדרות'
           }
           iconName={isSpaceFamily ? 'group' : 'person'}
           onPress={() =>
@@ -511,11 +520,7 @@ export default function ProfileScreen() {
 
         {/* ── Destructive actions ── */}
         <View style={[styles.card, styles.settingsCard, styles.dangerCard]}>
-          <SettingsRow
-            label="התנתקות"
-            danger
-            onPress={handleSignOut}
-          />
+          <SettingsRow label="התנתקות" danger onPress={handleSignOut} />
           <SettingsRow
             label="מחיקת חשבון"
             danger

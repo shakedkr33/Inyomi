@@ -37,7 +37,6 @@ import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { api } from '@/convex/_generated/api';
 import { useEffectiveAccess } from '@/hooks/useEffectiveAccess';
-import { getHasSeenOnboarding } from '@/lib/onboardingState';
 import { PENDING_COMMUNITY_EVENT_ID_KEY } from '@/lib/pendingEventLink';
 import {
   consumePendingNavigationTarget,
@@ -281,20 +280,20 @@ export default function AuthenticatedLayout() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { isLoading: isRevenueCatLoading } = useRevenueCat();
   // FIXED: deferred saveAll() to authenticated layout to avoid auth race condition
-  // hasLocalOnboardingData lets a just-registered user through while Convex
+  // hasCompletedOnboardingLocally lets a just-registered user through while Convex
   // propagates the finishOnboarding mutation result (avoids redirect loop).
   const {
     data: onboardingData,
     updateData,
     hydrateFromServer,
+    isDraftHydrated,
   } = useOnboarding();
-  const hasLocalOnboardingData = !!onboardingData.spaceType;
-  const [hasSeenOnboardingLocally, setHasSeenOnboardingLocally] =
-    useState(false);
-  const [isLocalOnboardingLoading, setIsLocalOnboardingLoading] =
-    useState(true);
-  const hasCompletedOnboardingLocally =
-    hasLocalOnboardingData || hasSeenOnboardingLocally;
+  // FIXED: Stage 1 — the local pre-auth draft (if any) is now hydrated into
+  // OnboardingContext once at app start (see OnboardingContext.tsx), so
+  // onboardingData.spaceType already reflects both a same-session answer
+  // and a restored draft. isDraftHydrated (below, via isReadyToRoute) gates
+  // routing decisions until that one-time async check has settled.
+  const hasCompletedOnboardingLocally = !!onboardingData.spaceType;
   const finishOnboarding = useMutation(api.onboarding.finishOnboarding);
   // Ref guard prevents a second mutation call if a render occurs while the first is in-flight.
   const savingRef = useRef(false);
@@ -321,13 +320,6 @@ export default function AuthenticatedLayout() {
     useState<ActiveCommunityContext | null>(null);
   const [upgradeModalVisible, setUpgradeModalVisible] = useState(false);
   const [upgradeReason, setUpgradeReason] = useState<UpgradeReason>('general');
-
-  useEffect(() => {
-    getHasSeenOnboarding()
-      .then(setHasSeenOnboardingLocally)
-      .catch(() => setHasSeenOnboardingLocally(false))
-      .finally(() => setIsLocalOnboardingLoading(false));
-  }, []);
 
   // Fetch onboarding status — skip the query while not yet authenticated to avoid
   // an unnecessary round-trip and potential auth errors
@@ -541,7 +533,7 @@ export default function AuthenticatedLayout() {
     !!navigationState?.key &&
     !isLoading &&
     !isRevenueCatLoading &&
-    !isLocalOnboardingLoading &&
+    isDraftHydrated &&
     !isUserStatusLoading &&
     !isFamilyBootstrapLoading &&
     !needsHydration;
@@ -739,7 +731,10 @@ export default function AuthenticatedLayout() {
           {/* Recently Deleted — accessible from Profile/Settings only, not a tab */}
           <Tabs.Screen name="recently-deleted" options={{ href: null }} />
           {/* Holiday overlay settings — accessible via deep-link only, not a tab */}
-          <Tabs.Screen name="holiday-overlay-settings" options={{ href: null }} />
+          <Tabs.Screen
+            name="holiday-overlay-settings"
+            options={{ href: null }}
+          />
         </Tabs>
 
         <ActionSheetModal

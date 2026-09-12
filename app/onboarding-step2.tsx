@@ -1,13 +1,24 @@
 import { MaterialIcons } from '@expo/vector-icons';
+import { useConvexAuth } from 'convex/react';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors } from '../constants/theme';
-import { useOnboarding } from '../contexts/OnboardingContext';
-import { markOnboardingSeen } from '../lib/onboardingState';
 import { APP_IS_RTL, tw } from '@/lib/rtl';
 import { colors as tc } from '@/theme/colors';
+import { colors } from '../constants/theme';
+import { useOnboarding } from '../contexts/OnboardingContext';
+import {
+  getPostStep2Destination,
+  saveOnboardingDraft,
+} from '../lib/onboardingState';
 
 const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
 
@@ -46,6 +57,7 @@ const challenges = [
 export default function OnboardingStep2() {
   const router = useRouter();
   const { data, updateData } = useOnboarding();
+  const { isAuthenticated } = useConvexAuth();
   const [selected, setSelected] = useState<string[]>(data.challenges || []);
 
   const toggleSelection = (id: string) => {
@@ -64,14 +76,32 @@ export default function OnboardingStep2() {
 
   const handleContinue = async () => {
     updateData({ challenges: selected });
-    try {
-      await markOnboardingSeen();
-    } catch {}
-    router.replace('/(auth)/sign-in');
+
+    // Persist the complete Step 1 + Step 2 draft atomically so it survives
+    // an app kill before SMS auth completes. data.spaceType is always set
+    // here — Step 1 requires a selection before its own "המשך" is enabled.
+    if (data.spaceType) {
+      await saveOnboardingDraft({
+        spaceType: data.spaceType,
+        challenges: selected,
+      });
+    }
+
+    // A user who is already authenticated (e.g. they tapped the Welcome
+    // screen's returning-user link by mistake, or backed into onboarding
+    // from the authenticated area) must continue into the authenticated
+    // flow, not Sign In again — routing there would just bounce them
+    // straight back out via the (auth) layout's authenticated guard.
+    router.replace(getPostStep2Destination(isAuthenticated) as never);
   };
 
   return (
-    <SafeAreaView style={[{ flex: 1, backgroundColor: '#f6f7f8' }, ANDROID_MATCH_IOS_LAYOUT && styles.safeAreaRtl]}>
+    <SafeAreaView
+      style={[
+        { flex: 1, backgroundColor: '#f6f7f8' },
+        ANDROID_MATCH_IOS_LAYOUT && styles.safeAreaRtl,
+      ]}
+    >
       {/* Header & Progress */}
       <View className="pt-4 px-6">
         {/* direction: 'ltr' pins this row's child order to physical
@@ -140,7 +170,9 @@ export default function OnboardingStep2() {
                 style={[styles.card, isSelected && styles.selectedCard]}
               >
                 {isSelected && (
-                  <View style={[styles.checkBadge, { backgroundColor: tc.primary }]}>
+                  <View
+                    style={[styles.checkBadge, { backgroundColor: tc.primary }]}
+                  >
                     <MaterialIcons name="check" size={14} color="white" />
                   </View>
                 )}
@@ -149,7 +181,9 @@ export default function OnboardingStep2() {
                   <View
                     className="w-14 h-14 rounded-full items-center justify-center"
                     style={{
-                      backgroundColor: isSelected ? tc.primary : tc.primaryLight,
+                      backgroundColor: isSelected
+                        ? tc.primary
+                        : tc.primaryLight,
                     }}
                   >
                     <MaterialIcons
@@ -166,7 +200,9 @@ export default function OnboardingStep2() {
                     >
                       {item.title}
                     </Text>
-                    <Text className={`${tw.textStart} text-gray-500 text-sm mt-1`}>
+                    <Text
+                      className={`${tw.textStart} text-gray-500 text-sm mt-1`}
+                    >
                       {item.desc}
                     </Text>
                   </View>
