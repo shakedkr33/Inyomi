@@ -37,6 +37,7 @@ import {
   rsvpRowDisplayName,
   unansweredMemberDisplayName,
 } from '@/lib/eventRsvpUnanswered';
+import { canShowCommunityEventSelfClaimAction } from '@/lib/eventTaskClaimVisibility';
 import { isCancelledEventWithinCommunityVisibilityWindow } from '@/lib/eventsTabDateHelpers';
 import {
   getOpenCommunityCalendarActionLabel,
@@ -1804,11 +1805,18 @@ export default function EventDetailScreen() {
                   const eventHasStarted =
                     typeof event.startTime === 'number' &&
                     event.startTime <= Date.now();
-                  const showSelfClaimAction = Boolean(
-                    event.communityId &&
-                      myCommunityMembership &&
-                      participantsCanSeeTasks
-                  );
+                  // COMMUNITY EVENT TASK CLAIM BUTTON FIX — the task itself
+                  // is already server-authorized (listByEvent only returns
+                  // tasks this viewer may see/act on; see
+                  // lib/eventTaskClaimVisibility.ts for the full root-cause
+                  // note). Claim-button visibility must not depend on the
+                  // separately-timed `myCommunityMembership` client query,
+                  // or the action can stay hidden after the task title is
+                  // already visible. Independent of RSVP status.
+                  const showSelfClaimAction = canShowCommunityEventSelfClaimAction({
+                    isCommunityEvent,
+                    participantsCanSeeTasks,
+                  });
                   const isClaimable =
                     showSelfClaimAction && !isAssigned && !eventHasStarted;
                   const canUnclaimHere =
@@ -2022,13 +2030,15 @@ export default function EventDetailScreen() {
                                 )
                               }
                               style={({ pressed }) => [
-                                styles.taskSelfClaimBtn,
+                                styles.taskSelfClaimBtnPressable,
                                 pressed && styles.taskSelfClaimBtnPressed,
                               ]}
                             >
-                              <Text style={styles.taskSelfClaimBtnText}>
-                                + אני אקח
-                              </Text>
+                              <View style={styles.taskSelfClaimBtnFill}>
+                                <Text style={styles.taskSelfClaimBtnText}>
+                                  אני אקח
+                                </Text>
+                              </View>
                             </Pressable>
                           ) : canUnclaimHere ? (
                             <View style={styles.taskAssignmentStatusRow}>
@@ -3733,7 +3743,28 @@ const styles = StyleSheet.create({
   // FIX B — self-claim / self-unclaim buttons, matching
   // EventDetailsBottomSheet.tsx's taskAssignmentAction /
   // taskUnassignAction styles exactly.
-  taskSelfClaimBtn: {
+  // VISUAL ALIGNMENT — matches components/EventDetailsBottomSheet.tsx's
+  // taskAssignmentAction/taskAssignmentActionText (filled #00668E pill,
+  // white text) so the canonical full-screen claim CTA reads with the
+  // same primary, filled-button visual language as the Bottom Sheet,
+  // kept compact for the task row (content-sized, not full-card width).
+  //
+  // STRUCTURAL FIX — split into a layout-only Pressable
+  // (taskSelfClaimBtnPressable) and a plain inner View that carries all
+  // paint (taskSelfClaimBtnFill), mirroring
+  // EventDetailsBottomSheet.tsx's taskAssignmentActionPressable /
+  // taskAssignmentAction split exactly. Root cause: this screen's
+  // ancestor `styles.card` sets Android `elevation` + `borderRadius`,
+  // which is a known trigger for Android failing to paint a
+  // Pressable's *own* rounded backgroundColor while leaving it fully
+  // interactive — moving the fill to a non-Pressable child View avoids
+  // that rendering path. Values are unchanged from the prior
+  // `taskSelfClaimBtn` definition, only which element they're attached
+  // to has changed.
+  taskSelfClaimBtnPressable: {
+    alignSelf: HEB_FLEX_END,
+  },
+  taskSelfClaimBtnFill: {
     minHeight: 36,
     minWidth: 80,
     paddingHorizontal: 14,
@@ -3742,7 +3773,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#00668E',
     alignItems: 'center',
     justifyContent: 'center',
-    alignSelf: HEB_FLEX_END,
   },
   taskSelfClaimBtnPressed: {
     opacity: 0.84,
