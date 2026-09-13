@@ -755,37 +755,20 @@ export const setAssignee = mutation({
         assignedAt: now,
       });
       if (event.communityId) {
+        // RSVP and task assignment are separate concepts (LOCKED product
+        // decision) — assigning a task to a member must NEVER create or
+        // change that member's RSVP. Personal-calendar inclusion for the
+        // assignee is still guaranteed independently via
+        // saveCommunityEventToPersonalCalendar below (the existing
+        // savedCommunityEvents mechanism — Axis 1), so the event still
+        // appears in their personal Home/Calendar without touching RSVP
+        // (Axis 2) at all. See convex/communityEventCalendarHelpers.ts /
+        // communityCalendarState.ts for the two-axis model.
         await saveCommunityEventToPersonalCalendar(ctx, {
           userId: assignee.userId,
           eventId: event._id,
           communityId: event.communityId,
         });
-        // For RSVP-required events (the default), auto-RSVP the assignee so the
-        // event card appears in their personal Home/Calendar view — mirroring
-        // the existing claimEventTask behaviour.
-        if (event.requiresRsvp !== false) {
-          const existingRsvp = await ctx.db
-            .query('eventRsvps')
-            .withIndex('by_event_user', (q) =>
-              q.eq('eventId', event._id).eq('userId', assignee.userId)
-            )
-            .unique();
-          if (existingRsvp?.status !== 'yes') {
-            if (existingRsvp) {
-              await ctx.db.patch(existingRsvp._id, {
-                status: 'yes',
-                updatedAt: Date.now(),
-              });
-            } else {
-              await ctx.db.insert('eventRsvps', {
-                eventId: event._id,
-                userId: assignee.userId,
-                status: 'yes',
-                updatedAt: Date.now(),
-              });
-            }
-          }
-        }
       }
 
       if (
@@ -858,11 +841,6 @@ export const claimEventTask = mutation({
   returns: v.object({
     taskId: v.id('eventTasks'),
     wasAddedToCalendar: v.boolean(),
-    rsvpChanged: v.union(
-      v.literal('set_to_yes'),
-      v.literal('unchanged'),
-      v.literal('not_applicable')
-    ),
   }),
   handler: async (ctx, { id }) => {
     const userId = await getAuthUserId(ctx);
@@ -911,6 +889,14 @@ export const claimEventTask = mutation({
       assignedAt: claimNow,
     });
 
+    // RSVP and task claim are separate concepts (LOCKED product decision) —
+    // claiming a task must NEVER create or change the claimer's RSVP.
+    // Personal-calendar inclusion is still guaranteed independently via
+    // saveCommunityEventToPersonalCalendar above (the existing
+    // savedCommunityEvents mechanism — Axis 1), so the event still appears
+    // in the claimer's personal Home/Calendar without touching RSVP
+    // (Axis 2) at all. See convex/communityEventCalendarHelpers.ts /
+    // communityCalendarState.ts for the two-axis model.
     const { wasAddedToCalendar } = await saveCommunityEventToPersonalCalendar(
       ctx,
       {
@@ -919,34 +905,6 @@ export const claimEventTask = mutation({
         communityId: event.communityId,
       }
     );
-
-    let rsvpChanged: 'set_to_yes' | 'unchanged' | 'not_applicable' =
-      'not_applicable';
-    if (event.requiresRsvp === true) {
-      const existingRsvp = await ctx.db
-        .query('eventRsvps')
-        .withIndex('by_event_user', (q) =>
-          q.eq('eventId', event._id).eq('userId', userId)
-        )
-        .unique();
-      if (existingRsvp?.status === 'yes') {
-        rsvpChanged = 'unchanged';
-      } else if (existingRsvp) {
-        await ctx.db.patch(existingRsvp._id, {
-          status: 'yes',
-          updatedAt: Date.now(),
-        });
-        rsvpChanged = 'set_to_yes';
-      } else {
-        await ctx.db.insert('eventRsvps', {
-          eventId: event._id,
-          userId,
-          status: 'yes',
-          updatedAt: Date.now(),
-        });
-        rsvpChanged = 'set_to_yes';
-      }
-    }
 
     const memberName = await getUserDisplayName(ctx, userId);
     await insertCommunityActivity(ctx, {
@@ -958,7 +916,7 @@ export const claimEventTask = mutation({
       title: `${memberName} לקח/ה על עצמו/ה: ${task.title}`,
     });
 
-    return { taskId: id, wasAddedToCalendar, rsvpChanged };
+    return { taskId: id, wasAddedToCalendar };
   },
 });
 
