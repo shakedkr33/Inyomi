@@ -55,9 +55,8 @@ export default function PhoneInputScreen() {
         pathname: '/(auth)/verify',
         params: { phone: normalized },
       });
-    } catch (err) {
-      console.error('[Auth] Failed to send OTP:', err);
-      setError('לא הצלחנו לשלוח קוד. בדוק/י את החיבור לאינטרנט ונסה/י שוב.');
+    } catch {
+      setError('לא הצלחנו לשלוח את הקוד כרגע. אפשר לנסות שוב בעוד כמה דקות.');
     } finally {
       setIsLoading(false);
     }

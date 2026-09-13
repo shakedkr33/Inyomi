@@ -7,27 +7,25 @@
  *  1. Invalid SMS code keeps the user on the verification screen
  *     (classifies as invalid_code, NOT navigating — verified by checking that
  *      the error is NOT an unknown/network kind that would confuse the UI).
- *  2. Invalid SMS code shows "הקוד לא נכון או שפג תוקפו. נסי שוב או בקשי קוד חדש."
+ *  2. Invalid SMS code shows inclusive Hebrew error.
  *  3. Invalid SMS code clears loading and re-enables submit
  *     (verified indirectly: mapPhoneAuthError returns a non-null string,
  *      which the component uses to exit the loading state).
  *  4. Raw "Could not verify code" is never rendered in user-facing UI.
  *  5. Unknown / network failure shows a generic calm Hebrew error.
  *  6. Settings label renders "העתקת אירועים מיומן חיצוני".
+ *  7. All user-facing error copy is gender-inclusive.
  */
 
 import { describe, expect, it } from 'bun:test';
 
-import {
-  classifyPhoneAuthError,
-  mapPhoneAuthError,
-} from '../authErrorUtils';
+import { classifyPhoneAuthError, mapPhoneAuthError } from '../authErrorUtils';
 
 // ── Constants mirrored from the production code ───────────────────────────────
 
-const INVALID_CODE_MESSAGE =
-  'הקוד לא נכון או שפג תוקפו. נסי שוב או בקשי קוד חדש.';
-const GENERIC_ERROR_MESSAGE = 'לא הצלחנו לאמת את הקוד כרגע. נסי שוב בעוד רגע.';
+const INVALID_CODE_MESSAGE = 'הקוד לא נכון. אפשר לבדוק ולנסות שוב.';
+const GENERIC_ERROR_MESSAGE =
+  'לא הצלחנו לאמת את הקוד כרגע. אפשר לנסות שוב בעוד רגע.';
 const SETTINGS_LABEL = 'העתקת אירועים מיומן חיצוני';
 
 // ── 1 & 2: Invalid / expired / used code classification and copy ──────────────
@@ -186,5 +184,35 @@ describe('classifyPhoneAuthError — non-Error inputs', () => {
 
   it('classifies numeric errors as unknown', () => {
     expect(classifyPhoneAuthError(500)).toBe('unknown_error');
+  });
+});
+
+// ── 7: Gender-inclusive copy ─────────────────────────────────────────────────
+
+describe('mapPhoneAuthError — gender-inclusive copy', () => {
+  const feminineOnlySuffixes = ['נסי', 'בדקי', 'בקשי', 'הזיני', 'תוכלי'];
+
+  it('invalid_code message uses inclusive Hebrew (no feminine-only forms)', () => {
+    const msg = mapPhoneAuthError(new Error('Could not verify code'));
+    for (const suffix of feminineOnlySuffixes) {
+      expect(msg).not.toContain(suffix);
+    }
+  });
+
+  it('generic error message uses inclusive Hebrew (no feminine-only forms)', () => {
+    const msg = mapPhoneAuthError(new Error('unknown error'));
+    for (const suffix of feminineOnlySuffixes) {
+      expect(msg).not.toContain(suffix);
+    }
+  });
+
+  it('invalid_code message matches the specified inclusive copy', () => {
+    const msg = mapPhoneAuthError(new Error('Could not verify code'));
+    expect(msg).toBe('הקוד לא נכון. אפשר לבדוק ולנסות שוב.');
+  });
+
+  it('generic message matches the specified inclusive copy', () => {
+    const msg = mapPhoneAuthError(new Error('Unexpected server 500'));
+    expect(msg).toBe('לא הצלחנו לאמת את הקוד כרגע. אפשר לנסות שוב בעוד רגע.');
   });
 });

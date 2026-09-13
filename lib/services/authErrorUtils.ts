@@ -51,11 +51,12 @@ export function classifyPhoneAuthError(err: unknown): PhoneAuthErrorKind {
  *  • everything else           → calm generic "try again in a moment"
  *
  * Neither message leaks Convex internals, request IDs, or stack traces.
+ * All copy is gender-inclusive.
  */
 export function mapPhoneAuthError(err: unknown): string {
   const kind = classifyPhoneAuthError(err);
   if (kind === 'invalid_code') {
-    return 'הקוד לא נכון או שפג תוקפו. נסי שוב או בקשי קוד חדש.';
+    return 'הקוד לא נכון. אפשר לבדוק ולנסות שוב.';
   }
-  return 'לא הצלחנו לאמת את הקוד כרגע. נסי שוב בעוד רגע.';
+  return 'לא הצלחנו לאמת את הקוד כרגע. אפשר לנסות שוב בעוד רגע.';
 }

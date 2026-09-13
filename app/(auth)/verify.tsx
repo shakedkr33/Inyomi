@@ -15,10 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { needsExplicitRTL } from '@/lib/rtl';
-import {
-  classifyPhoneAuthError,
-  mapPhoneAuthError,
-} from '@/lib/services/authErrorUtils';
+import { mapPhoneAuthError } from '@/lib/services/authErrorUtils';
 
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -45,6 +42,10 @@ export default function VerifyScreen() {
   // Hidden input ref — we focus it when user taps the visual boxes
   const hiddenInputRef = useRef<TextInput>(null);
 
+  // Synchronous in-flight guard — prevents dual verification requests
+  // even when React state batching hasn't flushed yet.
+  const verifyingRef = useRef(false);
+
   // If phone param is missing (e.g. deep link / reload), send user back
   useEffect(() => {
     if (!phone) {
@@ -64,8 +65,10 @@ export default function VerifyScreen() {
 
   const verify = useCallback(
     async (digits: string) => {
-      if (!phone || digits.length !== CODE_LENGTH || isVerifying) return;
+      if (!phone || digits.length !== CODE_LENGTH || verifyingRef.current)
+        return;
 
+      verifyingRef.current = true;
       setIsVerifying(true);
       setError(null);
 
@@ -76,23 +79,19 @@ export default function VerifyScreen() {
           phone,
           code: digits,
         });
-        // FIXED: deferred saveAll() to authenticated layout to avoid auth race condition
-        // finishOnboarding is called in (authenticated)/_layout.tsx once the Convex session is confirmed.
         router.replace('/(authenticated)/family-bootstrap');
       } catch (err) {
-        const kind = classifyPhoneAuthError(err);
-        if (__DEV__) {
-          console.log(`[Phone Auth] verification failed: ${kind}`);
-        }
         setError(mapPhoneAuthError(err));
-        // Keep the entered digits visible so the user can inspect / correct them.
-        // Restore keyboard focus to the code input.
-        hiddenInputRef.current?.focus();
+        // The hidden input is never made non-editable while verifying (see
+        // the TextInput below), so it never loses native focus during the
+        // request. No imperative focus/timeout workaround is needed here —
+        // the keyboard simply stays open and the user can correct the code.
       } finally {
+        verifyingRef.current = false;
         setIsVerifying(false);
       }
     },
-    [phone, isVerifying, signIn, router]
+    [phone, signIn, router]
   );
 
   const handleCodeChange = (text: string) => {
@@ -112,17 +111,27 @@ export default function VerifyScreen() {
 
     setIsResending(true);
     setError(null);
-    setCode('');
 
     try {
       await signIn('phone', { phone });
-      // Reset cooldown for another 60 s
+      // Only clear the previous (invalid) digits once the resend actually
+      // succeeded — clearing before success would wipe the user's entry for
+      // a request that might still fail.
+      setCode('');
       setCooldown(RESEND_COOLDOWN_SECONDS);
       setCanResend(false);
-      Alert.alert('נשלח!', 'קוד חדש נשלח למספר שלך.');
-    } catch (err) {
-      console.error('[Auth] Resend OTP failed:', err);
-      setError('לא הצלחנו לשלוח קוד חדש. נסי שוב.');
+      Alert.alert('נשלח!', 'קוד חדש נשלח למספר שלך.', [
+        {
+          text: 'אישור',
+          // Restore focus once the user dismisses the alert, so the new
+          // code can be typed immediately. Deterministic (event-driven)
+          // instead of a timing guess — the native alert can briefly hold
+          // first-responder status while visible.
+          onPress: () => hiddenInputRef.current?.focus(),
+        },
+      ]);
+    } catch {
+      setError('לא הצלחנו לשלוח קוד חדש. אפשר לנסות שוב.');
     } finally {
       setIsResending(false);
     }
@@ -187,10 +196,18 @@ export default function VerifyScreen() {
               // Android SMS autofill
               autoComplete="sms-otp"
               autoFocus
-              editable={!isSubmitting}
+              // Intentionally always editable. Toggling `editable` to false
+              // while verification/resend is in flight causes the native
+              // TextInput to resign first-responder status on-device, and
+              // it does NOT reliably regain focus/keyboard when flipped
+              // back to true. `verifyingRef` (in `verify`) is the guard
+              // against duplicate submissions instead — the input itself
+              // must never become non-interactive just because a request
+              // is in flight.
+              editable={true}
               style={styles.hiddenInput}
               accessibilityLabel="קוד אימות"
-              accessibilityHint="הזיני את 6 הספרות שקיבלת בהודעה"
+              accessibilityHint="הזנת 6 הספרות שהתקבלו בהודעה"
             />
 
             {/* Visual digit boxes — always LTR for numeric codes */}
@@ -274,7 +291,7 @@ export default function VerifyScreen() {
 
           {/* אם לא קיבלת — הנחיה */}
           <Text style={styles.helpText}>
-            {`לא קיבלת קוד? בדקי שהמספר נכון, ולאחר ${RESEND_COOLDOWN_SECONDS} שניות תוכלי לבקש קוד חדש.`}
+            {`לא קיבלת קוד? כדאי לבדוק שהמספר נכון. אחרי ${RESEND_COOLDOWN_SECONDS} שניות אפשר לבקש קוד חדש.`}
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>
