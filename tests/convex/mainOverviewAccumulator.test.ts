@@ -19,8 +19,17 @@
  *   - myEvents and pendingRsvpEvents are bounded independently.
  *   - one category filling its limit cannot consume the other's budget or
  *     hide items that belong in it (see the interleaved-candidates test).
- *   - an event can land in BOTH categories (intentional non-exclusive
- *     duplication — the auto-add + pending-RSVP case).
+ *   - the accumulator itself is a generic "fill category A/B independently"
+ *     helper with no built-in exclusivity rule — it would still support an
+ *     item landing in BOTH categories if a caller passed that shape (see
+ *     the dedicated test for this). COMMUNITY MAIN CORRECTION (RSVP
+ *     hierarchy cleanup): in PRODUCTION usage, `listCommunityMainOverview`
+ *     now passes `isEligibleForMainMyEvents(...)` (not the raw
+ *     `isInPersonalCalendar` dimension) as the `myEvents` eligibility flag,
+ *     so a non-creator auto-add + pending-RSVP event resolves
+ *     `isEligibleForMyEvents: false` and lands ONLY in `pendingRsvpEvents`
+ *     — see the "COMMUNITY MAIN CORRECTION" test below and
+ *     communityCalendarState.test.ts's `isEligibleForMainMyEvents` matrix.
  *   - hasMore reflects "we stopped without knowing there isn't more",
  *     never an expensive exact remaining count.
  *   - scan-cap TRUNCATION (the 160-event hard cap hit while the underlying
@@ -63,11 +72,11 @@ describe('createMainOverviewAccumulator', () => {
 });
 
 describe('accumulateMainOverviewCandidate — independent bounding per category', () => {
-  it('adds a candidate to myEvents only when isInPersonalCalendar', () => {
+  it('adds a candidate to myEvents only when isEligibleForMyEvents', () => {
     let acc = createMainOverviewAccumulator<FakeEvent>();
     acc = accumulateMainOverviewCandidate(
       acc,
-      { item: ev('a'), isInPersonalCalendar: true, isPendingRsvp: false },
+      { item: ev('a'), isEligibleForMyEvents: true, isPendingRsvp: false },
       LIMITS
     );
     expect(acc.myEvents).toEqual([ev('a')]);
@@ -78,21 +87,43 @@ describe('accumulateMainOverviewCandidate — independent bounding per category'
     let acc = createMainOverviewAccumulator<FakeEvent>();
     acc = accumulateMainOverviewCandidate(
       acc,
-      { item: ev('a'), isInPersonalCalendar: false, isPendingRsvp: true },
+      { item: ev('a'), isEligibleForMyEvents: false, isPendingRsvp: true },
       LIMITS
     );
     expect(acc.pendingRsvpEvents).toEqual([ev('a')]);
     expect(acc.myEvents).toEqual([]);
   });
 
-  it('IMPORTANT AUTO-ADD CASE: a candidate can land in BOTH categories at once', () => {
+  it('a candidate CAN land in both categories at once if the caller says so — the accumulator itself imposes no exclusivity rule', () => {
+    // This accumulator is a generic "fill category A/B up to their limits"
+    // helper — it does not decide WHY a candidate is eligible for either
+    // category, so it must still support simultaneous membership if a
+    // caller ever has a legitimate reason to combine them.
     let acc = createMainOverviewAccumulator<FakeEvent>();
     acc = accumulateMainOverviewCandidate(
       acc,
-      { item: ev('trip'), isInPersonalCalendar: true, isPendingRsvp: true },
+      { item: ev('trip'), isEligibleForMyEvents: true, isPendingRsvp: true },
       LIMITS
     );
     expect(acc.myEvents).toEqual([ev('trip')]);
+    expect(acc.pendingRsvpEvents).toEqual([ev('trip')]);
+  });
+
+  it('COMMUNITY MAIN CORRECTION: in production usage, a non-creator auto-add + pending-RSVP event resolves isEligibleForMyEvents=false — exclusive placement in "מה חשוב עכשיו" only', () => {
+    // listCommunityMainOverview now passes isEligibleForMainMyEvents(...)
+    // (never the raw isInPersonalCalendar dimension) as the myEvents
+    // eligibility flag — see communityCalendarState.test.ts for the
+    // isEligibleForMainMyEvents matrix itself. This test documents the
+    // resulting accumulator behavior for that real call-site shape: a
+    // pending, non-creator, auto-added event lands ONLY in
+    // pendingRsvpEvents, never simultaneously in myEvents.
+    let acc = createMainOverviewAccumulator<FakeEvent>();
+    acc = accumulateMainOverviewCandidate(
+      acc,
+      { item: ev('trip'), isEligibleForMyEvents: false, isPendingRsvp: true },
+      LIMITS
+    );
+    expect(acc.myEvents).toEqual([]);
     expect(acc.pendingRsvpEvents).toEqual([ev('trip')]);
   });
 
@@ -100,7 +131,7 @@ describe('accumulateMainOverviewCandidate — independent bounding per category'
     let acc = createMainOverviewAccumulator<FakeEvent>();
     acc = accumulateMainOverviewCandidate(
       acc,
-      { item: ev('other'), isInPersonalCalendar: false, isPendingRsvp: false },
+      { item: ev('other'), isEligibleForMyEvents: false, isPendingRsvp: false },
       LIMITS
     );
     expect(acc.myEvents).toEqual([]);
@@ -112,7 +143,7 @@ describe('accumulateMainOverviewCandidate — independent bounding per category'
     for (const id of ['a', 'b', 'c', 'd']) {
       acc = accumulateMainOverviewCandidate(
         acc,
-        { item: ev(id), isInPersonalCalendar: true, isPendingRsvp: false },
+        { item: ev(id), isEligibleForMyEvents: true, isPendingRsvp: false },
         LIMITS
       );
     }
@@ -128,7 +159,7 @@ describe('accumulateMainOverviewCandidate — independent bounding per category'
     for (const id of ['a', 'b', 'c', 'd']) {
       acc = accumulateMainOverviewCandidate(
         acc,
-        { item: ev(id), isInPersonalCalendar: true, isPendingRsvp: false },
+        { item: ev(id), isEligibleForMyEvents: true, isPendingRsvp: false },
         LIMITS
       );
     }
@@ -136,7 +167,7 @@ describe('accumulateMainOverviewCandidate — independent bounding per category'
       acc,
       {
         item: ev('pending-1'),
-        isInPersonalCalendar: false,
+        isEligibleForMyEvents: false,
         isPendingRsvp: true,
       },
       LIMITS
@@ -159,7 +190,7 @@ describe('isMainOverviewAccumulatorSatisfied', () => {
     for (const id of ['a', 'b']) {
       acc = accumulateMainOverviewCandidate(
         acc,
-        { item: ev(id), isInPersonalCalendar: true, isPendingRsvp: false },
+        { item: ev(id), isEligibleForMyEvents: true, isPendingRsvp: false },
         LIMITS
       );
     }
@@ -171,7 +202,7 @@ describe('isMainOverviewAccumulatorSatisfied', () => {
     for (const id of ['a', 'b']) {
       acc = accumulateMainOverviewCandidate(
         acc,
-        { item: ev(id), isInPersonalCalendar: true, isPendingRsvp: true },
+        { item: ev(id), isEligibleForMyEvents: true, isPendingRsvp: true },
         LIMITS
       );
     }
@@ -184,7 +215,7 @@ describe('finalizeMainOverviewHasMore', () => {
     let acc = createMainOverviewAccumulator<FakeEvent>();
     acc = accumulateMainOverviewCandidate(
       acc,
-      { item: ev('a'), isInPersonalCalendar: true, isPendingRsvp: false },
+      { item: ev('a'), isEligibleForMyEvents: true, isPendingRsvp: false },
       LIMITS
     );
     const finalized = finalizeMainOverviewHasMore(acc, LIMITS, {
@@ -199,7 +230,7 @@ describe('finalizeMainOverviewHasMore', () => {
     for (const id of ['a', 'b']) {
       acc = accumulateMainOverviewCandidate(
         acc,
-        { item: ev(id), isInPersonalCalendar: true, isPendingRsvp: false },
+        { item: ev(id), isEligibleForMyEvents: true, isPendingRsvp: false },
         LIMITS
       );
     }
@@ -218,7 +249,7 @@ describe('finalizeMainOverviewHasMore', () => {
     for (const id of ['a', 'b']) {
       acc = accumulateMainOverviewCandidate(
         acc,
-        { item: ev(id), isInPersonalCalendar: true, isPendingRsvp: false },
+        { item: ev(id), isEligibleForMyEvents: true, isPendingRsvp: false },
         LIMITS
       );
     }
@@ -262,7 +293,7 @@ describe('finalizeMainOverviewHasMore', () => {
     let acc = createMainOverviewAccumulator<FakeEvent>();
     acc = accumulateMainOverviewCandidate(
       acc,
-      { item: ev('a'), isInPersonalCalendar: true, isPendingRsvp: false },
+      { item: ev('a'), isEligibleForMyEvents: true, isPendingRsvp: false },
       LIMITS
     );
     const finalized = finalizeMainOverviewHasMore(acc, LIMITS, {
@@ -289,7 +320,7 @@ describe('finalizeMainOverviewHasMore', () => {
     for (const id of ['a', 'b']) {
       acc = accumulateMainOverviewCandidate(
         acc,
-        { item: ev(id), isInPersonalCalendar: true, isPendingRsvp: false },
+        { item: ev(id), isEligibleForMyEvents: true, isPendingRsvp: false },
         LIMITS
       );
     }
@@ -308,7 +339,7 @@ describe('finalizeMainOverviewHasMore', () => {
     for (const id of ['a', 'b', 'c']) {
       acc = accumulateMainOverviewCandidate(
         acc,
-        { item: ev(id), isInPersonalCalendar: true, isPendingRsvp: false },
+        { item: ev(id), isEligibleForMyEvents: true, isPendingRsvp: false },
         LIMITS
       );
     }
@@ -326,13 +357,13 @@ describe('finalizeMainOverviewHasMore', () => {
     for (const id of ['a', 'b']) {
       acc = accumulateMainOverviewCandidate(
         acc,
-        { item: ev(id), isInPersonalCalendar: true, isPendingRsvp: false },
+        { item: ev(id), isEligibleForMyEvents: true, isPendingRsvp: false },
         LIMITS
       );
     }
     acc = accumulateMainOverviewCandidate(
       acc,
-      { item: ev('p1'), isInPersonalCalendar: false, isPendingRsvp: true },
+      { item: ev('p1'), isEligibleForMyEvents: false, isPendingRsvp: true },
       LIMITS
     );
     const finalized = finalizeMainOverviewHasMore(acc, LIMITS, {

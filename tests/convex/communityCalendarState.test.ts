@@ -28,6 +28,7 @@ import {
   computeRsvpAttentionState,
   isEligibleForAdditionalCommunityEvent,
   isEligibleForEventsTabNonPersonalSection,
+  isEligibleForMainMyEvents,
   isYesOrMaybeRsvp,
   resolveDuplicationSourceVerdict,
 } from '../../convex/communityCalendarState';
@@ -566,14 +567,24 @@ describe('isEligibleForAdditionalCommunityEvent — Issue 2 eligibility rule', (
     ).toBe(false);
   });
 
-  it('[TEST 15] RSVP = "no" -> NOT eligible', () => {
+  it('[COMMUNITY MAIN CORRECTION — supersedes former TEST 15] RSVP = "no" -> eligible (RSVP=no is a deliberate answer the viewer can change; Main must always surface a "שינוי תשובה" path)', () => {
     expect(
       isEligibleForAdditionalCommunityEvent({
         rsvpStatus: 'no',
         isInPersonalCalendar: false,
         rsvpAttentionState: 'answered',
       })
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it('COMMUNITY MAIN CORRECTION: RSVP = "no" -> eligible even when isInPersonalCalendar is true (e.g. auto-add/save/task-assignment) — RSVP=no takes precedence over personal-calendar inclusion for THIS eligibility rule only; it does not remove the event from the personal calendar itself', () => {
+    expect(
+      isEligibleForAdditionalCommunityEvent({
+        rsvpStatus: 'no',
+        isInPersonalCalendar: true,
+        rsvpAttentionState: 'answered',
+      })
+    ).toBe(true);
   });
 
   it('[TEST 16] previously auto-added then explicitly opted-out open event -> eligible again (re-addable via "הוסף ליומן")', () => {
@@ -599,6 +610,150 @@ describe('isEligibleForAdditionalCommunityEvent — Issue 2 eligibility rule', (
         rsvpAttentionState: 'answered',
       })
     ).toBe(true);
+  });
+});
+
+/**
+ * COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup) — eligibility rule for
+ * whether an event should count toward the `myEvents` limit in Community
+ * Main's "האירועים שלי" carousel (`listCommunityMainOverview`). See the
+ * full doc comment on `isEligibleForMainMyEvents` in
+ * communityCalendarState.ts for the locked placement precedence this
+ * matrix exercises: creator wins first, then not-in-personal-calendar,
+ * then pending/RSVP=no exclusion for non-creators, then yes/maybe/non-RSVP.
+ */
+describe('isEligibleForMainMyEvents — Community Main placement precedence', () => {
+  const pendingBase = {
+    isInPersonalCalendar: true,
+    requiresRsvp: true as const,
+    rsvpStatus: undefined,
+    rsvpAttentionState: 'pending' as const,
+  };
+
+  it('creator -> true, even when NOT in personal calendar (defensive — creators are always in personal calendar in practice)', () => {
+    expect(
+      isEligibleForMainMyEvents({
+        isInPersonalCalendar: false,
+        isCreator: true,
+        requiresRsvp: true,
+        rsvpStatus: undefined,
+        rsvpAttentionState: 'not_applicable',
+      })
+    ).toBe(true);
+  });
+
+  it('creator -> true, in personal calendar, RSVP not applicable', () => {
+    expect(
+      isEligibleForMainMyEvents({
+        isInPersonalCalendar: true,
+        isCreator: true,
+        requiresRsvp: true,
+        rsvpStatus: undefined,
+        rsvpAttentionState: 'not_applicable',
+      })
+    ).toBe(true);
+  });
+
+  it('pending RSVP, non-creator, in personal calendar (e.g. auto-add) -> false (belongs in "מה חשוב עכשיו" ONLY)', () => {
+    expect(
+      isEligibleForMainMyEvents({ ...pendingBase, isCreator: false })
+    ).toBe(false);
+  });
+
+  it('pending RSVP + auto-add, non-creator -> false (same rule — auto-add does not override the pending exclusion)', () => {
+    expect(
+      isEligibleForMainMyEvents({
+        isInPersonalCalendar: true,
+        isCreator: false,
+        requiresRsvp: true,
+        rsvpStatus: undefined,
+        rsvpAttentionState: 'pending',
+      })
+    ).toBe(false);
+  });
+
+  it('RSVP="no", non-creator, in personal calendar -> false (belongs in "אירועים נוספים" ONLY)', () => {
+    expect(
+      isEligibleForMainMyEvents({
+        isInPersonalCalendar: true,
+        isCreator: false,
+        requiresRsvp: true,
+        rsvpStatus: 'no',
+        rsvpAttentionState: 'answered',
+      })
+    ).toBe(false);
+  });
+
+  it('RSVP="no" + auto-add, non-creator -> false (same rule — auto-add does not override the RSVP=no exclusion)', () => {
+    expect(
+      isEligibleForMainMyEvents({
+        isInPersonalCalendar: true,
+        isCreator: false,
+        requiresRsvp: true,
+        rsvpStatus: 'no',
+        rsvpAttentionState: 'answered',
+      })
+    ).toBe(false);
+  });
+
+  it('RSVP="yes" -> true when otherwise eligible (in personal calendar, non-creator)', () => {
+    expect(
+      isEligibleForMainMyEvents({
+        isInPersonalCalendar: true,
+        isCreator: false,
+        requiresRsvp: true,
+        rsvpStatus: 'yes',
+        rsvpAttentionState: 'answered',
+      })
+    ).toBe(true);
+  });
+
+  it('RSVP="maybe" -> true when otherwise eligible (in personal calendar, non-creator)', () => {
+    expect(
+      isEligibleForMainMyEvents({
+        isInPersonalCalendar: true,
+        isCreator: false,
+        requiresRsvp: true,
+        rsvpStatus: 'maybe',
+        rsvpAttentionState: 'answered',
+      })
+    ).toBe(true);
+  });
+
+  it('non-RSVP event, in personal calendar (e.g. explicit save), non-creator -> true (preserves existing personal-calendar eligibility, unaffected by pending/no rules)', () => {
+    expect(
+      isEligibleForMainMyEvents({
+        isInPersonalCalendar: true,
+        isCreator: false,
+        requiresRsvp: false,
+        rsvpStatus: 'none',
+        rsvpAttentionState: 'not_applicable',
+      })
+    ).toBe(true);
+  });
+
+  it('not in personal calendar at all, non-creator -> false (nothing to show in "האירועים שלי")', () => {
+    expect(
+      isEligibleForMainMyEvents({
+        isInPersonalCalendar: false,
+        isCreator: false,
+        requiresRsvp: true,
+        rsvpStatus: 'yes',
+        rsvpAttentionState: 'answered',
+      })
+    ).toBe(false);
+  });
+
+  it('not in personal calendar, non-creator, RSVP-not-required -> false (still gated by isInPersonalCalendar first)', () => {
+    expect(
+      isEligibleForMainMyEvents({
+        isInPersonalCalendar: false,
+        isCreator: false,
+        requiresRsvp: false,
+        rsvpStatus: 'none',
+        rsvpAttentionState: 'not_applicable',
+      })
+    ).toBe(false);
   });
 });
 
@@ -773,7 +928,7 @@ describe('isEligibleForEventsTabNonPersonalSection — Stage 3 correction (Part 
     }
   });
 
-  it('does NOT exclude rsvpStatus "no" the way isEligibleForAdditionalCommunityEvent does', () => {
+  it('COMMUNITY MAIN CORRECTION: for isInPersonalCalendar=false + RSVP="no", both functions now agree (both eligible) — the two are no longer opposites for this case', () => {
     const args = {
       isInPersonalCalendar: false,
       rsvpAttentionState: 'answered' as const,
@@ -781,7 +936,18 @@ describe('isEligibleForEventsTabNonPersonalSection — Stage 3 correction (Part 
     expect(isEligibleForEventsTabNonPersonalSection(args)).toBe(true);
     expect(
       isEligibleForAdditionalCommunityEvent({ ...args, rsvpStatus: 'no' })
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it('COMMUNITY MAIN CORRECTION: for isInPersonalCalendar=true + RSVP="no", the two now diverge in the OPPOSITE direction — Main additional-eligibility wins (true, RSVP=no takes precedence) while the Events tab non-personal section still excludes it (false, since the event already belongs to isMyEvent there)', () => {
+    const args = {
+      isInPersonalCalendar: true,
+      rsvpAttentionState: 'answered' as const,
+    };
+    expect(isEligibleForEventsTabNonPersonalSection(args)).toBe(false);
+    expect(
+      isEligibleForAdditionalCommunityEvent({ ...args, rsvpStatus: 'no' })
+    ).toBe(true);
   });
 });
 

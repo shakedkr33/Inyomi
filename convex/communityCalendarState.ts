@@ -285,9 +285,65 @@ export function isEligibleForAdditionalCommunityEvent(args: {
   isInPersonalCalendar: boolean;
   rsvpAttentionState: RsvpAttentionState;
 }): boolean {
+  // COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup) — RSVP=no now takes
+  // precedence over `isInPersonalCalendar` for Main's "אירועים נוספים"
+  // eligibility: an event the viewer explicitly answered "לא" to must
+  // ALWAYS surface here (with a "שינוי תשובה" CTA) so they can change their
+  // mind, even when it's simultaneously `isInPersonalCalendar: true` for an
+  // unrelated reason (auto-add / explicit save / task assignment). This
+  // does NOT remove the event from the viewer's personal calendar — that
+  // model (computeIsSavedToMyCalendar) is intentionally untouched; this is
+  // purely a Main "אירועים נוספים" presentation rule. See the sibling
+  // `isEligibleForMainMyEvents` below, which correspondingly EXCLUDES
+  // RSVP=no from "האירועים שלי" so the event has exactly one placement.
+  if (args.rsvpStatus === 'no') return true;
   if (args.isInPersonalCalendar) return false;
   if (args.rsvpAttentionState === 'pending') return false;
-  if (args.rsvpStatus === 'no') return false;
+  return true;
+}
+
+/**
+ * COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup) — pure eligibility
+ * rule for whether an event should count toward the `myEvents` limit in
+ * `listCommunityMainOverview` (Main's "האירועים שלי" carousel).
+ *
+ * This is a COMMUNITY MAIN PRESENTATION/CLASSIFICATION rule only. It does
+ * NOT change the canonical personal-calendar model — it is a thin decision
+ * layered on top of the two existing independent Stage 1D dimensions
+ * (`isInPersonalCalendar` / `rsvpAttentionState`) plus the raw `rsvpStatus`,
+ * so `computeIsSavedToMyCalendar`, `computeRsvpAttentionState`, and
+ * `computeCommunityEventPersonalCalendarState` all remain untouched, and so
+ * do Home/Calendar (which never call this helper).
+ *
+ * Locked Main placement precedence:
+ *   1. Creator                              → true  (checked FIRST, wins
+ *      unconditionally — the creator never needs to RSVP and always
+ *      belongs in "האירועים שלי", regardless of isInPersonalCalendar,
+ *      which is already true for creators via computeIsSavedToMyCalendar
+ *      anyway, but the explicit short-circuit keeps this function's intent
+ *      self-documenting and defensive)
+ *   2. Not in personal calendar at all       → false (nothing to show here)
+ *   3. RSVP-required + pending (non-creator) → false (belongs in "מה חשוב
+ *      עכשיו" ONLY — see the accumulator call site, which also feeds
+ *      `isPendingRsvp` independently)
+ *   4. RSVP-required + RSVP=no (non-creator) → false (belongs in "אירועים
+ *      נוספים" ONLY — see isEligibleForAdditionalCommunityEvent above)
+ *   5. RSVP yes/maybe, or any non-RSVP event → true (preserves existing
+ *      personal-calendar eligibility — same as isInPersonalCalendar)
+ */
+export function isEligibleForMainMyEvents(args: {
+  isInPersonalCalendar: boolean;
+  isCreator: boolean;
+  requiresRsvp: boolean | undefined;
+  rsvpStatus: RsvpStatus;
+  rsvpAttentionState: RsvpAttentionState;
+}): boolean {
+  if (args.isCreator) return true;
+  if (!args.isInPersonalCalendar) return false;
+  if (args.requiresRsvp === true) {
+    if (args.rsvpAttentionState === 'pending') return false;
+    if (args.rsvpStatus === 'no') return false;
+  }
   return true;
 }
 
@@ -460,9 +516,18 @@ export async function enrichEventsWithCalendarFlags<T extends Doc<'events'>>(
  * existing `by_community_date` index) in small chunks and feeds each
  * candidate through `accumulateMainOverviewCandidate` one at a time, so it
  * can stop as soon as both categories are satisfied (or a hard scan cap is
- * hit) instead of collecting the whole community. "האירועים שלי" and
- * "מחכים לתגובה" are independent, NON-exclusive categories (an auto-added,
- * RSVP-unanswered event belongs to both) — see computeCommunityEventPersonalCalendarState.
+ * hit) instead of collecting the whole community.
+ *
+ * COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup) — "האירועים שלי" and
+ * the pending-RSVP category are now MUTUALLY EXCLUSIVE for a non-creator:
+ * an auto-added, RSVP-unanswered event belongs ONLY to the pending-RSVP
+ * category (rendered inside "מה חשוב עכשיו"), never simultaneously to
+ * "האירועים שלי" — see `isEligibleForMainMyEvents`, which the query's call
+ * site uses to compute the `myEvents` eligibility flag instead of the raw
+ * `isInPersonalCalendar` dimension. (Historically this doc described them
+ * as non-exclusive; that was true before this correction and remains true
+ * of the underlying `isInPersonalCalendar` dimension itself — only Main's
+ * *presentation* categories are now exclusive.)
  */
 export type MainOverviewLimits = {
   myEventsLimit: number;
@@ -490,16 +555,31 @@ export function createMainOverviewAccumulator<
 /**
  * Feeds one scanned event through the accumulator. Each event is checked
  * against BOTH categories independently — an event can be appended to
- * `myEvents`, to `pendingRsvpEvents`, to both, or to neither, matching the
- * two-dimension model. Once a category's limit is reached, further
- * candidates for that category flip its `hasMore` flag instead of growing
- * the array further (the array itself never exceeds its limit).
+ * `myEvents`, to `pendingRsvpEvents`, to both, or to neither. Once a
+ * category's limit is reached, further candidates for that category flip
+ * its `hasMore` flag instead of growing the array further (the array
+ * itself never exceeds its limit).
+ *
+ * COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup) — the `myEvents`
+ * candidate flag was renamed from `isInPersonalCalendar` to
+ * `isEligibleForMyEvents`: the CALLER now decides Main "האירועים שלי"
+ * eligibility (via `isEligibleForMainMyEvents`, which excludes
+ * pending/RSVP=no non-creator events) BEFORE handing it to this generic
+ * accumulator, so the `myEvents` limit is only ever filled with events
+ * that actually belong there. This accumulator itself stays a generic
+ * "fill category A/B up to their limits" helper — it does not know or care
+ * WHY an event is eligible. `isPendingRsvp` is unchanged. In practice, with
+ * the current caller, `isEligibleForMyEvents` and `isPendingRsvp` are no
+ * longer simultaneously true for a non-creator (an event is either pending
+ * — "מה חשוב עכשיו" only — or myEvents-eligible, never both) — but this
+ * function keeps supporting simultaneous membership generically in case a
+ * future caller has a legitimate reason to combine them.
  */
 export function accumulateMainOverviewCandidate<T>(
   state: MainOverviewAccumulatorState<T>,
   candidate: {
     item: T;
-    isInPersonalCalendar: boolean;
+    isEligibleForMyEvents: boolean;
     isPendingRsvp: boolean;
   },
   limits: MainOverviewLimits
@@ -507,7 +587,7 @@ export function accumulateMainOverviewCandidate<T>(
   let { myEvents, myEventsHasMore, pendingRsvpEvents, pendingRsvpHasMore } =
     state;
 
-  if (candidate.isInPersonalCalendar) {
+  if (candidate.isEligibleForMyEvents) {
     if (myEvents.length < limits.myEventsLimit) {
       myEvents = [...myEvents, candidate.item];
     } else {

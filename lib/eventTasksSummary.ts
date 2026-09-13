@@ -99,3 +99,29 @@ export function formatCommunityMainTaskCtaText(
 
   return mineCount === 1 ? 'משימה אחת שלך' : `${mineCount} משימות שלך`;
 }
+
+/**
+ * COMMUNITY MAIN — assigned-task indicator on the pending-RSVP row
+ * ("מה חשוב עכשיו" → `MainPendingRsvpRow`, in
+ * `app/(authenticated)/community/[id].tsx`).
+ *
+ * Purely informational: this never affects RSVP or task-assignment
+ * behavior — it just tells the viewer they already have a task assigned
+ * to them on an event they haven't answered RSVP for yet. `assignedCount`
+ * must already be the viewer's own active-task count for the event (e.g.
+ * `taskCountsMap[eventId].myAssignedTasks.length`, which excludes other
+ * members' tasks, unassigned tasks, completed tasks and cancelled-event
+ * tasks — see `summarizeEventTaskCounts` in `convex/eventTasks.ts`). This
+ * function performs no filtering of its own.
+ *
+ * Returns `null` when there is nothing assigned to the viewer, so callers
+ * can render nothing rather than an empty line.
+ */
+export function formatPendingRsvpAssignedTaskIndicator(
+  assignedCount: number
+): string | null {
+  if (assignedCount <= 0) return null;
+  return assignedCount === 1
+    ? 'הוקצתה לך משימה'
+    : `הוקצו לך ${assignedCount} משימות`;
+}

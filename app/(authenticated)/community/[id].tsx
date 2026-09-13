@@ -54,7 +54,6 @@ import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { selectMainReminderCandidates } from '@/lib/communityMainReminderCandidate';
 import { canManageEventReminderItem } from '@/lib/eventReminderPermissions';
-import { formatCommunityMainTaskCtaText } from '@/lib/eventTasksSummary';
 import {
   formatEventsTabMonthYearLabel,
   getCurrentEventsTabMonth,
@@ -67,6 +66,10 @@ import {
   isCancelledEventWithinCommunityVisibilityWindow,
   isCurrentEventsTabMonth,
 } from '@/lib/eventsTabDateHelpers';
+import {
+  formatCommunityMainTaskCtaText,
+  formatPendingRsvpAssignedTaskIndicator,
+} from '@/lib/eventTasksSummary';
 import {
   getOpenCommunityCalendarActionLabel,
   isOpenCommunityCalendarActionVisible,
@@ -356,8 +359,8 @@ function getMainCardStatusLabel(
   if (event.requiresRsvp === false) return 'פתוח לחברי הקהילה';
   if (isCreator) return 'אירוע שלך';
   if (rsvpStatus === 'yes') return 'אישרת הגעה';
-  if (rsvpStatus === 'no') return 'סימנת שלא מגיע/ה';
-  if (rsvpStatus === 'maybe') return 'סימנת אולי מגיע/ה';
+  if (rsvpStatus === 'no') return 'לא אגיע';
+  if (rsvpStatus === 'maybe') return 'אולי אגיע';
   return 'נדרש אישור הגעה';
 }
 
@@ -2147,6 +2150,16 @@ interface MainPendingRsvpRowProps {
    * defensive guard rather than assumed.
    */
   flyerDetailsOnly: boolean;
+  /**
+   * SHOW ASSIGNED TASK INDICATOR ON PENDING RSVP CARD — the viewer's own
+   * active assigned-task count for this event, sourced from the SAME
+   * `taskCountsMap` (→ `getTaskCountsForEvents`) this screen already
+   * fetches for every rendered event card (see `taskCountEventIds`/
+   * `taskCountsMap` above `MainPendingRsvpRow`'s render site). Purely
+   * informational — never changes RSVP or task-assignment behavior. `0`
+   * (or `undefined` while the query is still loading) renders nothing.
+   */
+  assignedTaskCount: number | undefined;
   onOpenDetails: (eventId: Id<'events'>) => void;
   onRsvpSelect: (eventId: Id<'events'>, status: RsvpStatus) => Promise<void>;
 }
@@ -2163,10 +2176,14 @@ function MainPendingRsvpRow({
   isToday,
   isTomorrow,
   flyerDetailsOnly,
+  assignedTaskCount,
   onOpenDetails,
   onRsvpSelect,
 }: MainPendingRsvpRowProps) {
   const [showInlineChoices, setShowInlineChoices] = useState(false);
+  const assignedTaskLine = formatPendingRsvpAssignedTaskIndicator(
+    assignedTaskCount ?? 0
+  );
 
   return (
     <View style={styles.pendingRow}>
@@ -2188,6 +2205,18 @@ function MainPendingRsvpRow({
         <Text numberOfLines={1} style={styles.pendingRowMeta}>
           {formatMainCardDateTime(event)}
         </Text>
+        {assignedTaskLine ? (
+          <View style={styles.pendingRowTaskIndicator}>
+            <MaterialIcons
+              color="#6b7280"
+              name="assignment-turned-in"
+              size={13}
+            />
+            <Text numberOfLines={1} style={styles.pendingRowTaskIndicatorText}>
+              {assignedTaskLine}
+            </Text>
+          </View>
+        ) : null}
       </Pressable>
       <View style={styles.pendingRowCtaWrap}>
         {flyerDetailsOnly ? (
@@ -2253,8 +2282,21 @@ interface AdditionalEventCardProps {
    */
   taskStatusLine: CommunityMainTaskLine | null;
   isAdding: boolean;
+  /**
+   * COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup) — the viewer's RSVP
+   * status for this event (from the parent's `rsvpMap`). When `'no'`, this
+   * card renders the "לא אגיע"/"שינוי תשובה" variant instead of
+   * "הוסף ליומן" — see the doc comment below.
+   */
+  rsvpStatus: RsvpStatus;
   onOpenDetails: (eventId: Id<'events'>) => void;
   onAddToCalendar: (eventId: Id<'events'>) => void;
+  /**
+   * COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup) — opens the SAME
+   * existing RsvpBottomSheet as every other RSVP entry point (see
+   * TabMainProps.onRsvpPress). Only used when `rsvpStatus === 'no'`.
+   */
+  onRsvpPress: (eventId: Id<'events'>) => void;
   /** FIX 8B UX CORRECTION — see MainEventCardProps.onOpenTaskSheet. */
   onOpenTaskSheet?: (eventId: Id<'events'>) => void;
 }
@@ -2264,9 +2306,21 @@ interface AdditionalEventCardProps {
  * card visual language as MainEventCard (title/date/location/task summary)
  * plus the SAME "הוסף ליומן" label already used by the open-event footer
  * button (getOpenCommunityCalendarActionLabel) — no new copy is introduced.
- * The label is always the "add" variant here by construction: this card is
- * only ever rendered for events listCommunityAdditionalEventsPaged already
- * confirmed are NOT in the viewer's personal calendar.
+ *
+ * COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup) — this card is no
+ * longer only ever rendered for events NOT in the viewer's personal
+ * calendar: an RSVP-required event the viewer answered "לא" to now also
+ * reaches here (via the reordered `isEligibleForAdditionalCommunityEvent`)
+ * even when it independently remains `isInPersonalCalendar: true` for an
+ * unrelated reason (auto-add/save/task). For that RSVP=no case, "הוסף
+ * ליומן" makes no sense — adding to the calendar is orthogonal to the RSVP
+ * answer — so the footer instead shows a "לא אגיע" status chip plus a
+ * "שינוי תשובה" CTA (same RsvpBottomSheet flow as every other RSVP entry
+ * point in this screen — see EventsTabCard's identical pattern). Changing
+ * the answer to yes/maybe re-includes the event in "האירועים שלי" reactively
+ * on its own (via computeIsSavedToMyCalendar / isEligibleForMainMyEvents) —
+ * no manual state transition is performed here. This never touches the
+ * viewer's Personal Calendar membership itself.
  */
 function AdditionalEventCard({
   event,
@@ -2276,12 +2330,15 @@ function AdditionalEventCard({
   isTomorrow,
   taskStatusLine,
   isAdding,
+  rsvpStatus,
   onOpenDetails,
   onAddToCalendar,
+  onRsvpPress,
   onOpenTaskSheet,
 }: AdditionalEventCardProps) {
   const locationLabel = event.location?.trim();
   const addLabel = getOpenCommunityCalendarActionLabel(false);
+  const isRsvpNo = event.requiresRsvp === true && rsvpStatus === 'no';
   const eventId = event._id;
   // Stop propagation so tapping the task CTA never also triggers this
   // card's own onOpenDetails press (nested Pressables).
@@ -2318,6 +2375,11 @@ function AdditionalEventCard({
             📍 {locationLabel}
           </Text>
         ) : null}
+        {isRsvpNo ? (
+          <View style={styles.eventsTabRsvpChip}>
+            <Text style={styles.eventsTabRsvpChipText}>לא אגיע</Text>
+          </View>
+        ) : null}
         {taskStatusLine ? (
           <CommunityMainTaskCta
             line={taskStatusLine}
@@ -2325,23 +2387,39 @@ function AdditionalEventCard({
           />
         ) : null}
       </Pressable>
-      <Pressable
-        accessible
-        accessibilityHint="מוסיף את האירוע ליומן האישי שלך"
-        accessibilityLabel={addLabel}
-        accessibilityRole="button"
-        disabled={isAdding}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        onPress={() => onAddToCalendar(event._id)}
-        style={({ pressed }) => [
-          styles.additionalEventAddBtn,
-          (pressed || isAdding) && styles.additionalEventAddBtnPressed,
-        ]}
-      >
-        <Text style={styles.additionalEventAddBtnText}>
-          {isAdding ? '...' : addLabel}
-        </Text>
-      </Pressable>
+      {isRsvpNo ? (
+        <Pressable
+          accessible
+          accessibilityLabel="שינוי תשובה"
+          accessibilityRole="button"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          onPress={() => onRsvpPress(event._id)}
+          style={({ pressed }) => [
+            styles.additionalEventAddBtn,
+            pressed && styles.additionalEventAddBtnPressed,
+          ]}
+        >
+          <Text style={styles.additionalEventAddBtnText}>שינוי תשובה</Text>
+        </Pressable>
+      ) : (
+        <Pressable
+          accessible
+          accessibilityHint="מוסיף את האירוע ליומן האישי שלך"
+          accessibilityLabel={addLabel}
+          accessibilityRole="button"
+          disabled={isAdding}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          onPress={() => onAddToCalendar(event._id)}
+          style={({ pressed }) => [
+            styles.additionalEventAddBtn,
+            (pressed || isAdding) && styles.additionalEventAddBtnPressed,
+          ]}
+        >
+          <Text style={styles.additionalEventAddBtnText}>
+            {isAdding ? '...' : addLabel}
+          </Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -2489,6 +2567,14 @@ interface TabMainProps {
   onSeeMoreReminders: () => void;
   currentUserId?: Id<'users'>;
   onInlineRsvp: (eventId: Id<'events'>, status: RsvpStatus) => Promise<void>;
+  /**
+   * COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup) — opens the SAME
+   * existing `RsvpBottomSheet` every other RSVP entry point in this screen
+   * uses (see the Events tab's identical `onRsvpPress={setRsvpSheet}`
+   * wiring). Used by the RSVP=no "אירועים נוספים" card's "שינוי תשובה" CTA
+   * — no second RSVP UX is introduced.
+   */
+  onRsvpPress: (eventId: Id<'events'>) => void;
   /** Captured BEFORE markCommunityViewed runs — see previousVisitAtRef above. */
   previousVisitAt: number | undefined;
   /**
@@ -2513,6 +2599,7 @@ function TabMain({
   onSeeMoreReminders,
   currentUserId,
   onInlineRsvp,
+  onRsvpPress,
   previousVisitAt,
   focusedLocalDayStart,
 }: TabMainProps) {
@@ -2890,32 +2977,68 @@ function TabMain({
     [previousVisitAt]
   );
 
-  // "מה חשוב עכשיו" candidates — nearest today/tomorrow event drawn from the
-  // union of the two already-bounded lists above (no extra query).
-  const relevantEvents = useMemo(() => {
-    const byId = new Map<string, EventDoc>();
-    for (const ev of myEvents) byId.set(ev._id as string, ev);
-    for (const ev of pendingRsvpEvents) byId.set(ev._id as string, ev);
-    return [...byId.values()].sort((a, b) => a.startTime - b.startTime);
-  }, [myEvents, pendingRsvpEvents]);
-  const todayEvent = useMemo(
-    () => relevantEvents.find((ev) => isEventOnLocalDay(ev, todayKey)),
-    [relevantEvents, todayKey]
-  );
-  const tomorrowEvent = useMemo(
-    () => relevantEvents.find((ev) => isEventOnLocalDay(ev, tomorrowKey)),
-    [relevantEvents, tomorrowKey]
+  // "מה חשוב עכשיו" candidates — nearest today/tomorrow event drawn from
+  // `myEvents` (Community Main's "האירועים שלי" list, already bounded server-
+  // side). COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup): this no
+  // longer unions in `pendingRsvpEvents` — the server's `myEvents` now
+  // excludes pending/RSVP=no events by construction (see
+  // isEligibleForMainMyEvents in convex/communityCalendarState.ts), so a
+  // pending event can never legitimately surface here as a generic
+  // "אירוע היום"/"אירוע מחר" row any more. It always gets its own
+  // actionable RSVP card instead — see visiblePendingRsvpEvents below.
+  const relevantEvents = useMemo(
+    () => [...myEvents].sort((a, b) => a.startTime - b.startTime),
+    [myEvents]
   );
 
+  // ALL pending RSVP event IDs (not only the ones visible as cards) — used
+  // to defensively exclude any pending event from the generic today/
+  // tomorrow rows below, even one hidden behind the "עוד X" overflow row.
+  // Pending RSVP state always takes precedence over a generic today/
+  // tomorrow representation on Community Main.
+  const allPendingRsvpIds = useMemo(
+    () => new Set(pendingRsvpEvents.map((ev) => ev._id as string)),
+    [pendingRsvpEvents]
+  );
+
+  const todayEvent = useMemo(
+    () =>
+      relevantEvents.find(
+        (ev) =>
+          isEventOnLocalDay(ev, todayKey) &&
+          !allPendingRsvpIds.has(ev._id as string)
+      ),
+    [relevantEvents, todayKey, allPendingRsvpIds]
+  );
+  const tomorrowEvent = useMemo(
+    () =>
+      relevantEvents.find(
+        (ev) =>
+          isEventOnLocalDay(ev, tomorrowKey) &&
+          !allPendingRsvpIds.has(ev._id as string)
+      ),
+    [relevantEvents, tomorrowKey, allPendingRsvpIds]
+  );
+
+  // COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup) — the generic
+  // "אירוע אחד מחכה לתגובה" summary row (a dead-end pointing at the אירועים
+  // tab, with no event name or direct action) is REMOVED from this memo.
+  // Pending RSVP events are now represented by actual actionable cards
+  // (see visiblePendingRsvpEvents / pendingRsvpOverflowLabel below), keeping
+  // this memo limited to the "simple row" content: cancellations, today,
+  // tomorrow, and the nearest reminder — capped at 3 as before. The RSVP
+  // cards block is rendered as its own distinct unit (not subject to this
+  // cap), positioned between the "today" and "tomorrow" rows in the JSX
+  // below to preserve the original priority order (cancellations → today →
+  // pending cards → tomorrow → reminder).
   const importantNowItems = useMemo<ImportantNowItem[]>(() => {
     const items: ImportantNowItem[] = [];
 
     // FIX C.2 — recent cancellations are high-priority Community updates:
-    // added FIRST, before today/pending/tomorrow/reminder candidates, so a
-    // recent cancellation is never silently displaced by a normal
-    // tomorrow event once the final `slice(0, 3)` below runs. Already
-    // sorted newest-cancellation-first by the query
-    // (selectRecentCancelledCommunityEvents).
+    // added FIRST, before today/tomorrow/reminder candidates, so a recent
+    // cancellation is never silently displaced by a normal tomorrow event
+    // once the final `slice(0, 3)` below runs. Already sorted newest-
+    // cancellation-first by the query (selectRecentCancelledCommunityEvents).
     for (const cancelledEvent of recentCancelledEvents) {
       items.push({
         key: `cancelled-${cancelledEvent._id}`,
@@ -2932,20 +3055,6 @@ function TabMain({
         iconName: 'star',
         emphasis: true,
         onPress: () => onOpenEventDetails(todayEvent._id),
-      });
-    }
-
-    if (pendingRsvpEvents.length > 0) {
-      const label = pendingRsvpHasMore
-        ? 'אירועים מחכים לתגובה'
-        : pendingRsvpEvents.length === 1
-          ? 'אירוע אחד מחכה לתגובה'
-          : `${pendingRsvpEvents.length} אירועים מחכים לתגובה`;
-      items.push({
-        key: 'pending',
-        label,
-        iconName: 'help-circle-outline',
-        onPress: onSeeMoreEvents,
       });
     }
 
@@ -2990,14 +3099,60 @@ function TabMain({
     recentCancelledEvents,
     todayEvent,
     tomorrowEvent,
-    pendingRsvpEvents.length,
-    pendingRsvpHasMore,
     nearestActiveReminder,
     mainReminderSelection,
     onOpenEventDetails,
-    onSeeMoreEvents,
     onSeeMoreReminders,
   ]);
+
+  // Items that must render BEFORE the pending-RSVP cards block (priority
+  // order: cancellations, then today) — filtered rather than index-sliced
+  // so the split stays correct regardless of how many cancelled items made
+  // the `slice(0, 3)` cut above.
+  const importantNowItemsBeforePending = useMemo(
+    () =>
+      importantNowItems.filter(
+        (item) => item.key === 'today' || item.key.startsWith('cancelled-')
+      ),
+    [importantNowItems]
+  );
+  // Items that must render AFTER the pending-RSVP cards block (tomorrow,
+  // then the nearest reminder).
+  const importantNowItemsAfterPending = useMemo(
+    () =>
+      importantNowItems.filter(
+        (item) => item.key === 'tomorrow' || item.key === 'reminders'
+      ),
+    [importantNowItems]
+  );
+
+  // Up to 2 actionable pending-RSVP cards, nearest-first (already sorted by
+  // startTime by the server query) — replaces the old generic summary row.
+  const visiblePendingRsvpEvents = useMemo(
+    () => pendingRsvpEvents.slice(0, 2),
+    [pendingRsvpEvents]
+  );
+
+  // Compact overflow row label for any pending RSVP events beyond the 2
+  // visible cards. Exact count when known (pendingRsvpEvents holds them but
+  // they're beyond the visible slice); neutral wording when the server
+  // reports more exist beyond what it even returned (`pendingRsvpHasMore`),
+  // since the exact remaining count is not knowable without a full scan.
+  const pendingRsvpOverflowLabel = useMemo(() => {
+    if (pendingRsvpHasMore) return 'עוד אירועים מחכים לאישור';
+    const remainingCount =
+      pendingRsvpEvents.length - visiblePendingRsvpEvents.length;
+    return remainingCount > 0
+      ? `עוד ${remainingCount} אירועים מחכים לאישור`
+      : null;
+  }, [
+    pendingRsvpEvents.length,
+    visiblePendingRsvpEvents.length,
+    pendingRsvpHasMore,
+  ]);
+
+  const hasImportantNowContent =
+    importantNowItems.length > 0 || visiblePendingRsvpEvents.length > 0;
 
   // QA FIX (Issue 3): ONLY the event's actual creator is exempt from RSVP —
   // management role (owner/admin) alone must never bypass RSVP for an event
@@ -3018,12 +3173,50 @@ function TabMain({
         showsVerticalScrollIndicator={false}
         style={styles.tabScroll}
       >
-        {/* ── מה חשוב עכשיו — hidden entirely when there is nothing to show */}
-        {importantNowItems.length > 0 ? (
+        {/* ── מה חשוב עכשיו — hidden entirely when there is nothing to show.
+          COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup): pending RSVP
+          events now render as actionable cards (reusing MainPendingRsvpRow)
+          inside this section instead of a separate "מחכים לתגובה" section
+          below and instead of a generic summary row — positioned between
+          the "today" and "tomorrow" simple rows to preserve the original
+          priority order. */}
+        {hasImportantNowContent ? (
           <View>
             <SectionHeader title="מה חשוב עכשיו" />
             <View style={styles.importantNowList}>
-              {importantNowItems.map((item) => (
+              {importantNowItemsBeforePending.map((item) => (
+                <ImportantNowRow item={item} key={item.key} />
+              ))}
+              {visiblePendingRsvpEvents.length > 0 ? (
+                <View style={{ gap: 8 }}>
+                  {visiblePendingRsvpEvents.map((ev) => (
+                    <MainPendingRsvpRow
+                      assignedTaskCount={
+                        taskCountsMap[ev._id]?.myAssignedTasks.length
+                      }
+                      event={ev}
+                      flyerDetailsOnly={isEventCreator(ev)}
+                      isNew={isEventNew(ev)}
+                      isToday={isEventOnLocalDay(ev, todayKey)}
+                      isTomorrow={isEventOnLocalDay(ev, tomorrowKey)}
+                      key={ev._id}
+                      onOpenDetails={onOpenEventDetails}
+                      onRsvpSelect={onInlineRsvp}
+                    />
+                  ))}
+                  {pendingRsvpOverflowLabel ? (
+                    <ImportantNowRow
+                      item={{
+                        key: 'pending-overflow',
+                        label: pendingRsvpOverflowLabel,
+                        iconName: 'help-circle-outline',
+                        onPress: onSeeMoreEvents,
+                      }}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+              {importantNowItemsAfterPending.map((item) => (
                 <ImportantNowRow item={item} key={item.key} />
               ))}
             </View>
@@ -3092,38 +3285,12 @@ function TabMain({
           )}
         </View>
 
-        {/* ── מחכים לתגובה — short vertical list, hidden entirely when empty */}
-        {pendingRsvpEvents.length > 0 ? (
-          <View>
-            <SectionHeader
-              actionLabel={pendingRsvpHasMore ? 'הצג הכל' : undefined}
-              onAction={pendingRsvpHasMore ? onSeeMoreEvents : undefined}
-              subtitle="אירועים שדורשים אישור הגעה ממך"
-              title="מחכים לתגובה"
-            />
-            {isLoadingOverview ? (
-              <ActivityIndicator
-                color={PRIMARY}
-                style={{ marginVertical: 16 }}
-              />
-            ) : (
-              <View style={{ gap: 8 }}>
-                {pendingRsvpEvents.map((ev) => (
-                  <MainPendingRsvpRow
-                    event={ev}
-                    flyerDetailsOnly={isEventCreator(ev)}
-                    isNew={isEventNew(ev)}
-                    isToday={isEventOnLocalDay(ev, todayKey)}
-                    isTomorrow={isEventOnLocalDay(ev, tomorrowKey)}
-                    key={ev._id}
-                    onOpenDetails={onOpenEventDetails}
-                    onRsvpSelect={onInlineRsvp}
-                  />
-                ))}
-              </View>
-            )}
-          </View>
-        ) : null}
+        {/* COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup): the separate
+          "מחכים לתגובה" section has been removed entirely. Pending RSVP
+          events are now represented exclusively by the actionable cards
+          rendered inside "מה חשוב עכשיו" above (see
+          visiblePendingRsvpEvents / pendingRsvpOverflowLabel), so there is
+          no duplicate list or duplicate summary here any more. */}
 
         {/* ── אירועים נוספים — QA FIX (Issue 2): upcoming community events not
           yet in the viewer's personal calendar. Horizontal, genuinely
@@ -3170,6 +3337,8 @@ function TabMain({
                   onAddToCalendar={handleAddToCalendar}
                   onOpenDetails={onOpenEventDetails}
                   onOpenTaskSheet={handleOpenTaskSheet}
+                  onRsvpPress={onRsvpPress}
+                  rsvpStatus={rsvpMap[ev._id] ?? 'none'}
                   taskStatusLine={
                     communityMainTaskLineByEventId[ev._id as string] ?? null
                   }
@@ -5226,6 +5395,7 @@ export default function CommunityDetailScreen() {
           onSeeMoreReminders={handleSeeMoreReminders}
           currentUserId={currentUserId}
           onInlineRsvp={handleInlineRsvp}
+          onRsvpPress={setRsvpSheet}
           previousVisitAt={previousVisitAtRef.current}
           focusedLocalDayStart={focusedLocalDayStart}
         />
@@ -5699,6 +5869,18 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     textAlign: rtl.textAlign,
     marginTop: 2,
+  },
+  pendingRowTaskIndicator: {
+    flexDirection: rtl.flexDirection,
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  pendingRowTaskIndicatorText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#6b7280',
+    textAlign: rtl.textAlign,
   },
   pendingRowCtaWrap: { minWidth: 92 },
   pendingRowCtaBtn: {

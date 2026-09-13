@@ -19,6 +19,7 @@ import {
   finalizeMainOverviewHasMore,
   isCancelledEventRemovedFromCommunityDisplay,
   isEligibleForAdditionalCommunityEvent,
+  isEligibleForMainMyEvents,
   isMainOverviewAccumulatorSatisfied,
   loadActiveSavedEventIds,
   loadOptOutEventIds,
@@ -953,19 +954,35 @@ export const listCommunityMainOverview = query({
         // isMainOverviewAccumulatorSatisfied in communityCalendarState.ts.
         if (ev.status === 'cancelled') continue;
         const idStr = ev._id as string;
+        const isCreator = ev.createdBy === userId;
+        const rsvpStatus = rsvpByEventId.get(idStr);
         const state = computeCommunityEventPersonalCalendarState({
-          isCreator: ev.createdBy === userId,
+          isCreator,
           autoAddEnabled,
           requiresRsvp: ev.requiresRsvp,
-          rsvpStatus: rsvpByEventId.get(idStr),
+          rsvpStatus,
           hasActiveSave: savedIds.has(idStr),
           hasOptOut: optOutIds.has(idStr),
         });
+        // COMMUNITY MAIN CORRECTION (RSVP hierarchy cleanup) — the
+        // `myEvents` limit must only be filled with events that actually
+        // belong in "האירועים שלי" per Main's placement precedence
+        // (isEligibleForMainMyEvents), not with every
+        // `isInPersonalCalendar` event — otherwise auto-add + pending/no
+        // RSVP events could consume the limit and starve real yes/maybe
+        // events. `isPendingRsvp` is unchanged (still the raw
+        // rsvpAttentionState dimension) so "מה חשוב עכשיו" is unaffected.
         acc = accumulateMainOverviewCandidate(
           acc,
           {
             item: ev,
-            isInPersonalCalendar: state.isInPersonalCalendar,
+            isEligibleForMyEvents: isEligibleForMainMyEvents({
+              isInPersonalCalendar: state.isInPersonalCalendar,
+              isCreator,
+              requiresRsvp: ev.requiresRsvp,
+              rsvpStatus,
+              rsvpAttentionState: state.rsvpAttentionState,
+            }),
             isPendingRsvp: state.rsvpAttentionState === 'pending',
           },
           limits
