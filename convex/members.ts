@@ -1,6 +1,7 @@
 import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { buildCanonicalFamilyMembers } from '../lib/canonicalFamilyMembers';
+import { filterPendingPhoneMatchCandidates } from '../lib/pendingPhoneMatches';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation, mutation, query } from './_generated/server';
@@ -192,6 +193,111 @@ export const matchOnPhone = internalMutation({
         await ctx.db.patch(owner._id, { familyContacts: updated });
       }
     }
+  },
+});
+
+// ── getPendingPhoneMatches (Stage 2A foundation) ────────────────────────────
+/**
+ * Stage 2A foundation ONLY — read-only discovery query.
+ *
+ * Returns all pending phone matches for the caller as a plural array of
+ * minimal-safe-metadata objects. Does NOT auto-select a single match, does
+ * NOT grant access, and does NOT modify any data.
+ *
+ * matchOnPhone (above) still auto-grants access today and is intentionally
+ * left unmodified in Stage 2A — see the Stage 2B+3 plan for the hardening
+ * pass that will replace matchOnPhone's auto-join with a confirmation flow
+ * built on top of this query. This query exists purely as a safe discovery
+ * foundation so that future confirmation UI can be built without changing
+ * matchOnPhone's current behavior yet.
+ *
+ * Authorization convention: mirrors listMyFamilyContacts / getMySpaceRole /
+ * getSpaceAdminId / getMyResolvedSpaceId in this file — returns [] for an
+ * unauthenticated caller rather than throwing.
+ *
+ * Filtering (all required, defense-in-depth):
+ *   - candidate row must resolve to kind === 'entity' (never 'access')
+ *   - candidate row's matchedUserId === current userId
+ *   - candidate row has a selectedPhoneNumber
+ *   - normalized candidate phone === normalized current-user phone
+ *     (re-verified here independently of the by_phone index lookup)
+ *   - excluded if the current user already has a kind:'access' row in that
+ *     same space
+ *   - excluded if the space is missing/deleted
+ *
+ * Response shape is intentionally minimal: memberId, spaceName, and
+ * optional displayName only. spaceId is deliberately NOT returned — the
+ * client does not need it for rendering, and the future accept mutation
+ * (Stage 2B+3) will take only memberId and derive/re-verify spaceId
+ * server-side from the entity row itself. Never returns phone numbers,
+ * other users' ids, member lists, permissions, or any other private space
+ * content.
+ */
+export const getPendingPhoneMatches = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      memberId: v.id('members'),
+      spaceName: v.string(),
+      displayName: v.optional(v.string()),
+    })
+  ),
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+
+    const user = await ctx.db.get(userId);
+    const userPhone = user?.phone;
+    if (!userPhone) return [];
+
+    const normalizedUserPhone = normalizeToE164(userPhone);
+    if (!normalizedUserPhone) return [];
+
+    // Same index matchOnPhone uses — scopes candidates to rows that carry
+    // the caller's own (already-normalized) phone number.
+    const candidateRows = await ctx.db
+      .query('members')
+      .withIndex('by_phone', (q) =>
+        q.eq('selectedPhoneNumber', normalizedUserPhone)
+      )
+      .collect();
+
+    if (candidateRows.length === 0) return [];
+
+    const myRows = await ctx.db
+      .query('members')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect();
+    const accessSpaceIds = new Set(
+      myRows.filter((r) => resolveKind(r) === 'access').map((r) => r.spaceId)
+    );
+
+    const candidateSpaceIds = [...new Set(candidateRows.map((r) => r.spaceId))];
+    const existingSpaceIds = new Set<Id<'spaces'>>();
+    const spaceNameById = new Map<Id<'spaces'>, string>();
+    for (const spaceId of candidateSpaceIds) {
+      const space = await ctx.db.get(spaceId);
+      if (space) {
+        existingSpaceIds.add(spaceId);
+        spaceNameById.set(spaceId, space.name);
+      }
+    }
+
+    const safeCandidates = filterPendingPhoneMatchCandidates({
+      currentUserId: userId,
+      normalizedUserPhone,
+      candidateRows,
+      accessSpaceIds,
+      existingSpaceIds,
+      resolveKind,
+      normalizeToE164,
+    });
+
+    return safeCandidates.map((row) => ({
+      memberId: row._id,
+      spaceName: spaceNameById.get(row.spaceId) ?? '',
+      displayName: row.displayName,
+    }));
   },
 });
 

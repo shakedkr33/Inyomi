@@ -1,5 +1,6 @@
 import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
+import { buildOnboardingAnswersPatch } from '../lib/onboardingAnswers';
 import type { Id } from './_generated/dataModel';
 import { mutation } from './_generated/server';
 
@@ -150,5 +151,79 @@ export const finishOnboarding = mutation({
     });
 
     return { spaceId };
+  },
+});
+
+// ── persistOnboardingAnswers (Stage 2A foundation) ──────────────────────────
+/**
+ * Stage 2A foundation ONLY. Persists the Q1 (onboardingIntent) and/or Q2
+ * (onboardingChallenges) onboarding answers to the users record,
+ * independently of finishOnboarding.
+ *
+ * This is a USERS-ONLY answer-persistence mutation. It intentionally does
+ * NOT:
+ *   - create or update a space
+ *   - write spaces.onboardingChallenges (legacy field, untouched)
+ *   - create members / access rows
+ *   - set defaultSpaceId
+ *   - set onboardingCompleted
+ *   - call finishOnboarding
+ *   - call matchOnPhone
+ *   - change any routing
+ *
+ * There is deliberately no client integration yet (Stage 2B+3 will wire
+ * this into the authenticated layout's routing). finishOnboarding is left
+ * completely unmodified — this is not a dual-write path; it is the future
+ * canonical answer-writing path that finishOnboarding will eventually stop
+ * needing to duplicate.
+ *
+ * Field guards are INDEPENDENT (see buildOnboardingAnswersPatch in
+ * lib/onboardingAnswers.ts): a field is written only if the server does
+ * not already have a value for it AND a value was provided in this call.
+ * A stale pre-auth draft replay can never overwrite an existing server
+ * answer, but a field the server is missing can still be filled in even
+ * when the other field already exists.
+ */
+export const persistOnboardingAnswers = mutation({
+  args: {
+    onboardingIntent: v.optional(
+      v.union(v.literal('personal'), v.literal('couple'), v.literal('family'))
+    ),
+    onboardingChallenges: v.optional(
+      v.array(
+        v.union(
+          v.literal('incoming_from_everywhere'),
+          v.literal('remember_tasks_and_appointments'),
+          v.literal('shared_schedule_coordination'),
+          v.literal('everything_in_one_place')
+        )
+      )
+    ),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      throw new Error('חייבים להיות מחוברים כדי לשמור תשובות אונבורדינג');
+    }
+
+    const user = await ctx.db.get(userId);
+    if (!user) throw new Error('משתמש לא נמצא');
+
+    const patch = buildOnboardingAnswersPatch(
+      {
+        onboardingIntent: user.onboardingIntent,
+        onboardingChallenges: user.onboardingChallenges,
+      },
+      {
+        onboardingIntent: args.onboardingIntent,
+        onboardingChallenges: args.onboardingChallenges,
+      }
+    );
+
+    if (Object.keys(patch).length === 0) return null;
+
+    await ctx.db.patch(userId, patch);
+    return null;
   },
 });

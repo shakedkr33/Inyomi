@@ -33,6 +33,25 @@ export default defineSchema({
     familySetupSkippedAt: v.optional(v.number()),
     // undefined = true (push enabled by default)
     pushNotificationsEnabled: v.optional(v.boolean()),
+    // ── Stage 2A: canonical onboarding answer persistence (users-only) ──────
+    // Written exclusively by convex/onboarding.ts persistOnboardingAnswers.
+    // finishOnboarding does NOT write these fields (no dual-write path) —
+    // see AGENTS.md Stage 2A scope. Optional: no migration required for
+    // existing users. Values mirror the Q1/Q2 UI options exactly — see
+    // app/onboarding-step1.tsx and app/onboarding-step2.tsx.
+    onboardingIntent: v.optional(
+      v.union(v.literal('personal'), v.literal('couple'), v.literal('family'))
+    ),
+    onboardingChallenges: v.optional(
+      v.array(
+        v.union(
+          v.literal('incoming_from_everywhere'),
+          v.literal('remember_tasks_and_appointments'),
+          v.literal('shared_schedule_coordination'),
+          v.literal('everything_in_one_place')
+        )
+      )
+    ),
   })
     .index('by_email', ['email'])
     .index('by_phone', ['phone'])
