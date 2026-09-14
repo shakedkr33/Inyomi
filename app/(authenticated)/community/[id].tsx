@@ -89,7 +89,7 @@ import { getConvexErrorCode } from '@/lib/utils/convexError';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const PRIMARY = '#36a9e2';
+const PRIMARY = '#00668E';
 
 // Stage 2A: "הכל" was renamed to "ראשי" (the Main overview tab). Old
 // deep-links / persisted params using "הכל" are still accepted — see the
@@ -5557,7 +5557,7 @@ const styles = StyleSheet.create({
   headerDescriptionToggleWrap: { marginTop: 2, minHeight: 18 },
   headerDescriptionToggle: {
     fontSize: 12,
-    color: '#36a9e2',
+    color: PRIMARY,
     fontWeight: '600',
     textAlign: rtl.textAlign,
     writingDirection: 'rtl',
@@ -5750,7 +5750,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     backgroundColor: PRIMARY,
   },
-  mainEventTaskCtaPressed: { backgroundColor: '#2a8bbd', opacity: 0.92 },
+  mainEventTaskCtaPressed: { backgroundColor: '#00597D', opacity: 0.92 },
   mainEventTaskCtaText: {
     flexShrink: 1,
     fontSize: 14,

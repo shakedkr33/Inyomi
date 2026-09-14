@@ -22,7 +22,7 @@ import { rtl } from '@/lib/rtl';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const PRIMARY = '#36a9e2';
+const PRIMARY = '#00668E';
 
 const ROLE_LABELS: Record<'owner' | 'admin' | 'member', string> = {
   owner: 'בעלים',

@@ -20,7 +20,7 @@ import type { Id } from '@/convex/_generated/dataModel';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const PRIMARY = '#36a9e2';
+const PRIMARY = '#00668E';
 
 const AVAILABLE_TAGS = [
   'גן',

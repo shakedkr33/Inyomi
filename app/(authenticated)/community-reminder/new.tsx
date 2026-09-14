@@ -36,7 +36,7 @@ const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const PRIMARY = '#36a9e2';
+const PRIMARY = '#00668E';
 
 type DateOption = 'today' | 'tomorrow' | 'other' | 'none';
 
@@ -688,7 +688,7 @@ export default function CommunityReminderNewScreen() {
                     <Ionicons
                       name="calendar-outline"
                       size={20}
-                      color="#36a9e2"
+                      color={PRIMARY}
                     />
                   </TouchableOpacity>
 
@@ -761,7 +761,7 @@ export default function CommunityReminderNewScreen() {
                       display="inline"
                       themeVariant="light"
                       locale="he-IL"
-                      accentColor="#36a9e2"
+                      accentColor={PRIMARY}
                       textColor="#111827"
                       onChange={(_, date) => {
                         if (date) {
@@ -1102,7 +1102,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   pickerConfirmBtn: {
-    backgroundColor: '#36a9e2',
+    backgroundColor: PRIMARY,
     margin: 12,
     borderRadius: 999,
     paddingVertical: 10,

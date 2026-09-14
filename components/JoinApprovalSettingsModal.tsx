@@ -19,7 +19,7 @@ interface JoinApprovalSettingsModalProps {
   onSave: () => Promise<void> | void;
 }
 
-const PRIMARY = '#36a9e2';
+const PRIMARY = '#00668E';
 const MUTED_TEXT = '#8A94A6';
 const TITLE_COLOR = '#111827';
 
