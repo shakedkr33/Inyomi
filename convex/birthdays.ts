@@ -1,5 +1,33 @@
+import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
+import { hasAccessRowForSpace } from '../lib/spaceAccess';
+import type { Id } from './_generated/dataModel';
+import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
+
+const PERMISSION_DENIED = 'אין הרשאה לגשת למרחב זה';
+
+// ── requireSpaceAccess ────────────────────────────────────────────────────────
+// SECURITY FIX: listUpcoming/create/remove previously trusted a
+// client-supplied spaceId with no server-side membership check at all
+// (a client could pass ANY spaceId and read/write/delete that space's
+// birthdays). This verifies the authenticated caller has a real
+// access-kind `members` row (admin OR member) for the requested space —
+// a client-provided spaceId alone is never sufficient authorization.
+async function requireSpaceAccess(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<'users'>,
+  spaceId: Id<'spaces'>
+): Promise<void> {
+  const rows = await ctx.db
+    .query('members')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .collect();
+
+  if (!hasAccessRowForSpace(rows, spaceId)) {
+    throw new Error(PERMISSION_DENIED);
+  }
+}
 
 // ─────────────────────────────────────────────────────────────
 // שליפת ימי הולדת קרובים (בתוך X ימים מהיום)
@@ -10,7 +38,12 @@ export const listUpcoming = query({
     daysAhead: v.number(), // למשל: 30 = חודש קדימה
   },
   handler: async (ctx, { spaceId, daysAhead }) => {
-    // TODO: לחבר לאימות – לוודא שהמשתמש שייך ל-spaceId
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('לא מחובר למערכת');
+    // SECURITY: verify the caller actually belongs to this space before
+    // returning any birthday data for it.
+    await requireSpaceAccess(ctx, userId, spaceId);
+
     const all = await ctx.db
       .query('birthdays')
       .withIndex('by_space', (q) => q.eq('spaceId', spaceId))
@@ -47,19 +80,18 @@ export const create = mutation({
     imageUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('לא מחובר למערכת');
+    const authUserId = await getAuthUserId(ctx);
+    if (!authUserId) throw new Error('לא מחובר למערכת');
+    // SECURITY: verify the caller belongs to the requested space before
+    // allowing a birthday to be created in it.
+    await requireSpaceAccess(ctx, authUserId, args.spaceId);
 
-    // TODO: לאמת שהמשתמש הנוכחי שייך ל-spaceId לפני יצירה
-    const user = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', identity.email ?? ''))
-      .unique();
-    if (!user) throw new Error('משתמש לא נמצא');
-
+    // SECURITY: createdBy is always derived from the authenticated caller
+    // server-side — the args validator does not even accept a client
+    // `createdBy` field, so this can never be spoofed.
     return await ctx.db.insert('birthdays', {
       ...args,
-      createdBy: user._id,
+      createdBy: authUserId,
       createdAt: Date.now(),
     });
   },
@@ -71,12 +103,22 @@ export const create = mutation({
 export const remove = mutation({
   args: { id: v.id('birthdays') },
   handler: async (ctx, { id }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error('לא מחובר למערכת');
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('לא מחובר למערכת');
 
-    // TODO: לוודא שהמשתמש הנוכחי הוא יוצר הרשומה
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error('יום הולדת לא נמצא');
+
+    // SECURITY: the caller must belong to this birthday's space...
+    await requireSpaceAccess(ctx, userId, existing.spaceId);
+
+    // ...and only the creator may delete it. This mirrors this repo's
+    // existing creator-only deletion convention for personal content
+    // (see events.deleteEvent) — there is no admin-override delete rule
+    // for birthdays elsewhere in this codebase, so none is introduced here.
+    if (existing.createdBy !== userId) {
+      throw new Error(PERMISSION_DENIED);
+    }
 
     await ctx.db.delete(id);
   },

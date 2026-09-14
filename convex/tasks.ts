@@ -1410,13 +1410,22 @@ export const listUndated = query({
 
 // ─────────────────────────────────────────────────────────────
 // שליפת משימות קשורות ליום הולדת לפי birthdayId
+//
+// SECURITY: birthdayId is a client-generated local string (Date.now()
+// from the on-device birthday list — see lib/birthdayStorage.ts) and is
+// NEVER an authorization boundary by itself. Previously this query
+// returned every task matching that string across ALL users/spaces.
+// Results are now scoped with the same isPersonalTaskForUser rule used by
+// every other personal-task query in this file (creator or assignee), so
+// a birthdayId collision (or a birthdayId guessed/replayed by another
+// caller) can never expose another user's tasks.
 // ─────────────────────────────────────────────────────────────
 export const listByRelatedBirthday = query({
   args: { birthdayId: v.string() },
   handler: async (ctx, { birthdayId }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return [];
-    return await ctx.db
+    const rows = await ctx.db
       .query('tasks')
       .withIndex('by_related_birthday', (q) =>
         q.eq('relatedBirthdayId', birthdayId)
@@ -1424,6 +1433,7 @@ export const listByRelatedBirthday = query({
       .filter((q) => q.eq(q.field('deletedAt'), undefined))
       .order('desc')
       .collect();
+    return rows.filter((task) => isPersonalTaskForUser(task, userId));
   },
 });
 

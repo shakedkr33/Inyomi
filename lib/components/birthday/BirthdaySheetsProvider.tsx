@@ -17,7 +17,7 @@ import { useEffectiveAccess } from '@/hooks/useEffectiveAccess';
 import {
   loadPersistedBirthdays,
   persistBirthdays,
-  runBirthdayLegacySeedMigration,
+  purgeLegacyGlobalBirthdayStorage,
 } from '@/lib/birthdayStorage';
 import type { Birthday } from '@/lib/types/birthday';
 import {
@@ -74,8 +74,12 @@ export function BirthdaySheetsProvider({
 
   const [birthdays, setBirthdays] = useState<Birthday[]>([]);
   const birthdaysRef = useRef<Birthday[]>([]);
-  // Ensures the load effect runs only once after the user identity is known.
-  const hasLoadedRef = useRef(false);
+  // SECURITY: identifies which authenticated user's data is currently loaded
+  // into memory. null = signed out / not yet resolved. This is the single
+  // source of truth used to (a) detect identity changes so the previous
+  // user's birthdays are cleared immediately, and (b) guard against a slow
+  // load for a previous user resolving after a new user became current.
+  const loadedUserIdRef = useRef<string | null>(null);
   const [selectedBirthday, setSelectedBirthday] = useState<Birthday | null>(
     null
   );
@@ -114,10 +118,21 @@ export function BirthdaySheetsProvider({
 
   const commitBirthdays = useCallback(
     async (next: Birthday[]): Promise<void> => {
+      // SECURITY: capture the active user id synchronously — persistBirthdays
+      // always writes to THIS id's scoped key, even if the authenticated user
+      // changes later while the write is in flight. This ensures a delayed
+      // write from a previous user can never land in a new user's storage.
+      const activeUserId = loadedUserIdRef.current;
+      if (!activeUserId) {
+        // No authenticated user loaded — nothing safe to persist to.
+        // (Sheets that call this should not be reachable in this state.)
+        return;
+      }
+
       birthdaysRef.current = next;
       setBirthdays(next);
       try {
-        await persistBirthdays(next);
+        await persistBirthdays(activeUserId, next);
       } catch (error) {
         if (__DEV__) {
           console.error('[Birthdays] Failed to persist birthdays', error);
@@ -127,35 +142,64 @@ export function BirthdaySheetsProvider({
     []
   );
 
-  // Load persisted birthdays once after the user identity is known.
-  // For the Apple Review demo account, skip AsyncStorage entirely and expose
-  // an empty list — no personal data leaks, no stored data is touched.
+  // One-time, user-independent cleanup of the old global (unscoped) key.
+  // Runs once per mount; never reads the legacy key's contents into any
+  // account — see purgeLegacyGlobalBirthdayStorage's doc comment.
+  const hasPurgedLegacyRef = useRef(false);
+  useEffect(() => {
+    if (hasPurgedLegacyRef.current) return;
+    hasPurgedLegacyRef.current = true;
+    void purgeLegacyGlobalBirthdayStorage();
+  }, []);
+
+  // SECURITY: this effect is the sole place birthday state is loaded, and it
+  // re-runs on every authenticated-identity change (A → B, B → signed out,
+  // signed out → A, etc.) — not just once per mount. On every identity
+  // change it clears in-memory state IMMEDIATELY (synchronously, before any
+  // async storage read starts) so there is no render frame where a new
+  // user could see the previous user's birthdays. The async load that
+  // follows is guarded by loadedUserIdRef so a slow read for a since-
+  // replaced identity can never overwrite the current user's state.
   useEffect(() => {
     // currentUser is undefined while the Convex identity query is in-flight.
-    // Defer until identity is resolved so we can detect the demo account.
+    // Defer until identity is resolved.
     if (currentUser === undefined) return;
 
-    // Run only once per mount regardless of future currentUser updates
-    // (e.g. profile refreshes that produce a new object reference).
-    if (hasLoadedRef.current) return;
-    hasLoadedRef.current = true;
+    const nextUserId = currentUser?._id ? String(currentUser._id) : null;
+    const previousUserId = loadedUserIdRef.current;
 
-    // Apple Review demo user: show empty birthdays without touching AsyncStorage.
-    // AsyncStorage is not read, not written, and not seeded — real data is safe.
-    if (currentUser?.phone === APPLE_REVIEW_PHONE) {
-      birthdaysRef.current = [];
-      setBirthdays([]);
+    // No actual identity change (e.g. an unrelated profile field refresh
+    // producing a new currentUser object reference) — nothing to do.
+    if (nextUserId === previousUserId) return;
+
+    // Identity changed — clear the previous user's birthdays from memory
+    // immediately, before touching storage for the next identity.
+    loadedUserIdRef.current = nextUserId;
+    birthdaysRef.current = [];
+    setBirthdays([]);
+
+    if (nextUserId === null) {
+      // Signed out — nothing to load. The previous user's persisted,
+      // scoped data is left untouched on disk (never deleted on sign-out).
       return;
     }
 
-    // Normal user: run one-time seed cleanup, then load from AsyncStorage.
+    // Apple Review demo account: always show empty birthdays, never read or
+    // write AsyncStorage for this identity — no personal data leaks.
+    if (currentUser?.phone === APPLE_REVIEW_PHONE) {
+      return;
+    }
+
+    // Capture the user id this load is FOR. If the authenticated identity
+    // changes again before this resolves, loadedUserIdRef will no longer
+    // equal requestUserId, and the stale result below is discarded instead
+    // of overwriting the new user's state (prevents the async-race leak).
+    const requestUserId = nextUserId;
     const load = async (): Promise<void> => {
       try {
-        // Remove legacy demo seeds if this is the first run after the fix.
-        // No-ops immediately on every subsequent launch (marker already set).
-        await runBirthdayLegacySeedMigration();
+        const saved = await loadPersistedBirthdays(requestUserId);
+        if (loadedUserIdRef.current !== requestUserId) return;
 
-        const saved = await loadPersistedBirthdays();
         if (saved !== null) {
           if (__DEV__) {
             console.log(
@@ -167,15 +211,14 @@ export function BirthdaySheetsProvider({
           return;
         }
 
-        // No saved data (fresh install or different storage namespace).
-        // Show an intentional empty list — never fall back to demo data.
+        // No saved data yet for this user (fresh account / fresh install).
         if (__DEV__) {
           console.log('[Birthdays] source=empty (no saved data found)');
         }
         birthdaysRef.current = [];
         setBirthdays([]);
       } catch (error) {
-        // Storage read failed — surface an empty list rather than demo data.
+        if (loadedUserIdRef.current !== requestUserId) return;
         if (__DEV__) {
           console.error('[Birthdays] Failed to load birthdays', error);
           console.log('[Birthdays] source=error (storage read failed)');
