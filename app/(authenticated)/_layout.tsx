@@ -726,8 +726,17 @@ export default function AuthenticatedLayout() {
           />
           {/* FIXED: linked-event detail screen — hidden from tab bar */}
           <Tabs.Screen name="linked-event/[id]" options={{ href: null }} />
-          {/* Subscription sales screen — accessible via CTAs, not a tab */}
-          <Tabs.Screen name="subscription" options={{ href: null }} />
+          {/* Subscription sales screen — accessible via CTAs, not a tab.
+              tabBarStyle: { display: 'none' } hides the persistent tab bar
+              only while this screen is focused; React Navigation restores
+              the navigator's own screenOptions.tabBarStyle automatically
+              when navigating to any other tab screen (no manual restore
+              needed since this is a static per-screen option, not an
+              imperative navigation.setOptions call). */}
+          <Tabs.Screen
+            name="subscription"
+            options={{ href: null, tabBarStyle: { display: 'none' } }}
+          />
           {/* Recently Deleted — accessible from Profile/Settings only, not a tab */}
           <Tabs.Screen name="recently-deleted" options={{ href: null }} />
           {/* Holiday overlay settings — accessible via deep-link only, not a tab */}

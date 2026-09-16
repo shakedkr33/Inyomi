@@ -1,7 +1,7 @@
 import 'react-native-gesture-handler';
 
 import { ConvexAuthProvider } from '@convex-dev/auth/react';
-import { ConvexReactClient } from 'convex/react';
+import { ConvexReactClient, useConvexAuth, useQuery } from 'convex/react';
 import { Slot } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { StatusBar } from 'expo-status-bar';
@@ -12,13 +12,14 @@ import '../global.css';
 
 import { NotificationsProvider } from '@/contexts/NotificationsContext';
 import { RevenueCatProvider } from '@/contexts/RevenueCatContext';
+import { api } from '@/convex/_generated/api';
 import { BirthdaySheetsProvider } from '@/lib/components/birthday/BirthdaySheetsProvider';
-import { bootstrapRTL } from '@/lib/rtlBootstrap';
 import {
   captureColdStartNotification,
   setupAndroidChannels,
   setupNotificationCategories,
 } from '@/lib/pushNotifications';
+import { bootstrapRTL } from '@/lib/rtlBootstrap';
 import { getConvexUrl } from '@/utils/convexConfig';
 import { OnboardingProvider } from '../contexts/OnboardingContext';
 
@@ -45,6 +46,50 @@ const secureStorage = {
   },
 };
 
+// ============================================================================
+// ConvexRevenueCatBridge (Phase 1 — RevenueCat identity + logout safety)
+// ============================================================================
+// RootLayout creates ConvexAuthProvider, so RootLayout itself cannot call
+// hooks that require that context (useConvexAuth / useQuery against
+// authenticated queries). This bridge is rendered INSIDE ConvexAuthProvider
+// so it can derive the tri-state Convex identity and pass it down to
+// RevenueCatProvider, which binds the RevenueCat SDK identity to it.
+//
+// Tri-state convexUserId, derived in this exact order:
+//   1. auth isLoading === true                              -> undefined
+//   2. isAuthenticated === false                             -> null
+//   3. isAuthenticated === true AND getMyId === undefined    -> undefined
+//   4. isAuthenticated === true AND getMyId === null         -> null
+//   5. isAuthenticated === true AND getMyId is a string      -> that string
+//
+// getMyId returning null while authenticated reflects a normal, expected
+// state (the auth token/identity itself resolved to null on the server —
+// see @convex-dev/auth's getAuthUserId), not a corrupted user record, so it
+// is treated the same as "signed out" for RevenueCat identity purposes.
+function ConvexRevenueCatBridge({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const myId = useQuery(api.users.getMyId, isAuthenticated ? {} : 'skip');
+
+  let convexUserId: string | null | undefined;
+  if (isAuthLoading) {
+    convexUserId = undefined;
+  } else if (!isAuthenticated) {
+    convexUserId = null;
+  } else if (myId === undefined) {
+    convexUserId = undefined;
+  } else if (myId === null) {
+    convexUserId = null;
+  } else {
+    convexUserId = myId;
+  }
+
+  return (
+    <RevenueCatProvider convexUserId={convexUserId}>
+      {children}
+    </RevenueCatProvider>
+  );
+}
+
 export default function RootLayout() {
   useEffect(() => {
     bootstrapRTL().catch(() => {});
@@ -64,15 +109,15 @@ export default function RootLayout() {
           backgroundColor="#0a0a0a"
         />
         <ConvexAuthProvider client={convex} storage={secureStorage}>
-          <OnboardingProvider>
-            <RevenueCatProvider>
+          <ConvexRevenueCatBridge>
+            <OnboardingProvider>
               <NotificationsProvider>
                 <BirthdaySheetsProvider>
                   <Slot />
                 </BirthdaySheetsProvider>
               </NotificationsProvider>
-            </RevenueCatProvider>
-          </OnboardingProvider>
+            </OnboardingProvider>
+          </ConvexRevenueCatBridge>
         </ConvexAuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

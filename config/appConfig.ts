@@ -41,6 +41,17 @@ export const PAYMENT_SYSTEM_ENABLED = true;
 export const MOCK_PAYMENTS = false;
 
 // ============================================================================
+// InYomi Together paywall — Coupon flow readiness
+// ============================================================================
+
+// 🚨 The coupon entry flow (business/influencer coupon codes such as
+// MAYA50) is NOT implemented yet — no validation, no campaign→offer
+// mapping exists. Keep this false until that flow ships; the paywall
+// hides the "יש קוד קופון?" link entirely while false so it is never a
+// dead tappable action in production.
+export const COUPON_FLOW_ENABLED = false;
+
+// ============================================================================
 // קישורי תנאי שימוש ומדיניות פרטיות
 // ============================================================================
 

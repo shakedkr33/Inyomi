@@ -45,6 +45,33 @@ export const PACKAGE_IDS = {
 } as const;
 
 // ============================================================================
+// InYomi Together — Named Offering + Package Mapping
+// ============================================================================
+// The custom "InYomi Together" paywall (app/(authenticated)/subscription.tsx)
+// resolves packages EXCLUSIVELY from this named RevenueCat Offering — never
+// from `offerings.current`. This is intentional: changing the dashboard's
+// Current Offering must never silently change this paywall's products or
+// prices. See contexts/RevenueCatContext.tsx for the strict resolution
+// (no fallback to offerings.current if this Offering is missing).
+//
+// "InYomi Together" is the marketing/display name only. Internally, it
+// continues to use the existing Family monthly/annual store products —
+// Product IDs and Package IDs are NOT renamed.
+export const TOGETHER_OFFERING_ID = 'launch30_2026';
+
+export const TOGETHER_PACKAGES = {
+  annual: PACKAGE_IDS.familyAnnual, // 'family_annual'
+  monthly: PACKAGE_IDS.familyMonthly, // 'family_monthly'
+} as const;
+
+// Google Play offer tag for the public annual launch discount. Any offer
+// tagged this way is treated as the public launch offer. Never select an
+// offer tagged with `rc-ignore-offer` (e.g. `partner50`) as the public
+// offer. Re-exported from the pure resolution module (single source of
+// truth) — see lib/revenuecat/androidOfferResolution.ts.
+export { ANDROID_LAUNCH_OFFER_TAG } from '@/lib/revenuecat/androidOfferResolution';
+
+// ============================================================================
 // Product Identifiers (App Store / Google Play)
 // ============================================================================
 

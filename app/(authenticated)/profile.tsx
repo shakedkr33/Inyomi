@@ -270,7 +270,8 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { returnTo } = useLocalSearchParams<{ returnTo?: string }>();
   const { signOut } = useAuthActions();
-  const { isPremium, isConfigured, isExpoGo, customerData } = useRevenueCat();
+  const { isPremium, isConfigured, isExpoGo, customerData, subscriptionTier } =
+    useRevenueCat();
   const deleteMyAccount = useMutation(api.users.deleteMyAccount);
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const [isDebugUnlocked, setIsDebugUnlocked] = useState(false);
@@ -580,7 +581,20 @@ export default function ProfileScreen() {
                     value={isPremium ? 'פרימיום' : 'חינמי'}
                   />
                   <DebugRow label="effectiveAccess" value={effectiveAccess} />
-                  <DebugRow label="Entitlement" value="InYomi Pro" />
+                  <DebugRow
+                    label="subscriptionTier"
+                    value={subscriptionTier ?? 'null'}
+                  />
+                  <DebugRow
+                    label="Entitlements פעילים"
+                    value={
+                      customerData !== null &&
+                      customerData !== undefined &&
+                      customerData.activeEntitlements.length > 0
+                        ? customerData.activeEntitlements.join(', ')
+                        : 'none'
+                    }
+                  />
                   {customerData !== null && customerData !== undefined && (
                     <DebugRow
                       label="App User ID"
