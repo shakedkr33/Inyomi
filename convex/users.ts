@@ -685,6 +685,11 @@ export const getIsQaUser = query({
 
 // סטטוס המשתמש הנוכחי: האם יש פרופיל, האם האונבורדינג הושלם
 // משמש לניתוב פוסט-אימות — מחזיר null כשלא מחובר (caller משתמש ב-'skip')
+// FIXED (Stage 2B+3): added phoneMatchResolvedAt — needed by the authenticated
+// layout's routing to know whether the user already made their onboarding
+// phone-match decision (accept one match / decline all). Existing callers
+// that only read hasProfile/onboardingComplete are unaffected — this is an
+// additive field on the same response shape.
 export const getCurrentUserStatus = query({
   args: {},
   handler: async (ctx) => {
@@ -693,12 +698,17 @@ export const getCurrentUserStatus = query({
 
     const user = await ctx.db.get(userId);
     if (!user) {
-      return { hasProfile: false, onboardingComplete: false };
+      return {
+        hasProfile: false,
+        onboardingComplete: false,
+        phoneMatchResolvedAt: null,
+      };
     }
 
     return {
       hasProfile: true,
       onboardingComplete: user.onboardingCompleted === true,
+      phoneMatchResolvedAt: user.phoneMatchResolvedAt ?? null,
     };
   },
 });

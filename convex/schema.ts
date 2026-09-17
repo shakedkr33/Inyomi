@@ -52,6 +52,16 @@ export default defineSchema({
         )
       )
     ),
+    // ── Stage 2B+3: onboarding phone-match security cutover ─────────────────
+    // Set once the user has made their onboarding phone-match decision —
+    // either by accepting one pending match (acceptPendingPhoneMatch) or by
+    // choosing "להגדיר פרופיל נפרד" (declinePhoneMatches). Once set,
+    // onboarding must never prompt again for other pending phone matches
+    // for this user. Optional: no migration required for existing users
+    // (absence is equivalent to "not yet decided" for users who onboarded
+    // before this field existed — they are already onboardingCompleted so
+    // routing never checks this field for them).
+    phoneMatchResolvedAt: v.optional(v.number()),
   })
     .index('by_email', ['email'])
     .index('by_phone', ['phone'])

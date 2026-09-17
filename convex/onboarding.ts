@@ -144,9 +144,17 @@ export const finishOnboarding = mutation({
     }
 
     // 6. סימון האונבורדינג כהושלם ושמירת ה-Space הראשי
+    // Stage 2B+3: finishOnboarding is now the sole completion path for the
+    // mandatory Profile Setup screen, so it also stamps profileSetupCompletedAt
+    // (previously only set by the separate optional updateMyProfile path).
+    // Without this, getFamilyBootstrapStatus's hasConfiguredFamily check would
+    // stay false for a Self-only setup (no entity rows, no familyContacts),
+    // incorrectly bouncing a just-completed user back into the optional
+    // family-bootstrap → family-profile-setup detour right after Home.
     await ctx.db.patch(userId, {
       onboardingCompleted: true,
       defaultSpaceId: spaceId,
+      profileSetupCompletedAt: user.profileSetupCompletedAt ?? Date.now(),
       updatedAt: Date.now(),
     });
 

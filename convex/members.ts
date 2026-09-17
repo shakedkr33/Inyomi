@@ -110,8 +110,19 @@ type FamilyContactEntry = {
 
 // ── matchOnPhone ──────────────────────────────────────────────────────────────
 /**
- * FIXED: phone-based family member matching using by_phone index on members table.
- * FIXED: matchOnPhone no longer changes kind when stamping userId on an entity row.
+ * HARDENED (Stage 2B+3 security cutover): matchOnPhone is now DISCOVERY-ONLY.
+ *
+ * SECURITY INVARIANT: a phone match alone must NEVER produce access or
+ * joined status. Previously this internalMutation auto-granted access
+ * (stamped entity.userId, set inviteStatus:'joined', and created a
+ * kind:'access' row) purely from a phone match with no user confirmation.
+ * That auto-join is the security issue this cutover removes.
+ *
+ * New behavior: only stamps `matchedUserId` on the matching entity row (or
+ * rows, for multiple matches — each is marked independently, none receive
+ * access). This is discovery linkage only — it lets getPendingPhoneMatches
+ * surface the match to the user, who must then explicitly confirm via
+ * acceptPendingPhoneMatch (below) before any access is granted.
  *
  * Called via ctx.runMutation from convexAuth's createOrUpdateUser callback.
  * The auth callback ctx is scoped to auth tables only; this internalMutation has
@@ -135,39 +146,20 @@ export const matchOnPhone = internalMutation({
 
     for (const member of matchingMembers) {
       if (member.matchedUserId) continue; // already matched — do not overwrite
-      // FIXED: kind is intentionally NOT patched here — entity rows stay 'entity'
-      // even after receiving a userId via phone match. resolveKind() handles the
-      // access/entity distinction for queries; stamping kind:'access' here would
-      // grant the matched user implicit space access they never requested.
+      // SECURITY (Stage 2B+3): discovery linkage ONLY — matchedUserId is the
+      // sole write here. userId, inviteStatus, and the access row are
+      // intentionally NOT written. Access is only granted after the user
+      // explicitly confirms via acceptPendingPhoneMatch.
       await ctx.db.patch(member._id, {
         matchedUserId: userId,
-        userId: userId,
-        inviteStatus: 'joined',
       });
-
-      // FIXED: matchOnPhone now creates access membership row for matched user in family space
-      // Without this, the matched user has no access row in the inviter's space,
-      // so listMyFamilyContacts finds their own (empty) space instead of the inviter's space.
-      const existingAccessRow = await ctx.db
-        .query('members')
-        .withIndex('by_user', (q) => q.eq('userId', userId))
-        .filter((q) => q.eq(q.field('spaceId'), member.spaceId))
-        .filter((q) => q.eq(q.field('kind'), 'access'))
-        .first();
-
-      if (!existingAccessRow) {
-        await ctx.db.insert('members', {
-          userId: userId,
-          spaceId: member.spaceId,
-          role: 'member',
-          kind: 'access',
-          joinedAt: Date.now(),
-        });
-      }
     }
 
     // Also update the familyContacts blob on each affected space owner so
-    // OnboardingContext hydration (getMyProfile) still works without a migration.
+    // OnboardingContext hydration (getMyProfile) still works without a
+    // migration. SECURITY (Stage 2B+3): mirrors matchedUserId ONLY — never
+    // inviteStatus:'joined', since a phone match alone must never imply
+    // joined/access status in this mirror either.
     const affectedSpaceIds = [
       ...new Set(matchingMembers.map((m) => m.spaceId)),
     ];
@@ -185,7 +177,7 @@ export const matchOnPhone = internalMutation({
         const entryNorm = normalizeToE164(entry.selectedPhoneNumber);
         if (entryNorm === normalizedPhone) {
           changed = true;
-          return { ...entry, matchedUserId: userId, inviteStatus: 'joined' };
+          return { ...entry, matchedUserId: userId };
         }
         return entry;
       });
@@ -298,6 +290,175 @@ export const getPendingPhoneMatches = query({
       spaceName: spaceNameById.get(row.spaceId) ?? '',
       displayName: row.displayName,
     }));
+  },
+});
+
+// ── acceptPendingPhoneMatch (Stage 2B+3) ────────────────────────────────────
+/**
+ * Explicit user confirmation step that grants access to ONE previously
+ * discovered phone match. This is the ONLY path that can turn a
+ * matchOnPhone discovery link into real access — see matchOnPhone's doc
+ * comment above for the security invariant this pairs with.
+ *
+ * Client supplies ONLY memberId — the server independently re-derives and
+ * re-verifies the space and the phone match itself; nothing about the
+ * grant is trusted from the client beyond "which entity row did the user
+ * pick".
+ *
+ * Full verification chain (all required):
+ *   1. authenticated user exists
+ *   2. authenticated user has a verified stored phone
+ *   3. the member/entity row exists
+ *   4. the row is actually an entity row, never an access row
+ *   5. entity.matchedUserId === authenticated userId
+ *   6. entity.selectedPhoneNumber exists
+ *   7-9. normalize both phones and re-verify they are equal
+ *   10. the entity's space still exists
+ *
+ * Idempotent: if the user already has a valid kind:'access' row in the
+ * target space (e.g. a retried call after an app kill), no duplicate
+ * access row is created — the user-level fields are still (re-)ensured and
+ * success is returned.
+ *
+ * Security: accepting ONE of multiple matches grants access to ONLY that
+ * selected space. Remaining matched entities are left untouched — the
+ * user is never auto-joined to them.
+ */
+export const acceptPendingPhoneMatch = mutation({
+  args: {
+    memberId: v.id('members'),
+  },
+  returns: v.object({ spaceId: v.id('spaces') }),
+  handler: async (ctx, { memberId }) => {
+    // 1. authenticated user exists
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('לא מחובר');
+
+    const user = await ctx.db.get(userId);
+    if (!user) throw new Error('משתמש לא נמצא');
+
+    // 2. authenticated user has a verified stored phone
+    const userPhone = user.phone;
+    if (!userPhone) throw new Error(PERMISSION_DENIED);
+    // 7. normalize authenticated user phone
+    const normalizedUserPhone = normalizeToE164(userPhone);
+    if (!normalizedUserPhone) throw new Error(PERMISSION_DENIED);
+
+    // 3. the member/entity row exists
+    const entity = await ctx.db.get(memberId);
+    if (!entity) throw new Error('פרופיל לא נמצא');
+
+    // 4. the row is actually an entity row, never an access row
+    if (resolveKind(entity) !== 'entity') throw new Error(PERMISSION_DENIED);
+
+    // 5. entity.matchedUserId === authenticated userId
+    if (entity.matchedUserId !== userId) throw new Error(PERMISSION_DENIED);
+
+    // 6. entity.selectedPhoneNumber exists
+    if (!entity.selectedPhoneNumber) throw new Error(PERMISSION_DENIED);
+
+    // 8. normalize entity selectedPhoneNumber
+    const normalizedEntityPhone = normalizeToE164(entity.selectedPhoneNumber);
+    if (!normalizedEntityPhone) throw new Error(PERMISSION_DENIED);
+
+    // 9. phones are equal
+    if (normalizedEntityPhone !== normalizedUserPhone) {
+      throw new Error(PERMISSION_DENIED);
+    }
+
+    // 10. entity's space exists
+    const spaceId = entity.spaceId;
+    const space = await ctx.db.get(spaceId);
+    if (!space) throw new Error('המרחב לא נמצא');
+
+    // IDEMPOTENCY: check whether a valid access row already exists.
+    const existingAccessRow = await ctx.db
+      .query('members')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .filter((q) => q.eq(q.field('spaceId'), spaceId))
+      .filter((q) => q.eq(q.field('kind'), 'access'))
+      .first();
+
+    if (!existingAccessRow) {
+      // Patch selected entity only.
+      await ctx.db.patch(memberId, {
+        userId,
+        inviteStatus: 'joined',
+      });
+
+      // Create exactly one access row using the existing canonical
+      // membership shape / role semantics (mirrors matchOnPhone's legacy
+      // access-row creation and finishOnboarding's member-row shape).
+      await ctx.db.insert('members', {
+        userId,
+        spaceId,
+        role: 'member',
+        kind: 'access',
+        joinedAt: Date.now(),
+      });
+
+      // Update the familyContacts mirror on the space owner (only as
+      // required by the current canonical system — same mirror
+      // matchOnPhone maintains) to represent the accepted/joined state.
+      if (space.ownerId) {
+        const owner = await ctx.db.get(space.ownerId);
+        const contacts = owner?.familyContacts;
+        if (owner && Array.isArray(contacts)) {
+          let changed = false;
+          const updated = (contacts as FamilyContactEntry[]).map((entry) => {
+            if (!entry.selectedPhoneNumber) return entry;
+            const entryNorm = normalizeToE164(entry.selectedPhoneNumber);
+            if (entryNorm === normalizedUserPhone) {
+              changed = true;
+              return {
+                ...entry,
+                matchedUserId: userId,
+                inviteStatus: 'joined' as const,
+              };
+            }
+            return entry;
+          });
+          if (changed) {
+            await ctx.db.patch(owner._id, { familyContacts: updated });
+          }
+        }
+      }
+    }
+
+    await ctx.db.patch(userId, {
+      phoneMatchResolvedAt: Date.now(),
+      onboardingCompleted: true,
+      defaultSpaceId: spaceId,
+    });
+
+    return { spaceId };
+  },
+});
+
+// ── declinePhoneMatches (Stage 2B+3) ────────────────────────────────────────
+/**
+ * Records that the user explicitly declined all pending phone matches
+ * during onboarding, in favor of setting up their own separate profile.
+ *
+ * Grants NO access, modifies no entity rows, creates no space. Safe to
+ * call repeatedly (idempotent) — after the first call, subsequent calls
+ * are no-ops.
+ */
+export const declinePhoneMatches = mutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('לא מחובר');
+
+    const user = await ctx.db.get(userId);
+    if (!user) throw new Error('משתמש לא נמצא');
+
+    if (!user.phoneMatchResolvedAt) {
+      await ctx.db.patch(userId, { phoneMatchResolvedAt: Date.now() });
+    }
+
+    return null;
   },
 });
 

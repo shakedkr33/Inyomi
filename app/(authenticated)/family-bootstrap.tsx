@@ -61,16 +61,24 @@ export default function FamilyBootstrapScreen(): React.JSX.Element {
     const { hasConfiguredFamily, joinedExistingSpace, familySetupSkippedAt } =
       bootstrap;
 
+    // FIXED: routing bug — this screen is mounted as a Tabs.Screen inside
+    // the authenticated Tabs navigator (see app/(authenticated)/_layout.tsx).
+    // Bottom tab navigators do not implement the REPLACE navigation action
+    // (only stack navigators do), so router.replace() to a sibling
+    // Tabs.Screen from here would fail with: `The action 'REPLACE' with
+    // payload {"name":"index","params":{}} was not handled by any
+    // navigator.` router.navigate() performs a normal tab switch instead,
+    // which IS handled by the Tabs navigator.
     if (
       hasConfiguredFamily ||
       joinedExistingSpace ||
       familySetupSkippedAt !== null
     ) {
-      router.replace('/(authenticated)');
+      router.navigate('/(authenticated)');
       return;
     }
 
-    router.replace('/(authenticated)/family-profile-setup');
+    router.navigate('/(authenticated)/family-profile-setup');
   }, [
     bootstrap,
     userStatus,

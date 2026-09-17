@@ -350,15 +350,35 @@ describe('getPendingPhoneMatches — response shape [TEST 11-13]', () => {
   });
 });
 
-describe('matchOnPhone — untouched by Stage 2A (regression guard)', () => {
-  it('still auto-assigns userId/matchedUserId/inviteStatus and creates the access row exactly as before', () => {
+describe('matchOnPhone — Stage 2B+3 security cutover: DISCOVERY ONLY', () => {
+  it('still stamps matchedUserId for discovery linkage', () => {
     expect(matchOnPhoneSrc).toContain('matchedUserId: userId');
-    expect(matchOnPhoneSrc).toContain('userId: userId');
-    expect(matchOnPhoneSrc).toContain("inviteStatus: 'joined'");
-    expect(matchOnPhoneSrc).toContain("kind: 'access'");
   });
 
-  it('does not reference the new Stage 2A helper (getPendingPhoneMatches logic stays fully separate)', () => {
+  it('SECURITY: no longer auto-writes entity.userId, inviteStatus, or an access row', () => {
+    // Stage 2A's regression guard asserted the OLD (insecure) auto-join
+    // behavior here. Stage 2B+3 intentionally removes it — a phone match
+    // alone must never grant access. The new confirmation path is
+    // acceptPendingPhoneMatch (see the dedicated test file).
+    expect(matchOnPhoneSrc).not.toContain('userId: userId');
+    expect(matchOnPhoneSrc).not.toContain("inviteStatus: 'joined'");
+    expect(matchOnPhoneSrc).not.toContain("kind: 'access'");
+    expect(matchOnPhoneSrc).not.toContain('ctx.db.insert');
+  });
+
+  it('skips rows that are already matched (does not overwrite an existing matchedUserId)', () => {
+    expect(matchOnPhoneSrc).toContain('if (member.matchedUserId) continue');
+  });
+
+  it('familyContacts mirror only ever writes matchedUserId, never inviteStatus:"joined"', () => {
+    const mirrorSection = matchOnPhoneSrc.slice(
+      matchOnPhoneSrc.indexOf('affectedSpaceIds')
+    );
+    expect(mirrorSection).toContain('matchedUserId: userId');
+    expect(mirrorSection).not.toContain("inviteStatus: 'joined'");
+  });
+
+  it('does not reference the Stage 2A helper (getPendingPhoneMatches logic stays fully separate)', () => {
     expect(matchOnPhoneSrc).not.toContain('filterPendingPhoneMatchCandidates');
   });
 });

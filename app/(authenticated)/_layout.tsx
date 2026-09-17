@@ -37,6 +37,8 @@ import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { api } from '@/convex/_generated/api';
 import { useEffectiveAccess } from '@/hooks/useEffectiveAccess';
+import { resolvePostAuthOnboardingRoute } from '@/lib/onboardingRouting';
+import { clearOnboardingDraft } from '@/lib/onboardingState';
 import { PENDING_COMMUNITY_EVENT_ID_KEY } from '@/lib/pendingEventLink';
 import {
   consumePendingNavigationTarget,
@@ -279,12 +281,14 @@ function ActionButton({
 export default function AuthenticatedLayout() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { isLoading: isRevenueCatLoading } = useRevenueCat();
-  // FIXED: deferred saveAll() to authenticated layout to avoid auth race condition
-  // hasCompletedOnboardingLocally lets a just-registered user through while Convex
-  // propagates the finishOnboarding mutation result (avoids redirect loop).
+  // Stage 2B+3: onboarding completion now happens ONLY via the mandatory
+  // Profile Setup screen's explicit save (finishOnboarding is called from
+  // hooks/useFamilyProfileEditor.ts saveAll(), never automatically from
+  // this layout). hasCompletedOnboardingLocally still means "Q1/Q2
+  // answered" — it now gates persisting those answers and checking for
+  // phone matches, NOT auto-completing onboarding.
   const {
     data: onboardingData,
-    updateData,
     hydrateFromServer,
     isDraftHydrated,
   } = useOnboarding();
@@ -294,9 +298,6 @@ export default function AuthenticatedLayout() {
   // and a restored draft. isDraftHydrated (below, via isReadyToRoute) gates
   // routing decisions until that one-time async check has settled.
   const hasCompletedOnboardingLocally = !!onboardingData.spaceType;
-  const finishOnboarding = useMutation(api.onboarding.finishOnboarding);
-  // Ref guard prevents a second mutation call if a render occurs while the first is in-flight.
-  const savingRef = useRef(false);
 
   const { isExpiredFree } = useEffectiveAccess();
 
@@ -328,9 +329,14 @@ export default function AuthenticatedLayout() {
     isAuthenticated ? {} : 'skip'
   );
 
+  // Stage 2B+3: family-bootstrap's optional "haven't configured family yet"
+  // nudge is only for users who are ALREADY onboardingCompleted — the
+  // incomplete-onboarding path never routes through family-bootstrap at
+  // all anymore (see the new decision tree below). Only query it once the
+  // server confirms completion, matching "preserve existing behavior for
+  // completed users" exactly.
   const shouldCheckFamilyBootstrap =
-    isAuthenticated &&
-    (hasCompletedOnboardingLocally || userStatus?.onboardingComplete === true);
+    isAuthenticated && userStatus?.onboardingComplete === true;
   const familyBootstrapStatus = useQuery(
     api.users.getFamilyBootstrapStatus,
     shouldCheckFamilyBootstrap ? {} : 'skip'
@@ -369,9 +375,37 @@ export default function AuthenticatedLayout() {
     hydrateFromServer,
   ]);
 
-  // FIXED: deferred saveAll() to authenticated layout to avoid auth race condition.
-  // Called once after the Convex session is confirmed active (userStatus has resolved),
-  // so the server never sees an unauthenticated finishOnboarding call.
+  // ── Stage 2B+3: security cutover — persist Q1/Q2 answers, then resolve
+  // phone matches. finishOnboarding is NEVER called from this layout —
+  // only from the mandatory Profile Setup screen's explicit save (see
+  // hooks/useFamilyProfileEditor.ts saveAll()). Q1 (onboardingIntent) is
+  // analytics/personalization only and must never decide space
+  // architecture or auto-complete onboarding.
+  const persistOnboardingAnswersMutation = useMutation(
+    api.onboarding.persistOnboardingAnswers
+  );
+  const [answersPersisted, setAnswersPersisted] = useState(false);
+  const [persistRetryTick, setPersistRetryTick] = useState(0);
+  const persistInFlightRef = useRef(false);
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // Only the exact controlled Q1 literals are valid onboardingIntent values
+  // (legacy 'business' data must never be sent — persistOnboardingAnswers'
+  // validator would reject it anyway).
+  const validOnboardingIntent =
+    onboardingData.spaceType === 'personal' ||
+    onboardingData.spaceType === 'couple' ||
+    onboardingData.spaceType === 'family'
+      ? onboardingData.spaceType
+      : undefined;
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — persistRetryTick (last dep) is a trigger-only value to force a retry after a 3s backoff; it is never read inside the effect body.
   useEffect(() => {
     if (
       !isAuthenticated ||
@@ -379,44 +413,84 @@ export default function AuthenticatedLayout() {
       userStatus === null ||
       userStatus.onboardingComplete ||
       !hasCompletedOnboardingLocally ||
-      onboardingData.onboardingCompleted ||
-      savingRef.current
+      answersPersisted ||
+      persistInFlightRef.current
     )
       return;
 
-    savingRef.current = true;
-    finishOnboarding({
-      fullName:
-        [onboardingData.firstName, onboardingData.lastName]
-          .filter(Boolean)
-          .join(' ') ||
-        onboardingData.firstName ||
-        'משתמש',
-      profileColor: onboardingData.personalColor ?? '#36a9e2',
-      spaceType: onboardingData.spaceType ?? 'personal',
-      challenges: onboardingData.challenges ?? [],
-      childCount: onboardingData.childCount,
-      familyContacts: onboardingData.familyData?.familyMembers,
+    persistInFlightRef.current = true;
+    persistOnboardingAnswersMutation({
+      onboardingIntent: validOnboardingIntent,
+      onboardingChallenges: onboardingData.challenges as
+        | (
+            | 'incoming_from_everywhere'
+            | 'remember_tasks_and_appointments'
+            | 'shared_schedule_coordination'
+            | 'everything_in_one_place'
+          )[]
+        | undefined,
     })
-      .catch((err: unknown) =>
-        console.warn('[Onboarding] finishOnboarding failed:', err)
-      )
-      .finally(() => updateData({ onboardingCompleted: true }));
+      .then(() => {
+        if (isMountedRef.current) setAnswersPersisted(true);
+      })
+      .catch((err: unknown) => {
+        console.warn('[Onboarding] persistOnboardingAnswers failed:', err);
+        // Preserve retryable state — do not silently complete onboarding
+        // and avoid a tight redirect loop by backing off before retrying.
+        setTimeout(() => {
+          if (isMountedRef.current) setPersistRetryTick((t) => t + 1);
+        }, 3000);
+      })
+      .finally(() => {
+        persistInFlightRef.current = false;
+      });
   }, [
     isAuthenticated,
     userStatus,
     hasCompletedOnboardingLocally,
-    onboardingData.onboardingCompleted,
-    onboardingData.firstName,
-    onboardingData.lastName,
-    onboardingData.personalColor,
-    onboardingData.spaceType,
+    answersPersisted,
+    validOnboardingIntent,
     onboardingData.challenges,
-    onboardingData.childCount,
-    onboardingData.familyData,
-    finishOnboarding,
-    updateData,
+    persistOnboardingAnswersMutation,
+    persistRetryTick,
   ]);
+
+  const phoneMatchResolvedAt = userStatus?.phoneMatchResolvedAt ?? null;
+
+  // Only check for pending phone matches once answers are persisted and the
+  // user hasn't already made their phone-match decision this onboarding.
+  const shouldCheckPendingPhoneMatches =
+    isAuthenticated &&
+    userStatus?.onboardingComplete === false &&
+    hasCompletedOnboardingLocally &&
+    answersPersisted &&
+    !phoneMatchResolvedAt;
+  const pendingPhoneMatches = useQuery(
+    api.members.getPendingPhoneMatches,
+    shouldCheckPendingPhoneMatches ? {} : 'skip'
+  );
+
+  const onboardingRouteDecision = resolvePostAuthOnboardingRoute({
+    onboardingComplete: userStatus?.onboardingComplete,
+    hasLocalOnboardingAnswers: hasCompletedOnboardingLocally,
+    answersPersisted,
+    phoneMatchResolvedAt,
+    pendingMatches: pendingPhoneMatches,
+  });
+
+  // Stage 2B+3: clear the pre-auth onboarding_draft only once the SERVER
+  // confirms onboardingCompleted === true — never merely because
+  // persistOnboardingAnswers succeeded, the match query resolved, the user
+  // declined, or the Profile Setup screen opened. This preserves crash
+  // recovery (an app kill mid-onboarding must still resume correctly).
+  const draftClearedRef = useRef(false);
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (userStatus?.onboardingComplete !== true) return;
+    if (draftClearedRef.current) return;
+    draftClearedRef.current = true;
+    clearOnboardingDraft().catch(() => {});
+  }, [isAuthenticated, userStatus?.onboardingComplete]);
 
   // FIXED: restore pending share intent after successful authentication
   // If user was redirected to sign-in from a shared event preview screen,
@@ -491,33 +565,46 @@ export default function AuthenticatedLayout() {
 
   // Wait for: navigation tree, auth state, RevenueCat, and user profile to resolve
   const isUserStatusLoading = isAuthenticated && userStatus === undefined;
-  const isSyncingOnboarding =
-    isAuthenticated &&
-    hasCompletedOnboardingLocally &&
-    userStatus?.onboardingComplete !== true;
   const isFamilyBootstrapLoading =
-    shouldCheckFamilyBootstrap &&
-    !isSyncingOnboarding &&
-    familyBootstrapStatus === undefined;
+    shouldCheckFamilyBootstrap && familyBootstrapStatus === undefined;
   const segmentStrings = segments as string[];
   const isFamilyBootstrapRoute = segmentStrings.includes('family-bootstrap');
   const isProfileSetupRoute = segmentStrings.includes('family-profile-setup');
+  const isPhoneMatchConfirmationRoute = segmentStrings.includes(
+    'phone-match-confirmation'
+  );
+
+  // Stage 2B+3: onboarding-incomplete routing is entirely driven by the
+  // pure decision tree in lib/onboardingRouting.ts — see its doc comment
+  // for the full locked product flow. 'wait' means keep showing the splash
+  // (e.g. persisting Q1/Q2 answers, or the pending-phone-match query is
+  // still loading) without redirecting anywhere yet.
   const needsOnboardingRedirect =
+    isAuthenticated && onboardingRouteDecision === 'onboarding-questions';
+  const needsPhoneMatchConfirmationRedirect =
     isAuthenticated &&
-    userStatus !== undefined &&
-    !userStatus?.onboardingComplete &&
-    !hasCompletedOnboardingLocally;
-  const needsProfileSetupRedirect =
+    onboardingRouteDecision === 'phone-match-confirmation' &&
+    !isPhoneMatchConfirmationRoute;
+  const needsMandatoryProfileSetupRedirect =
+    isAuthenticated &&
+    onboardingRouteDecision === 'mandatory-profile-setup' &&
+    !isProfileSetupRoute;
+  const isOnboardingDecisionPending =
+    isAuthenticated && onboardingRouteDecision === 'wait';
+
+  // Family-bootstrap's optional "haven't configured family yet" nudge —
+  // unchanged for already-completed users (see shouldCheckFamilyBootstrap
+  // above, which now only queries this for onboardingComplete === true).
+  const needsFamilyBootstrapRedirect =
     isAuthenticated &&
     !isFamilyBootstrapRoute &&
     !isProfileSetupRoute &&
-    (isSyncingOnboarding ||
-      (userStatus?.onboardingComplete === true &&
-        familyBootstrapStatus !== undefined &&
-        familyBootstrapStatus !== null &&
-        !familyBootstrapStatus.hasConfiguredFamily &&
-        !familyBootstrapStatus.joinedExistingSpace &&
-        familyBootstrapStatus.familySetupSkippedAt === null));
+    userStatus?.onboardingComplete === true &&
+    familyBootstrapStatus !== undefined &&
+    familyBootstrapStatus !== null &&
+    !familyBootstrapStatus.hasConfiguredFamily &&
+    !familyBootstrapStatus.joinedExistingSpace &&
+    familyBootstrapStatus.familySetupSkippedAt === null;
   // FIXED: family profile persistence — for returning users, hold the spinner until hydrateFromServer
   // has actually run (onboardingCompleted flips true). Without this gate, tabs render with empty
   // OnboardingContext before the hydration effect fires, causing a flash of personal-only state in
@@ -591,7 +678,17 @@ export default function AuthenticatedLayout() {
       return;
     }
 
-    if (needsProfileSetupRedirect) {
+    if (needsPhoneMatchConfirmationRedirect) {
+      router.replace('/(authenticated)/phone-match-confirmation');
+      return;
+    }
+
+    if (needsMandatoryProfileSetupRedirect) {
+      router.replace('/(authenticated)/family-profile-setup');
+      return;
+    }
+
+    if (needsFamilyBootstrapRedirect) {
       router.replace('/(authenticated)/family-bootstrap');
       return;
     }
@@ -599,15 +696,23 @@ export default function AuthenticatedLayout() {
     isAuthenticated,
     isReadyToRoute,
     needsOnboardingRedirect,
-    needsProfileSetupRedirect,
+    needsPhoneMatchConfirmationRedirect,
+    needsMandatoryProfileSetupRedirect,
+    needsFamilyBootstrapRedirect,
     router,
   ]);
 
+  // HOME MUST NEVER BE REACHED WHILE onboardingCompleted === false — every
+  // incomplete-onboarding decision from resolvePostAuthOnboardingRoute
+  // ('wait' or an active redirect) keeps the splash showing here.
   if (
     !isReadyToRoute ||
     !isAuthenticated ||
     needsOnboardingRedirect ||
-    needsProfileSetupRedirect
+    needsPhoneMatchConfirmationRedirect ||
+    needsMandatoryProfileSetupRedirect ||
+    needsFamilyBootstrapRedirect ||
+    isOnboardingDecisionPending
   ) {
     return <InYomiSplashScreen />;
   }
@@ -713,6 +818,10 @@ export default function AuthenticatedLayout() {
           <Tabs.Screen name="family-profile" options={{ href: null }} />
           <Tabs.Screen name="family-profile-setup" options={{ href: null }} />
           <Tabs.Screen name="family-bootstrap" options={{ href: null }} />
+          <Tabs.Screen
+            name="phone-match-confirmation"
+            options={{ href: null }}
+          />
           <Tabs.Screen name="community-create" options={{ href: null }} />
           <Tabs.Screen name="community-edit/[id]" options={{ href: null }} />
           <Tabs.Screen name="event-edit/[id]" options={{ href: null }} />
