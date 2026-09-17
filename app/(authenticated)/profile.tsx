@@ -29,7 +29,7 @@ import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { api } from '@/convex/_generated/api';
 import { useEffectiveAccess } from '@/hooks/useEffectiveAccess';
-import { getAvatarInitials } from '@/lib/avatarInitials';
+import { getSelfProfileAvatarInitials } from '@/lib/avatarInitials';
 // Canonical family/profile membership signal (Stage 2B+3 locked rule) — the
 // ACTUAL configured family members determine 'family' vs 'personal', never
 // a stored/local spaceType flag. Reused here (not duplicated) to decide the
@@ -302,17 +302,20 @@ export default function ProfileScreen() {
   const { data: onboardingData, resetData } = useOnboarding();
   const rawFirstName = onboardingData.firstName ?? '';
   const rawLastName = onboardingData.lastName ?? '';
-  const rawNickname = onboardingData.nickname ?? '';
+  // FIXED: nickname removed from self-profile UI (locked product decision)
+  // — display name is derived from firstName + lastName only. Any legacy
+  // nickname value still stored client-side is preserved but no longer
+  // rendered or relied upon here.
   const displayName =
-    rawNickname.trim() ||
     [rawFirstName, rawLastName].filter(Boolean).join(' ').trim() ||
     'המשתמש שלי';
-  const avatarInitial =
-    getAvatarInitials({
-      firstName: rawFirstName,
-      lastName: rawLastName,
-      fullName: displayName,
-    }) || 'מ';
+  // FIXED: placeholder-derived avatar initials bug — never derive initials
+  // from a placeholder/fallback display label. No initials before a
+  // first name exists (color circle only).
+  const avatarInitial = getSelfProfileAvatarInitials({
+    firstName: rawFirstName,
+    lastName: rawLastName,
+  });
   const avatarColor = onboardingData.personalColor || '#36a9e2';
 
   // ── Handlers ────────────────────────────────────────────────────────────────

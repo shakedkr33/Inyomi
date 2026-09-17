@@ -16,7 +16,11 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ensureContactsAccess, presentContactsAccessDeniedAlert } from '@/lib/utils/contactsPermission';
+import { APP_IS_RTL, needsExplicitRTL, rtl, tw } from '@/lib/rtl';
+import {
+  ensureContactsAccess,
+  presentContactsAccessDeniedAlert,
+} from '@/lib/utils/contactsPermission';
 import { AddPersonBottomSheet } from '../../components/onboarding/AddPersonBottomSheet';
 import {
   ColorPicker,
@@ -33,9 +37,9 @@ import { colors, shadows } from '../../constants/theme';
 import type { FamilyMember } from '../../contexts/OnboardingContext';
 import { useOnboarding } from '../../contexts/OnboardingContext';
 import { api } from '../../convex/_generated/api';
-import { APP_IS_RTL, needsExplicitRTL, rtl, tw } from '@/lib/rtl';
 
 const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
+
 import { useEffectiveAccess } from '../../hooks/useEffectiveAccess';
 // FIXED: verified family member status reactivity after matchedUserId update
 import {
@@ -43,7 +47,11 @@ import {
   MAX_PETS,
   useFamilyProfileEditor,
 } from '../../hooks/useFamilyProfileEditor';
-import { getAvatarInitials } from '../../lib/avatarInitials';
+import { getSelfProfileAvatarInitials } from '../../lib/avatarInitials';
+import {
+  canManageFamilyProfile as canManageFamilyProfileHelper,
+  isMandatorySetupSaveDisabled,
+} from '../../lib/mandatoryProfileSetup';
 import { normalizeIsraeliPhone } from '../../lib/phoneUtils';
 import { maskPhone } from '../../lib/utils/contactPhone';
 
@@ -53,14 +61,32 @@ const INVITE_LINK = 'https://inyomi.app/join';
 export default function FamilyProfileScreen() {
   const router = useRouter();
   const pathname = usePathname();
-  const isOptionalPostAuthSetup =
+  const isFamilyProfileSetupPath =
     pathname?.includes('family-profile-setup') ?? false;
   const markFamilySetupSkipped = useMutation(api.users.markFamilySetupSkipped);
   const { data } = useOnboarding();
 
-  const screenTitle = isOptionalPostAuthSetup
-    ? 'רוצה להשלים את הפרופיל שלך?'
-    : 'ניהול פרופיל';
+  // Stage 2B+3: family-profile-setup is reached in two distinct contexts —
+  // MANDATORY (onboarding still incomplete: first name required, no skip,
+  // must explicitly complete onboarding) or OPTIONAL (returning user who is
+  // already onboardingCompleted, reached via family-bootstrap's existing
+  // "hasn't configured family yet" nudge — unchanged behavior). The route
+  // itself cannot tell these apart; only the server's onboarding-complete
+  // status can.
+  const userStatus = useQuery(
+    api.users.getCurrentUserStatus,
+    isFamilyProfileSetupPath ? {} : 'skip'
+  );
+  const isMandatorySetup =
+    isFamilyProfileSetupPath && userStatus?.onboardingComplete === false;
+  // Kept for readability at call sites below — same boolean, existing name.
+  const isOptionalPostAuthSetup = isFamilyProfileSetupPath && !isMandatorySetup;
+
+  const screenTitle = !isFamilyProfileSetupPath
+    ? 'ניהול פרופיל'
+    : isMandatorySetup
+      ? 'השלמת הפרופיל שלך'
+      : 'רוצה להשלים את הפרופיל שלך?';
 
   // Initialise from previously saved context data (unlike onboarding which starts empty)
   const editor = useFamilyProfileEditor(data.familyData?.familyMembers ?? []);
@@ -82,13 +108,26 @@ export default function FamilyProfileScreen() {
   // so there is no incorrect flash.
   const isAdmin = mySpaceRole?.role === 'admin';
   const adminUserId = spaceAdminUserId ?? undefined;
+  // FIXED: mandatory Profile Setup happens BEFORE any space exists, so
+  // mySpaceRole is always null at that point and isAdmin is always false —
+  // which previously hid every family-member/pet "add" action during
+  // mandatory onboarding (bug: no usable add action available). During
+  // mandatory setup the user is editing their OWN in-progress, not-yet-
+  // persisted family/pet list (local editor state only — nothing is written
+  // to the members table until saveAll()/finishOnboarding runs), so there is
+  // no real admin/member distinction to enforce yet. canManageFamilyProfile
+  // gates add/edit/remove affordances; isAdmin (unchanged) still gates the
+  // "מנהל/ת המשפחה" badge and the real per-space role for completed users.
+  // See lib/mandatoryProfileSetup.ts for the (unit-tested) pure rule.
+  const canManageFamilyProfile = canManageFamilyProfileHelper(
+    isMandatorySetup,
+    isAdmin
+  );
   const {
     firstName,
     setFirstName,
     lastName,
     setLastName,
-    nickname,
-    setNickname,
     personalColor,
     setPersonalColor,
     familyMembers,
@@ -116,6 +155,7 @@ export default function FamilyProfileScreen() {
     handleSavePersonalName,
     handleContactSelected,
     saveProfile,
+    saveAll,
     // FIXED: wired correct actions per family-member status
     convertingToContactId,
     markMemberInvited,
@@ -124,13 +164,27 @@ export default function FamilyProfileScreen() {
     cancelConversion,
   } = editor;
 
+  // FIXED: routing bug — this screen is mounted as a Tabs.Screen inside the
+  // authenticated Tabs navigator (see app/(authenticated)/_layout.tsx). Bottom
+  // tab navigators do not implement the REPLACE navigation action (only
+  // stack navigators do), so replacing to the sibling index tab from here
+  // produced: `The action 'REPLACE' with payload {"name":"index","params":{}}
+  // was not handled by any navigator.` router.navigate() performs a normal
+  // tab switch instead, which IS handled by the Tabs navigator.
   const handleSkipOptionalSetup = (): void => {
     markFamilySetupSkipped()
-      .then(() => router.replace('/(authenticated)'))
-      .catch(() => router.replace('/(authenticated)'));
+      .then(() => router.navigate('/(authenticated)'))
+      .catch(() => router.navigate('/(authenticated)'));
   };
 
   const [isSavingOptionalSetup, setIsSavingOptionalSetup] = useState(false);
+  // Stage 2B+3: mandatory Profile Setup completion (onboarding still
+  // incomplete). Uses the canonical finishOnboarding path via saveAll() —
+  // no second competing completion mutation.
+  const [isSavingMandatorySetup, setIsSavingMandatorySetup] = useState(false);
+  const [mandatorySetupError, setMandatorySetupError] = useState<string | null>(
+    null
+  );
   const { effectiveAccess } = useEffectiveAccess();
   const canExpandFamilyProfile =
     effectiveAccess === 'trial_active' || effectiveAccess === 'family';
@@ -149,11 +203,33 @@ export default function FamilyProfileScreen() {
 
     setIsSavingOptionalSetup(true);
     saveProfile()
-      .then(() => router.replace('/(authenticated)'))
+      .then(() => router.navigate('/(authenticated)'))
       .catch(() => {
         Alert.alert('שגיאה', 'לא הצלחנו לשמור כרגע. אפשר לנסות שוב.');
       })
       .finally(() => setIsSavingOptionalSetup(false));
+  };
+
+  // Stage 2B+3: mandatory completion — first name is required (save button
+  // is disabled until it is non-empty, see the footer below), there is no
+  // skip button, and the canonical finishOnboarding path (via saveAll())
+  // explicitly completes onboarding before navigating Home. On failure the
+  // user stays on this screen with a retryable error — Home is never
+  // reached with onboardingCompleted still false.
+  const handleSaveMandatorySetup = (): void => {
+    if (isSavingMandatorySetup) return;
+    if (!firstName.trim()) return;
+
+    setMandatorySetupError(null);
+    setIsSavingMandatorySetup(true);
+    saveAll()
+      .then(() => {
+        router.navigate('/(authenticated)');
+      })
+      .catch(() => {
+        setMandatorySetupError('לא הצלחנו לשמור כרגע. אפשר לנסות שוב.');
+      })
+      .finally(() => setIsSavingMandatorySetup(false));
   };
 
   // FIXED: profile form now collapses to saved display card after save
@@ -176,27 +252,24 @@ export default function FamilyProfileScreen() {
     setLastName(v);
     setProfileSaved(false);
   };
-  const handleNicknameChange = (v: string) => {
-    setNickname(v);
-    setProfileSaved(false);
-  };
 
   const handleSaveProfile = () => {
     handleSavePersonalName();
     setProfileSaved(true);
   };
 
-  // FIXED: displayName shows "firstName lastName (nickname)" format
+  // FIXED: nickname removed from self-profile UI (locked product decision)
+  // — display name is derived from firstName + lastName only. Any legacy
+  // nickname value still stored client-side is preserved but no longer
+  // rendered or relied upon here.
   const fullName = [firstName.trim(), lastName.trim()]
     .filter(Boolean)
     .join(' ');
-  const displayName = fullName
-    ? nickname.trim()
-      ? `${fullName} (${nickname.trim()})`
-      : fullName
-    : 'הפרופיל שלך';
-  const profileInitials =
-    getAvatarInitials({ firstName, lastName, fullName: displayName }) || '?';
+  const displayName = fullName || 'הפרופיל שלך';
+  // FIXED: "הפ" placeholder-initials bug — getSelfProfileAvatarInitials
+  // returns '' (no letters, color circle only) until firstName is entered;
+  // it never falls back to a placeholder label like "הפרופיל שלך".
+  const profileInitials = getSelfProfileAvatarInitials({ firstName, lastName });
 
   // FIXED: family-profile now merges live Convex matchedUserId into local member state
   // personMembers comes from OnboardingContext (editing source of truth).
@@ -257,7 +330,12 @@ export default function FamilyProfileScreen() {
   // correct secondary label (masked phone) instead of "פרופיל ידני".
   // FIXED: pets visible to non-admin members — allServerMembers now carries memberType
   // from the database; non-admin view filters out pets here and shows them in the pets section.
-  const displayMembers: FamilyMember[] = isAdmin
+  // FIXED: during mandatory setup canManageFamilyProfile is true (no space
+  // exists yet, so isAdmin is always false there) — must still read the
+  // local in-progress editor state (mergedPersonMembers), not the server
+  // query branch, or newly-added members added before the space exists
+  // would never render in the list.
+  const displayMembers: FamilyMember[] = canManageFamilyProfile
     ? mergedPersonMembers
     : allServerMembers
         .filter((m) => m._id !== selfEntityId && m.memberType !== 'pet')
@@ -280,7 +358,7 @@ export default function FamilyProfileScreen() {
   // FIXED: non-admin members now see pets in the pets section.
   // Admin reads from local editor state (petMembers) so in-progress edits are reflected.
   // Non-admin reads from the server query filtered to memberType === 'pet'.
-  const displayPetMembers: FamilyMember[] = isAdmin
+  const displayPetMembers: FamilyMember[] = canManageFamilyProfile
     ? petMembers
     : allServerMembers
         .filter((m) => m.memberType === 'pet')
@@ -360,30 +438,48 @@ export default function FamilyProfileScreen() {
   };
 
   return (
-    <SafeAreaView style={[{ flex: 1, backgroundColor: '#f6f7f8' }, ANDROID_MATCH_IOS_LAYOUT ? styles.safeAreaRtl : null]}>
+    <SafeAreaView
+      style={[
+        { flex: 1, backgroundColor: '#f6f7f8' },
+        ANDROID_MATCH_IOS_LAYOUT ? styles.safeAreaRtl : null,
+      ]}
+    >
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
         {/* Top bar */}
-        <View className={`${tw.flexRow} items-center justify-between px-5 pt-3 pb-1`}>
-          <Pressable
-            onPress={() =>
-              isOptionalPostAuthSetup
-                ? router.replace('/(authenticated)')
-                : router.back()
-            }
-            accessible={true}
-            accessibilityRole="button"
-            accessibilityLabel="חזרה"
-            className="p-2"
-          >
-            <MaterialIcons
-              name="arrow-forward"
-              size={24}
-              color={colors.slate}
-            />
-          </Pressable>
+        {/* FIXED: bumped horizontal margin from px-5 to px-6 (matches the
+            24px horizontal margin convention already used elsewhere in the
+            onboarding flow, e.g. phone-match-confirmation.tsx) — QA reported
+            content feeling pushed against the screen edge. */}
+        <View
+          className={`${tw.flexRow} items-center justify-between px-6 pt-3 pb-1`}
+        >
+          {isMandatorySetup ? (
+            // Stage 2B+3: no back navigation in mandatory mode — there is
+            // no valid destination while onboarding is still incomplete
+            // (Home must never be reached with onboardingCompleted false).
+            <View className="p-2 w-10" />
+          ) : (
+            <Pressable
+              onPress={() =>
+                isOptionalPostAuthSetup
+                  ? router.navigate('/(authenticated)')
+                  : router.back()
+              }
+              accessible={true}
+              accessibilityRole="button"
+              accessibilityLabel="חזרה"
+              className="p-2"
+            >
+              <MaterialIcons
+                name="arrow-forward"
+                size={24}
+                color={colors.slate}
+              />
+            </Pressable>
+          )}
           <Text
             className={`text-base font-bold ${tw.textStart}`}
             style={{ color: colors.slate }}
@@ -394,15 +490,26 @@ export default function FamilyProfileScreen() {
         </View>
 
         {isOptionalPostAuthSetup ? (
-          <View className="px-5 pb-3">
-            <Text className={`${tw.textStart} text-sm leading-relaxed text-gray-600`}>
+          <View className="px-6 pb-3">
+            <Text
+              className={`${tw.textStart} text-sm leading-relaxed text-gray-600`}
+            >
               אפשר לדלג עכשיו ולהשלים את זה בהמשך דרך ההגדרות.
+            </Text>
+          </View>
+        ) : null}
+        {isMandatorySetup ? (
+          <View className="px-6 pb-3">
+            <Text
+              className={`${tw.textStart} text-sm leading-relaxed text-gray-600`}
+            >
+              השם הפרטי הוא שדה חובה להשלמת ההרשמה. בני משפחה הם אופציונליים.
             </Text>
           </View>
         ) : null}
 
         <ScrollView
-          className="flex-1 px-5"
+          className="flex-1 px-6"
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingTop: 16, paddingBottom: 200 }}
           keyboardShouldPersistTaps="handled"
@@ -410,7 +517,9 @@ export default function FamilyProfileScreen() {
           {/* ── Owner card ────────────────────────────────────────────────── */}
           {/* FIXED: replaced ownerFullName with split fields, removed fake camera affordance */}
           {/* FIXED: profile form now collapses to saved display card after save */}
-          <Text className={`text-xs font-bold text-gray-400 ${tw.textStart} mb-2 pr-1`}>
+          <Text
+            className={`text-xs font-bold text-gray-400 ${tw.textStart} mb-2 pr-1`}
+          >
             השם שלך
           </Text>
 
@@ -435,7 +544,11 @@ export default function FamilyProfileScreen() {
                     {profileInitials}
                   </Text>
                 </View>
-                <View style={{ alignItems: needsExplicitRTL() ? 'flex-end' : 'flex-start' }}>
+                <View
+                  style={{
+                    alignItems: needsExplicitRTL() ? 'flex-end' : 'flex-start',
+                  }}
+                >
                   <Text className="font-bold text-[15px] text-gray-900">
                     {displayName}
                   </Text>
@@ -486,7 +599,9 @@ export default function FamilyProfileScreen() {
                   </Text>
                 </View>
                 <View className="flex-1">
-                  <Text className={`text-xs text-gray-400 ${tw.textStart} mb-1`}>
+                  <Text
+                    className={`text-xs text-gray-400 ${tw.textStart} mb-1`}
+                  >
                     שם פרטי ושם משפחה
                   </Text>
                   <View className={`${tw.flexRow} gap-2 mb-2`}>
@@ -508,23 +623,14 @@ export default function FamilyProfileScreen() {
                       placeholderTextColor="#9ca3af"
                       className="flex-1 bg-[#f6f7f8] rounded-xl px-3 text-base"
                       style={{ height: 44, textAlign: rtl.inputTextAlign }}
-                      returnKeyType="next"
+                      returnKeyType="done"
+                      onSubmitEditing={handleSaveProfile}
                       accessible={true}
                       accessibilityLabel="שם משפחה"
                     />
                   </View>
-                  <TextInput
-                    value={nickname}
-                    onChangeText={handleNicknameChange}
-                    placeholder="כינוי (אופציונלי)"
-                    placeholderTextColor="#9ca3af"
-                    className="bg-[#f6f7f8] rounded-xl px-3 text-base mb-2"
-                    style={{ height: 44, textAlign: rtl.inputTextAlign }}
-                    returnKeyType="done"
-                    onSubmitEditing={handleSaveProfile}
-                    accessible={true}
-                    accessibilityLabel="כינוי"
-                  />
+                  {/* FIXED: nickname field removed from self-profile UI (locked
+                      product decision) — first/last name only. */}
                   {/* FIXED: replaced ✓ icon button with labeled "שמירת פרטים" button */}
                   <Pressable
                     onPress={handleSaveProfile}
@@ -566,18 +672,23 @@ export default function FamilyProfileScreen() {
 
           {/* ── Family members section ─────────────────────────────────────── */}
           {/* FIXED: implemented family-member card UI with status chips and masked phone */}
-          <Text className={`text-sm font-bold text-gray-700 ${tw.textStart} mb-1 pr-1`}>
+          <Text
+            className={`text-sm font-bold text-gray-700 ${tw.textStart} mb-1 pr-1`}
+          >
             בני משפחה נוספים (עד {MAX_PEOPLE})
           </Text>
 
           {/* Explainer text */}
-          <Text className={`text-xs text-gray-400 ${tw.textStart} mb-4 pr-1 leading-relaxed`}>
+          <Text
+            className={`text-xs text-gray-400 ${tw.textStart} mb-4 pr-1 leading-relaxed`}
+          >
             אפשר להוסיף בני משפחה דרך אנשי קשר כדי להזמין אותם בהמשך, או ליצור
             פרופיל פנימי לילדים ובני משפחה בלי סמארטפון לצורך שיוך וסינון.
           </Text>
 
-          {/* FIXED: add buttons hidden for members — admin only */}
-          {isAdmin && canAddPerson && (
+          {/* FIXED: add buttons hidden for members — admin (or mandatory
+              setup, where there is no space/admin yet) only */}
+          {canManageFamilyProfile && canAddPerson && (
             <View className={`${tw.flexRow} gap-2 mb-4`}>
               {/* FIXED: opens contact picker directly, skipping intermediate sheet */}
               {/* FIXED: added pressed state feedback to "הוספה מאנשי קשר" button */}
@@ -650,19 +761,21 @@ export default function FamilyProfileScreen() {
           ) : (
             <View className="mb-5">
               {/* FIXED: prevented duplicate card render for same family member */}
-              {/* FIXED: edit form only shown for admins — isAdmin guard added */}
+              {/* FIXED: edit form only shown for admins (or mandatory setup) */}
               {displayMembers
                 .filter(
                   (m, idx, arr) => arr.findIndex((x) => x.id === m.id) === idx
                 )
                 .map((member) =>
-                  isAdmin && editingId === member.id && pendingMember ? (
+                  canManageFamilyProfile &&
+                  editingId === member.id &&
+                  pendingMember ? (
                     renderEditCard(member)
                   ) : (
                     <FamilyMemberManagementCard
                       key={member.id}
                       member={member}
-                      isAdmin={isAdmin}
+                      isAdmin={canManageFamilyProfile}
                       adminUserId={adminUserId}
                       onEdit={() => startEditMember(member)}
                       onRemove={() => handleDeleteMember(member)}
@@ -703,14 +816,18 @@ export default function FamilyProfileScreen() {
           )}
 
           {/* FIXED: max-quota message only relevant for admins */}
-          {isAdmin && !canAddPerson && (
+          {canManageFamilyProfile && !canAddPerson && (
             <Text className="text-xs text-gray-300 text-center mb-5">
               הגעת למכסה של {MAX_PEOPLE} בני משפחה.
             </Text>
           )}
 
-          {/* FIXED: read-only explainer for member role */}
-          {!isAdmin && (
+          {/* FIXED: read-only explainer for member role — never shown during
+              mandatory setup (canManageFamilyProfile is true there, so this
+              is naturally hidden), since a brand-new user has no family
+              space yet and the copy would be confusing. Unchanged for
+              existing completed non-admin family members. */}
+          {!canManageFamilyProfile && (
             <Text
               style={{
                 fontSize: 12,
@@ -726,7 +843,9 @@ export default function FamilyProfileScreen() {
           )}
 
           {/* ── Pets section ───────────────────────────────────────────────── */}
-          <Text className={`text-sm font-bold text-gray-700 ${tw.textStart} mb-1 pr-1`}>
+          <Text
+            className={`text-sm font-bold text-gray-700 ${tw.textStart} mb-1 pr-1`}
+          >
             חיות מחמד (עד {MAX_PETS})
           </Text>
           <Text className={`text-xs text-gray-400 ${tw.textStart} mb-3 pr-1`}>
@@ -740,8 +859,9 @@ export default function FamilyProfileScreen() {
                 <Text className="text-gray-400 font-semibold mt-2 mb-1 text-center">
                   עדיין לא הוספת חיות מחמד
                 </Text>
-                {/* FIXED: pet add button hidden for members */}
-                {isAdmin && canAddPet && (
+                {/* FIXED: pet add button hidden for members (or shown during
+                    mandatory setup, where there is no space/admin yet) */}
+                {canManageFamilyProfile && canAddPet && (
                   <Pressable
                     onPress={() =>
                       handleGatedFamilyExpansionAction(handleAddPet)
@@ -767,20 +887,24 @@ export default function FamilyProfileScreen() {
               </View>
             ) : (
               <>
-                {/* FIXED: pet edit form only for admins */}
+                {/* FIXED: pet edit form only for admins (or mandatory setup) */}
                 {displayPetMembers.map((member) =>
-                  isAdmin && editingId === member.id && pendingMember ? (
+                  canManageFamilyProfile &&
+                  editingId === member.id &&
+                  pendingMember ? (
                     renderEditCard(member)
                   ) : (
                     <FamilyMemberDisplayCard
                       key={member.id}
                       member={member}
-                      isAdmin={isAdmin}
+                      isAdmin={canManageFamilyProfile}
                       onEdit={
-                        isAdmin ? () => startEditMember(member) : undefined
+                        canManageFamilyProfile
+                          ? () => startEditMember(member)
+                          : undefined
                       }
                       onRemove={
-                        isAdmin
+                        canManageFamilyProfile
                           ? () =>
                               removeMember(member.id, findEntityRowId(member))
                           : undefined
@@ -805,8 +929,9 @@ export default function FamilyProfileScreen() {
                     label="הוספת חיית מחמד:"
                   />
                 )}
-                {/* FIXED: pet add/quota UI hidden for members */}
-                {isAdmin &&
+                {/* FIXED: pet add/quota UI hidden for members (or shown
+                    during mandatory setup) */}
+                {canManageFamilyProfile &&
                   (canAddPet ? (
                     <Pressable
                       onPress={() =>
@@ -839,31 +964,55 @@ export default function FamilyProfileScreen() {
           </View>
         </ScrollView>
 
-        {isOptionalPostAuthSetup ? (
-          <View className="border-t border-gray-200 bg-[#f6f7f8] px-5 pb-4 pt-4">
+        {isFamilyProfileSetupPath ? (
+          <View className="border-t border-gray-200 bg-[#f6f7f8] px-6 pb-4 pt-4">
+            {mandatorySetupError ? (
+              <Text className={`${tw.textStart} mb-2 text-sm text-red-600`}>
+                {mandatorySetupError}
+              </Text>
+            ) : null}
             <Pressable
-              onPress={handleSaveOptionalSetup}
-              disabled={isSavingOptionalSetup}
+              onPress={
+                isMandatorySetup
+                  ? handleSaveMandatorySetup
+                  : handleSaveOptionalSetup
+              }
+              disabled={
+                isMandatorySetup
+                  ? isMandatorySetupSaveDisabled(
+                      firstName,
+                      isSavingMandatorySetup
+                    )
+                  : isSavingOptionalSetup
+              }
               accessible={true}
               accessibilityRole="button"
               accessibilityLabel="שמירה והמשך"
               className="mb-3 h-12 items-center justify-center rounded-2xl bg-[#36a9e2]"
+              style={{
+                opacity:
+                  isMandatorySetup && !firstName.trim() ? 0.5 : undefined,
+              }}
             >
               <Text className="font-bold text-base text-white">
                 שמירה והמשך
               </Text>
             </Pressable>
-            <Pressable
-              onPress={handleSkipOptionalSetup}
-              accessible={true}
-              accessibilityRole="button"
-              accessibilityLabel="דלגי עכשיו"
-              className="h-12 items-center justify-center rounded-xl py-2"
-            >
-              <Text className="text-center text-base text-gray-600">
-                דלגי עכשיו
-              </Text>
-            </Pressable>
+            {/* Stage 2B+3: no skip button in mandatory mode — onboarding
+                must be explicitly completed before Home is reachable. */}
+            {isOptionalPostAuthSetup ? (
+              <Pressable
+                onPress={handleSkipOptionalSetup}
+                accessible={true}
+                accessibilityRole="button"
+                accessibilityLabel="דלגי עכשיו"
+                className="h-12 items-center justify-center rounded-xl py-2"
+              >
+                <Text className="text-center text-base text-gray-600">
+                  דלגי עכשיו
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
       </KeyboardAvoidingView>

@@ -9,6 +9,8 @@ import {
 } from '../components/onboarding/ColorPicker';
 import type { FamilyMember } from '../contexts/OnboardingContext';
 import { useOnboarding } from '../contexts/OnboardingContext';
+// Stage 2B+3: actual configured family members determine spaceType, never Q1.
+import { deriveSpaceTypeFromFamilyMembers } from '../lib/spaceTypeDerivation';
 // FIXED: added family-member status fields — maskPhone used when setting selectedPhoneNumber
 import { maskPhone } from '../lib/utils/contactPhone';
 
@@ -421,14 +423,22 @@ export function useFamilyProfileEditor(
       },
     });
 
-    // Persist to Convex — sets onboardingCompleted: true on the user record
-    // Only called for new users from the authenticated layout; returning users use saveProfile()
+    // Persist to Convex — sets onboardingCompleted: true on the user record.
+    // Called from the mandatory Profile Setup screen to explicitly complete
+    // onboarding; returning users (optional setup) use saveProfile() instead.
+    //
+    // Stage 2B+3 LOCKED RULE: spaceType is derived from the ACTUAL configured
+    // family members (Self-only → personal; Self + a person member → family;
+    // pets alone never make it family) — never from data.spaceType (Q1),
+    // which is analytics/personalization only and must never decide
+    // architecture. See lib/spaceTypeDerivation.ts.
     return finishOnboarding({
       fullName: nameSource,
       profileColor: personalColor,
-      spaceType: data.spaceType ?? 'personal',
+      spaceType: deriveSpaceTypeFromFamilyMembers(familyMembers),
       challenges: data.challenges ?? [],
       childCount: data.childCount,
+      familyContacts: familyMembers,
     });
   };
 
