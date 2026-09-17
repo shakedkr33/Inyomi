@@ -18,6 +18,7 @@ import type * as communityEventCalendar from "../communityEventCalendar.js";
 import type * as communityEventCalendarHelpers from "../communityEventCalendarHelpers.js";
 import type * as communityMemberUtils from "../communityMemberUtils.js";
 import type * as dailyMoods from "../dailyMoods.js";
+import type * as devTools from "../devTools.js";
 import type * as eventRsvps from "../eventRsvps.js";
 import type * as eventTasks from "../eventTasks.js";
 import type * as events from "../events.js";
@@ -55,6 +56,7 @@ declare const fullApi: ApiFromModules<{
   communityEventCalendarHelpers: typeof communityEventCalendarHelpers;
   communityMemberUtils: typeof communityMemberUtils;
   dailyMoods: typeof dailyMoods;
+  devTools: typeof devTools;
   eventRsvps: typeof eventRsvps;
   eventTasks: typeof eventTasks;
   events: typeof events;
