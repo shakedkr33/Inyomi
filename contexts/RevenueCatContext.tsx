@@ -32,7 +32,13 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Alert, AppState, type AppStateStatus, Platform } from 'react-native';
+import {
+  Alert,
+  AppState,
+  type AppStateStatus,
+  Linking,
+  Platform,
+} from 'react-native';
 // Type-only import — safe in Expo Go: erased at compile time, never triggers
 // the native module import that crashes without a development build. All
 // runtime access to the SDK stays behind the existing `await import('react-native-purchases')`
@@ -108,6 +114,13 @@ export type CustomerData = {
   latestExpirationDate: string | null;
   firstSeen: string | null;
   managementURL: string | null;
+  // Product identifier (App Store / Google Play SKU) that unlocked the
+  // currently-active paid entitlement (family entitlement takes priority
+  // over personal — mirrors getSubscriptionTierFromCustomerInfo's
+  // priority). Used by Settings to derive the billing period ('annual' /
+  // 'monthly') via getBillingPeriodFromProductIdentifier — never guessed
+  // from entitlement names. Null when there is no active paid entitlement.
+  activeProductIdentifier: string | null;
 };
 
 // SDK configuration lifecycle for the real (non-mock) RevenueCat SDK path.
@@ -281,6 +294,34 @@ function getSubscriptionTierFromCustomerInfo(customerInfo: {
 }
 
 /**
+ * Returns the store product identifier (e.g. "inyomi_family_annual") that
+ * unlocked the currently-active paid entitlement, or null when there is no
+ * active paid entitlement. Priority mirrors getSubscriptionTierFromCustomerInfo
+ * (family wins over personal if somehow both were active).
+ *
+ * Used exclusively to derive billing period (annual/monthly) for display —
+ * see lib/billingPeriod.ts#getBillingPeriodFromProductIdentifier. Never
+ * used to change tier/entitlement logic.
+ */
+function getActiveEntitlementProductIdentifier(customerInfo: {
+  entitlements: { active: Record<string, unknown> };
+}): string | null {
+  const familyEntitlement = customerInfo.entitlements.active[
+    FAMILY_ENTITLEMENT_ID
+  ] as { productIdentifier?: string } | undefined;
+  if (familyEntitlement?.productIdentifier) {
+    return familyEntitlement.productIdentifier;
+  }
+  const personalEntitlement = customerInfo.entitlements.active[
+    PERSONAL_ENTITLEMENT_ID
+  ] as { productIdentifier?: string } | undefined;
+  if (personalEntitlement?.productIdentifier) {
+    return personalEntitlement.productIdentifier;
+  }
+  return null;
+}
+
+/**
  * Legacy backward-compatible check. Returns true if ANY paid entitlement
  * is active (personal, family, or legacy "InYomi Pro").
  */
@@ -423,6 +464,8 @@ export function RevenueCatProvider({
 
       const hasPremium = checkHasPremium(customerInfo);
       const tier = getSubscriptionTierFromCustomerInfo(customerInfo);
+      const activeProductIdentifier =
+        getActiveEntitlementProductIdentifier(customerInfo);
       let appUserID: string | null = null;
 
       try {
@@ -452,6 +495,7 @@ export function RevenueCatProvider({
           latestExpirationDate: customerInfo.latestExpirationDate,
           firstSeen: customerInfo.firstSeen,
           managementURL: customerInfo.managementURL,
+          activeProductIdentifier,
         });
       }
     },
@@ -1682,9 +1726,19 @@ export function RevenueCatProvider({
         },
       });
     } catch (_error) {
-      // Fallback: אם Customer Center לא נתמך, פתח manage subscriptions
+      // Fallback chain if the native Customer Center UI itself fails to
+      // present (e.g. unsupported RC dashboard config): prefer RevenueCat's
+      // own `managementURL` — it already points to the exact correct
+      // destination (App Store subscription management for an iOS
+      // purchase, Google Play subscription management for an Android
+      // purchase) for THIS customer's active subscription, no guessing or
+      // hardcoded store URLs. Only when that isn't available do we fall
+      // back to the iOS-only native `showManageSubscriptions()` helper, and
+      // finally a calm explanatory alert — never the sales paywall.
       try {
-        if (Platform.OS === 'ios') {
+        if (customerData?.managementURL) {
+          await Linking.openURL(customerData.managementURL);
+        } else if (Platform.OS === 'ios') {
           const Purchases = (await import('react-native-purchases')).default;
           await Purchases.showManageSubscriptions();
         } else {
@@ -1697,7 +1751,13 @@ export function RevenueCatProvider({
         Alert.alert('שגיאה', 'אירעה שגיאה בפתיחת ניהול המנויים.');
       }
     }
-  }, [isExpoGo, isConfigured, isIdentityReady, updateCustomerData]);
+  }, [
+    isExpoGo,
+    isConfigured,
+    isIdentityReady,
+    updateCustomerData,
+    customerData,
+  ]);
 
   // ============================================================================
   // רינדור

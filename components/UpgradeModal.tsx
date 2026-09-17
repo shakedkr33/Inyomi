@@ -38,7 +38,7 @@ export interface UpgradeModalProps {
 const TITLE = 'החודש החינמי הסתיים';
 
 const BODY =
-  'המידע שלך נשמר וזמין לצפייה. כדי להמשיך ליצור ולערוך אירועים ומשימות אישיים או משפחתיים, אפשר לבחור מנוי אישי או משפחתי. הקהילות נשארות פתוחות בחינם.';
+  'המידע שלך נשמר וזמין לצפייה. כדי להמשיך ליצור ולערוך אירועים ומשימות אישיים או משפחתיים, אפשר לשדרג ל-InYomi Together. הקהילות נשארות פתוחות בחינם.';
 
 // Reserved for future use.
 // In Phase 3, this may be used to deep-link or preselect the relevant plan

@@ -1,6 +1,6 @@
 import { useAuthActions } from '@convex-dev/auth/react';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useMutation } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -30,53 +30,39 @@ import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { api } from '@/convex/_generated/api';
 import { useEffectiveAccess } from '@/hooks/useEffectiveAccess';
 import { getAvatarInitials } from '@/lib/avatarInitials';
+// Canonical family/profile membership signal (Stage 2B+3 locked rule) — the
+// ACTUAL configured family members determine 'family' vs 'personal', never
+// a stored/local spaceType flag. Reused here (not duplicated) to decide the
+// unified profile card's subtitle. See lib/spaceTypeDerivation.ts.
+import { getBillingPeriodFromProductIdentifier } from '@/lib/billingPeriod';
 import { clearOnboardingDraft } from '@/lib/onboardingState';
 import { APP_IS_RTL, rtl } from '@/lib/rtl';
+import { deriveSpaceTypeFromFamilyMembers } from '@/lib/spaceTypeDerivation';
 
 const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
 
 declare const __DEV__: boolean;
 
 // ============================================================================
-// AccountCard
+// UnifiedProfileCard
+// ============================================================================
+// PART 1 — unifies the previous non-clickable "identity" card (avatar + name)
+// and the separate clickable "הפרופיל שלי" card into a single clickable
+// card. Preserves the existing avatar styling from the old identity card and
+// the chevron/navigation affordance from the old profile-family card.
 // ============================================================================
 
-function AccountCard({
+function UnifiedProfileCard({
   displayName,
   avatarInitial,
   avatarColor,
+  subtitle,
+  onPress,
 }: {
   displayName: string;
   avatarInitial: string;
   avatarColor: string;
-}) {
-  return (
-    <View style={styles.card}>
-      <View style={styles.accountRow}>
-        <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
-          <Text style={styles.avatarInitial}>{avatarInitial}</Text>
-        </View>
-        <View style={styles.accountTexts}>
-          <Text style={styles.accountName}>{displayName}</Text>
-        </View>
-      </View>
-    </View>
-  );
-}
-
-// ============================================================================
-// ProfileFamilyCard
-// ============================================================================
-
-function ProfileFamilyCard({
-  title,
-  subtitle,
-  iconName,
-  onPress,
-}: {
-  title: string;
   subtitle: string;
-  iconName: 'group' | 'person';
   onPress: () => void;
 }) {
   return (
@@ -85,14 +71,14 @@ function ProfileFamilyCard({
       onPress={onPress}
       accessible={true}
       accessibilityRole="button"
-      accessibilityLabel={title}
+      accessibilityLabel={`${displayName}, ${subtitle}`}
     >
-      <View style={styles.familyRow}>
-        <View style={styles.familyIconWrap}>
-          <MaterialIcons name={iconName} size={22} color="#36a9e2" />
+      <View style={styles.accountRow}>
+        <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
+          <Text style={styles.avatarInitial}>{avatarInitial}</Text>
         </View>
-        <View style={styles.familyTexts}>
-          <Text style={styles.familyTitle}>{title}</Text>
+        <View style={styles.accountTexts}>
+          <Text style={styles.accountName}>{displayName}</Text>
           <Text style={styles.familySubtitle}>{subtitle}</Text>
         </View>
         <MaterialIcons name="chevron-left" size={22} color="#9ca3af" />
@@ -105,22 +91,37 @@ function ProfileFamilyCard({
 // SubscriptionStatusCard
 // ============================================================================
 
+// PART 2 — single-paid-plan model. The app has exactly ONE paid offering,
+// "InYomi Together" (see app/(authenticated)/subscription.tsx). isPersonal
+// and isFamily both represent an active paid entitlement (legacy two-tier
+// RevenueCat entitlements — see contexts/RevenueCatContext.tsx) but the
+// Settings UI must never surface that legacy split to the user.
+const UPGRADE_LABEL = 'שדרוג ל-InYomi Together';
+const MANAGE_LABEL = 'ניהול המנוי';
+
+const BILLING_PERIOD_LABEL: Record<'annual' | 'monthly', string> = {
+  annual: 'מנוי שנתי',
+  monthly: 'מנוי חודשי',
+};
+
 function SubscriptionStatusCard({
   isPersonal,
   isFamily,
   isTrialActive,
-  isExpiredFree,
   isQaOverride,
   trialDaysRemaining,
+  trialTotalDays,
+  billingPeriod,
   onUpgradePress,
   onManagePress,
 }: {
   isPersonal: boolean;
   isFamily: boolean;
   isTrialActive: boolean;
-  isExpiredFree: boolean;
   isQaOverride: boolean;
   trialDaysRemaining: number | null;
+  trialTotalDays: number;
+  billingPeriod: 'annual' | 'monthly' | null;
   onUpgradePress: () => void;
   onManagePress: () => void;
 }) {
@@ -142,8 +143,10 @@ function SubscriptionStatusCard({
     );
   }
 
-  // Family paid — manage only, no upgrade CTA
-  if (isFamily) {
+  // STATE C — Paid (InYomi Together). isPersonal / isFamily are both a paid
+  // entitlement (legacy two-tier RevenueCat model) — treated identically
+  // here since there is only one user-facing paid plan.
+  if (isPersonal || isFamily) {
     return (
       <View style={styles.card}>
         <View style={styles.subContent}>
@@ -153,19 +156,20 @@ function SubscriptionStatusCard({
               פעיל
             </Text>
           </View>
-          <Text style={styles.subTitle}>המנוי שלך פעיל</Text>
-          <Text style={styles.subSubtitle}>מסלול משפחתי</Text>
-          <Text style={styles.subNote}>
-            ניהול המנוי מתבצע דרך App Store או Google Play
-          </Text>
+          <Text style={styles.subTitle}>InYomi Together</Text>
+          {billingPeriod !== null && (
+            <Text style={styles.subSubtitle}>
+              {BILLING_PERIOD_LABEL[billingPeriod]}
+            </Text>
+          )}
           <TouchableOpacity
             onPress={onManagePress}
             accessible={true}
             accessibilityRole="button"
-            accessibilityLabel="ניהול מנוי"
+            accessibilityLabel={MANAGE_LABEL}
             style={styles.subManageBtn}
           >
-            <Text style={styles.subManageBtnText}>ניהול מנוי</Text>
+            <Text style={styles.subManageBtnText}>{MANAGE_LABEL}</Text>
             <MaterialIcons name="chevron-left" size={15} color="#36a9e2" />
           </TouchableOpacity>
         </View>
@@ -173,41 +177,14 @@ function SubscriptionStatusCard({
     );
   }
 
-  // Personal paid — offer upgrade to family plan
-  if (isPersonal) {
-    return (
-      <View style={styles.card}>
-        <View style={styles.subContent}>
-          <View style={[styles.subBadgeRow, styles.subBadgeActive]}>
-            <MaterialIcons name="check-circle" size={14} color="#16a34a" />
-            <Text style={[styles.subBadgeText, styles.subBadgeTextActive]}>
-              פעיל
-            </Text>
-          </View>
-          <Text style={styles.subTitle}>המנוי שלך פעיל</Text>
-          <Text style={styles.subSubtitle}>מסלול אישי</Text>
-          <TouchableOpacity
-            onPress={onUpgradePress}
-            accessible={true}
-            accessibilityRole="button"
-            accessibilityLabel="שדרג למנוי משפחתי"
-            style={styles.subUpgradeBtn}
-          >
-            <Text style={styles.subUpgradeBtnText}>שדרג למנוי משפחתי</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
-
-  // Trial active
+  // STATE A — Trial
   if (isTrialActive) {
     const daysLabel =
       trialDaysRemaining === null
-        ? 'תקופת ניסיון פעילה'
+        ? `תקופת ניסיון פעילה מתוך ${trialTotalDays}`
         : trialDaysRemaining === 1
-          ? 'נותר יום אחד לניסיון'
-          : `נותרו ${trialDaysRemaining} ימים לניסיון`;
+          ? `נותר יום אחד מתוך ${trialTotalDays}`
+          : `נותרו ${trialDaysRemaining} ימים מתוך ${trialTotalDays}`;
 
     return (
       <View style={styles.card}>
@@ -218,24 +195,24 @@ function SubscriptionStatusCard({
               ניסיון
             </Text>
           </View>
-          <Text style={styles.subTitle}>תקופת הניסיון פעילה</Text>
+          <Text style={styles.subTitle}>תקופת ניסיון</Text>
           <Text style={styles.subSubtitle}>{daysLabel}</Text>
-          <Text style={styles.subNote}>אפשר לשדרג בכל עת</Text>
           <TouchableOpacity
             onPress={onUpgradePress}
             accessible={true}
             accessibilityRole="button"
-            accessibilityLabel="שדרוג למנוי"
+            accessibilityLabel={UPGRADE_LABEL}
             style={styles.subUpgradeBtn}
           >
-            <Text style={styles.subUpgradeBtnText}>שדרוג למנוי</Text>
+            <Text style={styles.subUpgradeBtnText}>{UPGRADE_LABEL}</Text>
           </TouchableOpacity>
         </View>
       </View>
     );
   }
 
-  // Expired / free
+  // STATE B — Free (trial expired). Do not implement/enforce the 3-community
+  // limit here — this is copy-only; enforcement (if any) lives elsewhere.
   return (
     <View style={styles.card}>
       <View style={styles.subContent}>
@@ -245,17 +222,18 @@ function SubscriptionStatusCard({
             חינמי
           </Text>
         </View>
-        <Text style={styles.subTitle}>גישה חינמית</Text>
-        <Text style={styles.subSubtitle}>קהילות נשארות זמינות</Text>
-        <Text style={styles.subNote}>לניהול משפחתי מלא אפשר לשדרג למנוי</Text>
+        <Text style={styles.subTitle}>מסלול חינמי</Text>
+        <Text style={styles.subSubtitle}>
+          ניתן ליצור עד 3 קהילות ולהצטרף לקהילות ללא הגבלה
+        </Text>
         <TouchableOpacity
           onPress={onUpgradePress}
           accessible={true}
           accessibilityRole="button"
-          accessibilityLabel="שדרוג למנוי"
+          accessibilityLabel={UPGRADE_LABEL}
           style={styles.subUpgradeBtn}
         >
-          <Text style={styles.subUpgradeBtnText}>שדרוג למנוי</Text>
+          <Text style={styles.subUpgradeBtnText}>{UPGRADE_LABEL}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -270,8 +248,14 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { returnTo } = useLocalSearchParams<{ returnTo?: string }>();
   const { signOut } = useAuthActions();
-  const { isPremium, isConfigured, isExpoGo, customerData, subscriptionTier } =
-    useRevenueCat();
+  const {
+    isPremium,
+    isConfigured,
+    isExpoGo,
+    customerData,
+    subscriptionTier,
+    presentCustomerCenter,
+  } = useRevenueCat();
   const deleteMyAccount = useMutation(api.users.deleteMyAccount);
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const [isDebugUnlocked, setIsDebugUnlocked] = useState(false);
@@ -288,15 +272,34 @@ export default function ProfileScreen() {
   const {
     effectiveAccess,
     isTrialActive,
-    isExpiredFree,
     isPersonal,
     isFamily,
     isQaOverride,
     trialDaysRemaining,
+    trialTotalDays,
   } = useEffectiveAccess();
 
+  // PART 1 — unified profile card subtitle. Reuses the canonical live
+  // family/profile membership source (convex/members.ts#listMyFamilyContacts
+  // — the same query the calendar profile filter and community association
+  // picker already use) rather than a stale/local onboarding flag: the
+  // previous ProfileFamilyCard used onboardingData.spaceType, which is the
+  // Q1 onboarding-intent answer and is documented (lib/spaceTypeDerivation.ts)
+  // as "analytics/personalization only — must never decide architecture" and
+  // is never updated again after a member is added/removed post-onboarding.
+  const familyContactsResult = useQuery(api.members.listMyFamilyContacts);
+  const hasAdditionalFamilyMembers =
+    familyContactsResult !== undefined &&
+    deriveSpaceTypeFromFamilyMembers(
+      familyContactsResult.members
+        .filter((m) => m._id !== familyContactsResult.selfEntityId)
+        .map((m) => ({ type: m.memberType }))
+    ) === 'family';
+  const profileSubtitle = hasAdditionalFamilyMembers
+    ? 'הפרופיל המשפחתי'
+    : 'הפרופיל שלי';
+
   const { data: onboardingData, resetData } = useOnboarding();
-  const isSpaceFamily = onboardingData.spaceType === 'family';
   const rawFirstName = onboardingData.firstName ?? '';
   const rawLastName = onboardingData.lastName ?? '';
   const rawNickname = onboardingData.nickname ?? '';
@@ -402,6 +405,24 @@ export default function ProfileScreen() {
   const openSignInPreview = () => router.push('/(auth)/sign-in?preview=true');
   const openSignUpPreview = () => router.push('/(auth)/sign-up?preview=true');
 
+  // PART 2/3 — billing period + subscription management. Derived strictly
+  // from the active RevenueCat entitlement's product identifier — never
+  // guessed. See lib/billingPeriod.ts#getBillingPeriodFromProductIdentifier.
+  const billingPeriod = getBillingPeriodFromProductIdentifier(
+    customerData?.activeProductIdentifier ?? null
+  );
+
+  // PART 3 — a paid user must never be routed back to the sales paywall to
+  // manage an existing subscription. presentCustomerCenter() is the existing
+  // canonical RevenueCat management entry point (contexts/RevenueCatContext.tsx):
+  // it presents the native Customer Center UI (App Store management on iOS,
+  // Google Play management on Android) and already has its own calm
+  // fallback chain (RevenueCat managementURL → iOS showManageSubscriptions →
+  // explanatory alert) if that UI cannot be presented — never the paywall.
+  const handleManageSubscription = async () => {
+    await presentCustomerCenter();
+  };
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -457,21 +478,13 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* ── Account ── */}
+        {/* ── Account / Profile — unified card (PART 1) ── */}
         <Text style={styles.sectionTitle}>החשבון שלי</Text>
-        <AccountCard
+        <UnifiedProfileCard
           displayName={displayName}
           avatarInitial={avatarInitial}
           avatarColor={avatarColor}
-        />
-
-        {/* ── Profile / Family row ── */}
-        <ProfileFamilyCard
-          title={isSpaceFamily ? 'המשפחה שלי' : 'הפרופיל שלי'}
-          subtitle={
-            isSpaceFamily ? 'ניהול בני משפחה והרשאות' : 'פרטים אישיים והגדרות'
-          }
-          iconName={isSpaceFamily ? 'group' : 'person'}
+          subtitle={profileSubtitle}
           onPress={() =>
             router.push('/(authenticated)/family-profile' as never)
           }
@@ -483,15 +496,14 @@ export default function ProfileScreen() {
           isPersonal={isPersonal}
           isFamily={isFamily}
           isTrialActive={isTrialActive}
-          isExpiredFree={isExpiredFree}
           isQaOverride={isQaOverride}
           trialDaysRemaining={trialDaysRemaining}
+          trialTotalDays={trialTotalDays}
+          billingPeriod={billingPeriod}
           onUpgradePress={() =>
             router.push('/(authenticated)/subscription' as never)
           }
-          onManagePress={() =>
-            router.push('/(authenticated)/subscription' as never)
-          }
+          onManagePress={handleManageSubscription}
         />
 
         {/* ── Settings ── */}
@@ -912,31 +924,7 @@ const styles = StyleSheet.create({
     textAlign: rtl.textAlign,
   },
 
-  // ── Family card ────────────────────────────────────────────────────────────
-  familyRow: {
-    flexDirection: rtl.flexDirection,
-    alignItems: 'center',
-    padding: 16,
-    gap: 12,
-  },
-  familyIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#eff8ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  familyTexts: {
-    flex: 1,
-    alignItems: rtl.alignStart,
-  },
-  familyTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111517',
-    textAlign: rtl.textAlign,
-  },
+  // ── Unified profile card — contextual subtitle (PART 1) ───────────────────
   familySubtitle: {
     fontSize: 13,
     color: '#6b7280',
@@ -997,12 +985,6 @@ const styles = StyleSheet.create({
     color: '#374151',
     textAlign: rtl.textAlign,
     marginTop: 4,
-  },
-  subNote: {
-    fontSize: 12,
-    color: '#9ca3af',
-    textAlign: rtl.textAlign,
-    marginTop: 6,
   },
   subUpgradeBtn: {
     marginTop: 14,
