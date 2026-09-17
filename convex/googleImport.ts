@@ -63,6 +63,11 @@ const importedEventArg = v.object({
   /** "YYYY-MM-DD" or RFC3339 end, or null when not available. */
   endIso: v.union(v.string(), v.null()),
   isAllDay: v.boolean(),
+  /** Physical location text (any embedded meeting URL already stripped). */
+  location: v.optional(v.string()),
+  /** Canonical meeting-join URL (Meet/Zoom/Teams) — same field the manual
+   * event editor's "קישור" tab writes to (events.onlineUrl). */
+  onlineUrl: v.optional(v.string()),
 });
 
 /**
@@ -92,6 +97,8 @@ async function insertImportedEvents(
     startIso: string;
     endIso: string | null;
     isAllDay: boolean;
+    location?: string;
+    onlineUrl?: string;
   }>,
   now: number
 ): Promise<void> {
@@ -104,6 +111,10 @@ async function insertImportedEvents(
       startTime: startMs,
       endTime: endMs,
       allDay: ev.isAllDay,
+      // Same canonical fields the manual event create/edit "כתובת"/"קישור"
+      // tabs read and write (LocationCard → EventData.location/onlineUrl).
+      location: ev.location,
+      onlineUrl: ev.onlineUrl,
       spaceId,
       createdBy: userId,
       createdAt: now,

@@ -25,8 +25,10 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import {
   buildDateRange,
   type CalendarTarget,
+  extractLocationAndMeetingLink,
   fetchCalendarPreview,
   type NormalizedEvent,
+  type RawEvent,
 } from '../googleCalendarEvents';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -188,14 +190,14 @@ describe('buildDateRange', () => {
     expect(timeMax).toMatch(/^2027-06-29T00:00:00[+-]/);
   });
 
-  it("one-month-back start boundary with 12-month forward", () => {
+  it('one-month-back start boundary with 12-month forward', () => {
     const now = new Date('2026-06-28T06:00:00Z');
     const { timeMin, timeMax } = buildDateRange('one_month', now, 12);
     expect(timeMin).toMatch(/^2026-05-28T00:00:00[+-]/);
     expect(timeMax).toMatch(/^2027-06-29T00:00:00[+-]/);
   });
 
-  it("two-months-back start boundary with 12-month forward", () => {
+  it('two-months-back start boundary with 12-month forward', () => {
     const now = new Date('2026-06-28T06:00:00Z');
     const { timeMin, timeMax } = buildDateRange('two_months', now, 12);
     expect(timeMin).toMatch(/^2026-04-28T00:00:00[+-]/);
@@ -1152,7 +1154,9 @@ describe('formatEventMeta', () => {
       minute: '2-digit',
       hour12: false,
     });
-    const parts = new Map(fmt.formatToParts(date).map((p) => [p.type, p.value]));
+    const parts = new Map(
+      fmt.formatToParts(date).map((p) => [p.type, p.value])
+    );
     let h = parts.get('hour') ?? '00';
     const m = parts.get('minute') ?? '00';
     if (h === '24') h = '00';
@@ -1263,5 +1267,380 @@ describe('event selection model', () => {
     const selection = new Set<string>(['ev-1']);
     const canProceed = selection.size > 0;
     expect(canProceed).toBe(true);
+  });
+});
+
+// ── extractLocationAndMeetingLink ───────────────────────────────────────────
+//
+// Pure-function tests for the Meet/Zoom/Teams meeting-link extraction and
+// physical-location preservation logic. Covers the deterministic priority
+// order (conferenceData video entry point > hangoutLink > location >
+// description) and the coexistence of a physical location with a meeting
+// link (Section 4/5/7 of the import spec).
+
+describe('extractLocationAndMeetingLink', () => {
+  function videoEntryPoint(uri: string): Record<string, unknown> {
+    return { entryPointType: 'video', uri };
+  }
+
+  // 1. Google Meet from conferenceData.entryPoints
+  it('extracts a Google Meet URL from conferenceData.entryPoints (video type)', () => {
+    const event: RawEvent = {
+      conferenceData: {
+        entryPoints: [videoEntryPoint('https://meet.google.com/abc-defg-hij')],
+      },
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBe('https://meet.google.com/abc-defg-hij');
+    expect(result.location).toBeUndefined();
+  });
+
+  // 2. Google Meet from hangoutLink
+  it('extracts a Google Meet URL from hangoutLink when conferenceData is absent', () => {
+    const event: RawEvent = {
+      hangoutLink: 'https://meet.google.com/xyz-uvwx-rst',
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBe('https://meet.google.com/xyz-uvwx-rst');
+  });
+
+  // 3. Zoom URL in location
+  it('extracts a Zoom URL found directly in location', () => {
+    const event: RawEvent = { location: 'https://us02web.zoom.us/j/123456789' };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBe('https://us02web.zoom.us/j/123456789');
+    expect(result.location).toBeUndefined();
+  });
+
+  // 4. Zoom URL in description
+  it('extracts a Zoom URL from description when no stronger source exists', () => {
+    const event: RawEvent = {
+      description: 'הצטרפו לפגישה: https://zoom.us/j/987654321 בברכה',
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBe('https://zoom.us/j/987654321');
+  });
+
+  // 5. Teams URL in location
+  it('extracts a Microsoft Teams URL found directly in location', () => {
+    const event: RawEvent = {
+      location: 'https://teams.microsoft.com/l/meetup-join/abc123',
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBe(
+      'https://teams.microsoft.com/l/meetup-join/abc123'
+    );
+    expect(result.location).toBeUndefined();
+  });
+
+  // 6. Teams URL in description
+  it('extracts a Microsoft Teams URL from description', () => {
+    const event: RawEvent = {
+      description: 'לינק להצטרפות: https://teams.live.com/meet/12345',
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBe('https://teams.live.com/meet/12345');
+  });
+
+  // 7. physical location + Meet link → both preserved
+  it('preserves a physical location alongside a structured Meet link (conferenceData)', () => {
+    const event: RawEvent = {
+      location: 'משרדי החברה, תל אביב',
+      conferenceData: {
+        entryPoints: [videoEntryPoint('https://meet.google.com/abc-defg-hij')],
+      },
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.location).toBe('משרדי החברה, תל אביב');
+    expect(result.onlineUrl).toBe('https://meet.google.com/abc-defg-hij');
+  });
+
+  // 8. physical location only → unchanged
+  it('leaves a plain physical location unchanged when no meeting link exists', () => {
+    const event: RawEvent = { location: 'משרדי החברה, תל אביב' };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.location).toBe('משרדי החברה, תל אביב');
+    expect(result.onlineUrl).toBeUndefined();
+  });
+
+  // 9. description with unrelated URL → not treated as meeting link
+  it('does not treat an unrelated website URL in description as a meeting link', () => {
+    const event: RawEvent = {
+      description: 'לפרטים נוספים: https://example.com/?redirect=zoom.us',
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBeUndefined();
+  });
+
+  // 10. multiple possible sources → correct priority chosen
+  it('prefers conferenceData over hangoutLink, location and description when all are present', () => {
+    const event: RawEvent = {
+      conferenceData: {
+        entryPoints: [
+          videoEntryPoint('https://meet.google.com/from-conference'),
+        ],
+      },
+      hangoutLink: 'https://meet.google.com/from-hangout',
+      location: 'https://zoom.us/j/from-location',
+      description: 'https://teams.microsoft.com/l/meetup-join/from-description',
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBe('https://meet.google.com/from-conference');
+  });
+
+  it('prefers hangoutLink over location and description when conferenceData is absent', () => {
+    const event: RawEvent = {
+      hangoutLink: 'https://meet.google.com/from-hangout',
+      location: 'https://zoom.us/j/from-location',
+      description: 'https://teams.microsoft.com/l/meetup-join/from-description',
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBe('https://meet.google.com/from-hangout');
+  });
+
+  it('prefers location over description when neither structured source exists', () => {
+    const event: RawEvent = {
+      location: 'https://zoom.us/j/from-location',
+      description: 'https://teams.microsoft.com/l/meetup-join/from-description',
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBe('https://zoom.us/j/from-location');
+  });
+
+  // 11. conference phone/SIP entry points → ignored
+  it('ignores phone and SIP conferenceData entry points (no video entry point present)', () => {
+    const event: RawEvent = {
+      conferenceData: {
+        entryPoints: [
+          { entryPointType: 'phone', uri: 'tel:+1-234-567-8900' },
+          { entryPointType: 'sip', uri: 'sip:abc@example.com' },
+          {
+            entryPointType: 'more',
+            uri: 'https://meet.google.com/some-more-info',
+          },
+        ],
+      },
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBeUndefined();
+  });
+
+  it('picks the video entry point even when phone/SIP entries are listed first', () => {
+    const event: RawEvent = {
+      conferenceData: {
+        entryPoints: [
+          { entryPointType: 'phone', uri: 'tel:+1-234-567-8900' },
+          videoEntryPoint('https://meet.google.com/abc-defg-hij'),
+        ],
+      },
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBe('https://meet.google.com/abc-defg-hij');
+  });
+
+  // 12. null/missing conference fields → no crash
+  it('does not crash and returns undefined fields when everything is missing', () => {
+    const event: RawEvent = {};
+    expect(() => extractLocationAndMeetingLink(event)).not.toThrow();
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.location).toBeUndefined();
+    expect(result.onlineUrl).toBeUndefined();
+  });
+
+  it('does not crash on null-ish/malformed conferenceData shapes', () => {
+    const malformedEvents: RawEvent[] = [
+      { conferenceData: null },
+      { conferenceData: 'not-an-object' },
+      { conferenceData: {} },
+      { conferenceData: { entryPoints: null } },
+      { conferenceData: { entryPoints: 'not-an-array' } },
+      { conferenceData: { entryPoints: [null, 42, 'x'] } },
+      { conferenceData: { entryPoints: [{ entryPointType: 'video' }] } }, // missing uri
+      { hangoutLink: 42 },
+      { location: 12345 },
+      { description: {} },
+    ];
+    for (const event of malformedEvents) {
+      expect(() => extractLocationAndMeetingLink(event)).not.toThrow();
+    }
+  });
+
+  // 13. malformed URL → ignored
+  it('ignores a malformed hangoutLink URL', () => {
+    const event: RawEvent = { hangoutLink: 'not a valid url' };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBeUndefined();
+  });
+
+  it('ignores a malformed conferenceData video URI', () => {
+    const event: RawEvent = {
+      conferenceData: { entryPoints: [videoEntryPoint('not a valid url')] },
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBeUndefined();
+  });
+
+  it('ignores a non-http(s) protocol URL (e.g. ftp)', () => {
+    const event: RawEvent = { hangoutLink: 'ftp://meet.google.com/abc' };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBeUndefined();
+  });
+
+  // Section 5 — URL embedded inside a mixed-content location string.
+  it('strips an embedded meeting URL from a mixed physical-location string, keeping the meaningful text', () => {
+    const event: RawEvent = {
+      location: 'משרדי החברה, תל אביב, https://meet.google.com/abc-defg-hij',
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.location).toBe('משרדי החברה, תל אביב');
+    expect(result.onlineUrl).toBe('https://meet.google.com/abc-defg-hij');
+  });
+
+  it('does not extract an unsupported-domain URL from location as a meeting link', () => {
+    const event: RawEvent = { location: 'https://example.com/office-map' };
+    const result = extractLocationAndMeetingLink(event);
+    // Not a recognized meeting provider — treated as plain (URL) location text.
+    expect(result.onlineUrl).toBeUndefined();
+    expect(result.location).toBe('https://example.com/office-map');
+  });
+
+  it('recognizes meet.google.com as a supported fallback domain from free text', () => {
+    const event: RawEvent = {
+      description: 'Join: https://meet.google.com/abc-defg-hij',
+    };
+    const result = extractLocationAndMeetingLink(event);
+    expect(result.onlineUrl).toBe('https://meet.google.com/abc-defg-hij');
+  });
+});
+
+// ── End-to-end: fetchCalendarPreview propagates location/onlineUrl ─────────
+
+describe('fetchCalendarPreview — location and meeting link propagation', () => {
+  const SINGLE_CAL: readonly CalendarTarget[] = [
+    { id: 'cal1', title: 'יומן ראשי' },
+  ];
+  const TIME_MIN = '2026-06-28T00:00:00+03:00';
+  const TIME_MAX = '2026-12-28T23:59:59+03:00';
+  const origFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+  });
+
+  it('propagates a conferenceData Meet link through to the normalized event', async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: 'e1',
+                iCalUID: 'e1@google.com',
+                status: 'confirmed',
+                summary: 'ישיבת צוות',
+                start: { dateTime: '2026-07-01T09:00:00+03:00' },
+                end: { dateTime: '2026-07-01T10:00:00+03:00' },
+                location: 'משרדי החברה, תל אביב',
+                conferenceData: {
+                  entryPoints: [
+                    {
+                      entryPointType: 'video',
+                      uri: 'https://meet.google.com/abc-defg-hij',
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    );
+
+    const result = await fetchCalendarPreview(
+      'test-token',
+      SINGLE_CAL,
+      TIME_MIN,
+      TIME_MAX,
+      new AbortController().signal
+    );
+
+    expect(result.kind).toBe('success');
+    if (result.kind !== 'success') return;
+    expect(result.events[0].location).toBe('משרדי החברה, תל אביב');
+    expect(result.events[0].onlineUrl).toBe(
+      'https://meet.google.com/abc-defg-hij'
+    );
+  });
+
+  it('propagates undefined location/onlineUrl for events without either', async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: 'e2',
+                iCalUID: 'e2@google.com',
+                status: 'confirmed',
+                summary: 'תזכורת',
+                start: { dateTime: '2026-07-02T09:00:00+03:00' },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    );
+
+    const result = await fetchCalendarPreview(
+      'test-token',
+      SINGLE_CAL,
+      TIME_MIN,
+      TIME_MAX,
+      new AbortController().signal
+    );
+
+    expect(result.kind).toBe('success');
+    if (result.kind !== 'success') return;
+    expect(result.events[0].location).toBeUndefined();
+    expect(result.events[0].onlineUrl).toBeUndefined();
+  });
+
+  it('propagates a Zoom URL extracted from the raw location field', async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: 'e3',
+                iCalUID: 'e3@google.com',
+                status: 'confirmed',
+                summary: 'שיחת זום',
+                start: { dateTime: '2026-07-03T09:00:00+03:00' },
+                location: 'https://us02web.zoom.us/j/123456789',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+    );
+
+    const result = await fetchCalendarPreview(
+      'test-token',
+      SINGLE_CAL,
+      TIME_MIN,
+      TIME_MAX,
+      new AbortController().signal
+    );
+
+    expect(result.kind).toBe('success');
+    if (result.kind !== 'success') return;
+    expect(result.events[0].location).toBeUndefined();
+    expect(result.events[0].onlineUrl).toBe(
+      'https://us02web.zoom.us/j/123456789'
+    );
   });
 });

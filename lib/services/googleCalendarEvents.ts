@@ -14,7 +14,13 @@
  * - AbortSignal propagation ensures stale responses are discarded after cancel.
  * - Memory: the full normalized NormalizedEvent[] is retained only for the active
  *   flow (until cleared by the caller or by app restart). No raw API payloads,
- *   tokens, Google IDs, descriptions, attendees, or locations are retained.
+ *   tokens, Google IDs, attendees, or full description text are retained.
+ * - Retained (only what the user opted to import): the physical location text
+ *   (with any embedded meeting URL stripped out) and, when present, a single
+ *   canonical meeting-join URL (Google Meet / Zoom / Microsoft Teams) derived
+ *   deterministically from conferenceData, hangoutLink, location or description.
+ *   The full free-text description itself is inspected in-memory for a
+ *   meeting URL but is never retained or persisted.
  */
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -47,7 +53,13 @@ export type CalendarTarget = {
  * Retained only for the active import flow. Cleared on app restart.
  *
  * Does NOT contain: OAuth tokens, Google event IDs, Google calendar names,
- * descriptions, attendees, locations, meeting links, or raw API payloads.
+ * full description text, attendees, or raw API payloads.
+ *
+ * MAY contain (only when present on the source event and only the minimum
+ * needed to populate InYomi's existing event location/link fields):
+ * - `location`: physical location text, with any embedded meeting URL removed.
+ * - `onlineUrl`: a single canonical Meet/Zoom/Teams meeting URL, chosen
+ *   deterministically (see `extractLocationAndMeetingLink`).
  */
 export type NormalizedEvent = {
   /** Stable client-side key for keying React rows. Not persisted. */
@@ -58,6 +70,10 @@ export type NormalizedEvent = {
   /** "YYYY-MM-DD" or RFC3339 end when available; null otherwise. */
   endIso: string | null;
   isAllDay: boolean;
+  /** Physical location text (meeting URLs removed), if any remains. */
+  location?: string;
+  /** Canonical meeting-join URL (Meet/Zoom/Teams), if one was found. */
+  onlineUrl?: string;
 };
 
 /**
@@ -96,6 +112,8 @@ type MinimalEvent = {
   startNormalized: string;
   endNormalized: string | null;
   isAllDay: boolean;
+  location?: string;
+  onlineUrl?: string;
 };
 
 type RawEventDateTime = {
@@ -103,13 +121,27 @@ type RawEventDateTime = {
   date?: unknown;
 };
 
-type RawEvent = {
+type RawConferenceEntryPoint = {
+  entryPointType?: unknown;
+  uri?: unknown;
+};
+
+type RawConferenceData = {
+  entryPoints?: unknown;
+};
+
+/** Exported only for unit testing extractLocationAndMeetingLink(). */
+export type RawEvent = {
   id?: unknown;
   iCalUID?: unknown;
   status?: unknown;
   summary?: unknown;
   start?: unknown;
   end?: unknown;
+  location?: unknown;
+  description?: unknown;
+  conferenceData?: unknown;
+  hangoutLink?: unknown;
 };
 
 type RawEventsPage = {
@@ -335,6 +367,158 @@ function extractTitle(event: RawEvent): string {
   return summary || UNNAMED_EVENT;
 }
 
+// ── Meeting-link extraction ───────────────────────────────────────────────────
+//
+// Populates InYomi's existing canonical event fields (`location`, `onlineUrl`)
+// from a Google Calendar event. Provider-neutral: does not introduce
+// per-provider fields. See extractLocationAndMeetingLink() for the
+// deterministic priority order.
+
+/** Known meeting-provider hostnames (exact match or subdomain thereof). */
+const SUPPORTED_MEETING_DOMAINS = [
+  'meet.google.com',
+  'zoom.us',
+  'teams.microsoft.com',
+  'teams.live.com',
+] as const;
+
+function isSupportedMeetingHostname(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return SUPPORTED_MEETING_DOMAINS.some(
+    (domain) => h === domain || h.endsWith(`.${domain}`)
+  );
+}
+
+/** Parse a candidate string as an http(s) URL; returns null if invalid. */
+function parseHttpUrl(candidate: string): URL | null {
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+      return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/** Matches http(s) URLs embedded in free text (stops at whitespace/brackets/quotes). */
+const EMBEDDED_URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
+
+/**
+ * Find the first http(s) URL in free text whose hostname matches a known
+ * meeting provider. Returns null if none found or the text is empty.
+ * Deterministic: always returns the first match in left-to-right order.
+ */
+function findFirstSupportedMeetingUrl(text: string | undefined): string | null {
+  if (!text) return null;
+  const matches = text.match(EMBEDDED_URL_RE);
+  if (!matches) return null;
+  for (const raw of matches) {
+    // Strip trailing punctuation commonly attached when a URL is embedded in
+    // prose (e.g. "...at https://meet.google.com/abc-defg-hij.").
+    const cleaned = raw.replace(/[),.;:!?'"<>\]]+$/, '');
+    const parsed = parseHttpUrl(cleaned);
+    if (parsed && isSupportedMeetingHostname(parsed.hostname)) return cleaned;
+  }
+  return null;
+}
+
+/**
+ * Extract the video entry point URI from Google `conferenceData.entryPoints`.
+ * Only `entryPointType === 'video'` is considered — phone/SIP/more entry
+ * points are deliberately ignored. If multiple video entry points exist,
+ * the first one is chosen deterministically.
+ */
+function extractConferenceVideoUrl(conferenceData: unknown): string | null {
+  if (!conferenceData || typeof conferenceData !== 'object') return null;
+  const entryPoints = (conferenceData as RawConferenceData).entryPoints;
+  if (!Array.isArray(entryPoints)) return null;
+  for (const entry of entryPoints) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { entryPointType, uri } = entry as RawConferenceEntryPoint;
+    if (entryPointType !== 'video') continue;
+    if (typeof uri !== 'string' || !uri) continue;
+    if (parseHttpUrl(uri)) return uri;
+  }
+  return null;
+}
+
+/** Extract and validate the classic `hangoutLink` field (legacy Meet events). */
+function extractHangoutLink(hangoutLink: unknown): string | null {
+  if (typeof hangoutLink !== 'string' || !hangoutLink) return null;
+  return parseHttpUrl(hangoutLink) ? hangoutLink : null;
+}
+
+/**
+ * Split a Google `location` string into cleaned physical-location text and an
+ * optional supported meeting URL found within it. If the meeting URL was the
+ * entire location value, the returned location is undefined.
+ */
+function splitLocationText(rawLocation: unknown): {
+  cleanedLocation: string | undefined;
+  meetingUrl: string | null;
+} {
+  const location = typeof rawLocation === 'string' ? rawLocation.trim() : '';
+  if (!location) return { cleanedLocation: undefined, meetingUrl: null };
+
+  const meetingUrl = findFirstSupportedMeetingUrl(location);
+  if (!meetingUrl) return { cleanedLocation: location, meetingUrl: null };
+
+  const withoutUrl = location.split(meetingUrl).join(' ');
+  const cleaned = withoutUrl
+    .replace(/^[\s,|\-–—]+/, '')
+    .replace(/[\s,|\-–—]+$/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  return { cleanedLocation: cleaned || undefined, meetingUrl };
+}
+
+/**
+ * Deterministically derive InYomi's canonical `location` and `onlineUrl`
+ * fields from a Google Calendar event's raw fields.
+ *
+ * Priority for `onlineUrl` (first match wins):
+ *   1. `conferenceData.entryPoints` — entry with entryPointType === 'video'.
+ *   2. `hangoutLink` (legacy classic Google Meet field).
+ *   3. A supported meeting URL (Meet/Zoom/Teams) embedded in `location`.
+ *   4. A supported meeting URL embedded in `description`.
+ *
+ * `location` always reflects the physical-location text with any embedded
+ * meeting URL removed, regardless of which source ultimately won the
+ * `onlineUrl` priority above — so the address never doubles as a raw URL.
+ *
+ * Never mutates the original description; only inspects it in-memory.
+ */
+export function extractLocationAndMeetingLink(event: RawEvent): {
+  location: string | undefined;
+  onlineUrl: string | undefined;
+} {
+  const { cleanedLocation, meetingUrl: locationMeetingUrl } = splitLocationText(
+    event.location
+  );
+
+  const conferenceUrl = extractConferenceVideoUrl(event.conferenceData);
+  const hangoutUrl = conferenceUrl
+    ? null
+    : extractHangoutLink(event.hangoutLink);
+  const descriptionUrl =
+    conferenceUrl || hangoutUrl || locationMeetingUrl
+      ? null
+      : findFirstSupportedMeetingUrl(
+          typeof event.description === 'string' ? event.description : undefined
+        );
+
+  const onlineUrl =
+    conferenceUrl ??
+    hangoutUrl ??
+    locationMeetingUrl ??
+    descriptionUrl ??
+    undefined;
+
+  return { location: cleanedLocation, onlineUrl };
+}
+
 // ── Local ID generator ────────────────────────────────────────────────────────
 
 let _localIdSeq = 0;
@@ -431,12 +615,16 @@ async function fetchSingleCalendar(
         const startNormalized = extractStartNormalized(event);
         if (!startNormalized) continue;
 
+        const { location, onlineUrl } = extractLocationAndMeetingLink(event);
+
         events.push({
           dedupKey: computeDedupKey(event, calendarId),
           title: extractTitle(event),
           startNormalized,
           endNormalized: extractEndNormalized(event),
           isAllDay: detectAllDay(event),
+          location,
+          onlineUrl,
         });
       }
 
@@ -577,9 +765,7 @@ export async function fetchCalendarPreview(
   // Sort chronologically. ISO date strings and RFC3339 strings sort correctly
   // lexicographically: "YYYY-MM-DD" < "YYYY-MM-DDTHH:..." for the same day
   // (all-day events naturally precede timed events on the same day).
-  pool.sort((a, b) =>
-    a.startNormalized.localeCompare(b.startNormalized)
-  );
+  pool.sort((a, b) => a.startNormalized.localeCompare(b.startNormalized));
 
   const previewTitles = pool.slice(0, PREVIEW_LIMIT).map((p) => p.title);
 
@@ -590,6 +776,8 @@ export async function fetchCalendarPreview(
     startIso: p.startNormalized,
     endIso: p.endNormalized,
     isAllDay: p.isAllDay,
+    location: p.location,
+    onlineUrl: p.onlineUrl,
   }));
 
   return { kind: 'success', count, previewTitles, events };

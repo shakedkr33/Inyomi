@@ -385,6 +385,8 @@ export default function ImportCalendarScreen(): React.JSX.Element {
           startIso: e.startIso,
           endIso: e.endIso,
           isAllDay: e.isAllDay,
+          location: e.location,
+          onlineUrl: e.onlineUrl,
         }));
       await importMutation({ events: eventsToImport });
       setStage('success');
