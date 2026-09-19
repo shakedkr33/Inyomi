@@ -1,5 +1,6 @@
 import type React from 'react';
 import { createContext, useContext, useEffect, useState } from 'react';
+import { deriveNameFromServerProfile } from '@/lib/legacyNameHydration';
 import {
   getOnboardingDraft,
   type OnboardingDraft,
@@ -44,6 +45,10 @@ interface OnboardingData {
 // FIXED: added hydrateFromServer to OnboardingContext
 interface ServerProfile {
   fullName?: string;
+  // Phase 1: canonical split-name identity — undefined for legacy users
+  // who only ever saved fullName (see convex/users.ts getMyProfile).
+  firstName?: string;
+  lastName?: string;
   profileColor?: string;
   spaceType?: string;
   familyContacts?: FamilyMember[];
@@ -134,14 +139,23 @@ export function OnboardingProvider({
   }, []);
 
   // FIXED: context now rehydrates from Convex on authenticated app start.
-  // Splits fullName on first whitespace into firstName/lastName — lossy for middle names
-  // but matches what finishOnboarding stores. Does not overwrite fields that are already set,
-  // so a just-completed onboarding session is never clobbered by stale server data.
+  // Phase 1: prefers the canonical server firstName/lastName when present
+  // (users who completed mandatory onboarding under Phase 1, or who
+  // explicitly edited their name — see convex/users.ts updateMyProfile).
+  // Falls back to splitting fullName on first whitespace for legacy users
+  // who only ever saved fullName — lossy for middle names, but matches
+  // what finishOnboarding stored before Phase 1. Does not overwrite
+  // fields that are already set, so a just-completed onboarding session
+  // is never clobbered by stale server data.
   const hydrateFromServer = (profile: ServerProfile) => {
     setData((prev) => {
-      const parts = (profile.fullName ?? '').trim().split(/\s+/);
-      const serverFirstName = parts[0] ?? '';
-      const serverLastName = parts.slice(1).join(' ');
+      // Phase 1 final correction: derivation extracted to a pure helper
+      // (lib/legacyNameHydration.ts) for testability — behavior is
+      // unchanged. This is a DISPLAY/EDIT-CONVENIENCE fallback only; it
+      // must never be treated as an explicit identity edit (see
+      // lib/identityEditGuard.ts, wired in useFamilyProfileEditor).
+      const { firstName: serverFirstName, lastName: serverLastName } =
+        deriveNameFromServerProfile(profile);
       // FIXED: family profile persistence — restore family contacts from Convex on app restart
       const restoredFamilyData =
         prev.familyData ||

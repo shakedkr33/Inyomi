@@ -18,6 +18,7 @@ import { v } from 'convex/values';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
+import { stampEventOwnerScope } from './ownerScope';
 import { resolveMySpaceId } from './members';
 
 // ── hasCompletedGoogleImport ──────────────────────────────────────────────────
@@ -120,6 +121,10 @@ async function insertImportedEvents(
       createdAt: now,
       isAiGenerated: false,
       source: 'google_copy',
+      // Stamped once at import — see convex/ownerScope.ts. A one-time
+      // Google Calendar import is always owned solely by the importing
+      // user (never shared/community at import time).
+      ownerScope: stampEventOwnerScope({ source: 'google_copy', createdBy: userId }),
     });
   }
 }

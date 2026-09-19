@@ -1,9 +1,9 @@
 /**
- * Stage 2B+3 — isMandatorySetupSaveDisabled (lib/mandatoryProfileSetup.ts)
+ * Phase 1 (was Stage 2B+3) — isMandatorySetupSaveDisabled (lib/mandatoryProfileSetup.ts)
  *
- * Mandatory Profile Setup: first name is required — the save button must
- * stay disabled until a non-whitespace first name is entered, and while a
- * save is already in flight.
+ * Mandatory Profile Setup: BOTH first name and last name are required —
+ * the save button must stay disabled until neither is blank/whitespace-
+ * only, and while a save is already in flight.
  *
  * Run with: bun test tests/convex/mandatoryProfileSetup.test.ts
  */
@@ -15,28 +15,42 @@ import {
 } from '../../lib/mandatoryProfileSetup';
 
 describe('isMandatorySetupSaveDisabled', () => {
-  it('empty first name blocks save', () => {
-    expect(isMandatorySetupSaveDisabled('', false)).toBe(true);
+  it('[TEST 1] empty first name blocks save (last name valid)', () => {
+    expect(isMandatorySetupSaveDisabled('', 'כהן', false)).toBe(true);
   });
 
-  it('whitespace-only first name blocks save', () => {
-    expect(isMandatorySetupSaveDisabled('   ', false)).toBe(true);
+  it('[TEST 2] empty last name blocks save (first name valid)', () => {
+    expect(isMandatorySetupSaveDisabled('דנה', '', false)).toBe(true);
   });
 
-  it('valid non-empty first name enables save', () => {
-    expect(isMandatorySetupSaveDisabled('דנה', false)).toBe(false);
+  it('[TEST 3] whitespace-only first name blocks save', () => {
+    expect(isMandatorySetupSaveDisabled('   ', 'כהן', false)).toBe(true);
   });
 
-  it('valid first name with surrounding whitespace still enables save', () => {
-    expect(isMandatorySetupSaveDisabled('  דנה  ', false)).toBe(false);
+  it('[TEST 4] whitespace-only last name blocks save', () => {
+    expect(isMandatorySetupSaveDisabled('דנה', '   ', false)).toBe(true);
   });
 
-  it('save already in flight blocks save even with a valid first name (prevents duplicate submissions)', () => {
-    expect(isMandatorySetupSaveDisabled('דנה', true)).toBe(true);
+  it('[TEST 5] both first and last name present → save allowed', () => {
+    expect(isMandatorySetupSaveDisabled('דנה', 'כהן', false)).toBe(false);
   });
 
-  it('save in flight AND empty name → still disabled', () => {
-    expect(isMandatorySetupSaveDisabled('', true)).toBe(true);
+  it('both blank → blocks save', () => {
+    expect(isMandatorySetupSaveDisabled('', '', false)).toBe(true);
+  });
+
+  it('valid names with surrounding whitespace still enable save', () => {
+    expect(isMandatorySetupSaveDisabled('  דנה  ', '  כהן  ', false)).toBe(
+      false
+    );
+  });
+
+  it('save already in flight blocks save even with valid names (prevents duplicate submissions)', () => {
+    expect(isMandatorySetupSaveDisabled('דנה', 'כהן', true)).toBe(true);
+  });
+
+  it('save in flight AND empty names → still disabled', () => {
+    expect(isMandatorySetupSaveDisabled('', '', true)).toBe(true);
   });
 });
 

@@ -53,12 +53,24 @@ describe('family-profile.tsx — no REPLACE to a sibling Tabs.Screen', () => {
       ) ?? []
     ).length;
     // handleSkipOptionalSetup (.then + .catch), handleSaveOptionalSetup,
-    // handleSaveMandatorySetup, and the optional-mode back button.
-    expect(navigateCount).toBeGreaterThanOrEqual(5);
+    // and the optional-mode back button. handleSaveMandatorySetup
+    // deliberately does NOT call router.navigate itself anymore — see the
+    // Part 7 NAVIGATE-"index" race fix documented on
+    // needsMandatorySetupExitRedirect in app/(authenticated)/_layout.tsx,
+    // which now performs that specific transition instead.
+    expect(navigateCount).toBeGreaterThanOrEqual(4);
+  });
+
+  it('handleSaveMandatorySetup no longer performs its own navigation — the authenticated layout does (Part 7 NAVIGATE-index race fix)', () => {
+    const match = FAMILY_PROFILE_SOURCE.match(
+      /const handleSaveMandatorySetup[\s\S]*?\n {2}\};/
+    );
+    expect(match).not.toBeNull();
+    expect(match?.[0] ?? '').not.toContain('router.navigate');
   });
 });
 
-describe('phone-match-confirmation.tsx — no REPLACE to a sibling Tabs.Screen', () => {
+describe('phone-match-confirmation.tsx — single source of truth for navigation (Part 7 NAVIGATE-index race fix)', () => {
   it('never calls router.replace targeting "/(authenticated)" or the family-profile-setup sibling tab', () => {
     expect(PHONE_MATCH_SOURCE).not.toContain(
       "router.replace('/(authenticated)')"
@@ -68,11 +80,19 @@ describe('phone-match-confirmation.tsx — no REPLACE to a sibling Tabs.Screen',
     );
   });
 
-  it('uses router.navigate instead', () => {
-    expect(PHONE_MATCH_SOURCE).toContain("router.navigate('/(authenticated)')");
-    expect(PHONE_MATCH_SOURCE).toContain(
-      "router.navigate('/(authenticated)/family-profile-setup')"
-    );
+  // This screen used to imperatively navigate itself immediately after
+  // acceptPendingPhoneMatch/declinePhoneMatches resolved, racing the
+  // authenticated layout's OWN reactive redirect effect (both recompute the
+  // same post-mutation destination from the same server state) — whichever
+  // dispatched second could target an already-unmounted Tabs navigator,
+  // producing the reported "NAVIGATE {name:'index'}" unhandled warning. The
+  // fix is architectural: this screen must never call router.navigate /
+  // router.replace / router.push itself — the authenticated layout is the
+  // ONLY place that decides/performs this transition, driven by rendered
+  // state (see resolvePostAuthOnboardingRoute).
+  it('does not import useRouter or call any router navigation method itself', () => {
+    expect(PHONE_MATCH_SOURCE).not.toContain('useRouter');
+    expect(PHONE_MATCH_SOURCE).not.toMatch(/router\.(navigate|replace|push)\(/);
   });
 });
 

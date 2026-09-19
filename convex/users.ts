@@ -3,7 +3,11 @@ import { v } from 'convex/values';
 import type { Id } from './_generated/dataModel';
 import { mutation, query } from './_generated/server';
 // FIXED: updateMyProfile and listMyFamilyContacts now use identical spaceId resolution
-import { resolveKind, resolveMySpaceId } from './members';
+import {
+  isEntityClaimedByOtherUser,
+  resolveKind,
+  resolveMySpaceId,
+} from './members';
 
 // ── Phone normalization ───────────────────────────────────────────────────────
 // FIXED: retroactive phone-based family member matching when contacts are saved
@@ -263,6 +267,10 @@ export const getMyProfile = query({
 
     return {
       fullName: user.fullName,
+      // Phase 1: canonical split-name identity — optional/undefined for
+      // legacy users who only ever saved fullName (no migration performed).
+      firstName: user.firstName,
+      lastName: user.lastName,
       profileColor: user.profileColor,
       spaceType,
       familyContacts: user.familyContacts,
@@ -276,6 +284,15 @@ export const getMyProfile = query({
 export const updateMyProfile = mutation({
   args: {
     fullName: v.optional(v.string()),
+    // Phase 1: canonical split-name identity. Optional — unrelated profile
+    // saves (e.g. just adding a family member) must never be forced to
+    // supply these. When either is explicitly provided, both are used to
+    // regenerate fullName, and any of the caller's OWN claimed family
+    // entities (in another admin's space) have their displayName synced
+    // to the new canonical name — see instruction #11 / claimed-name
+    // self-edit synchronization.
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
     profileColor: v.optional(v.string()),
     familyContacts: v.optional(v.any()),
   },
@@ -293,6 +310,31 @@ export const updateMyProfile = mutation({
     };
     if (args.fullName !== undefined) patch.fullName = args.fullName;
     if (args.profileColor !== undefined) patch.profileColor = args.profileColor;
+
+    // Phase 1: explicit self name edit — regenerate canonical fullName
+    // from the merged first/last name and overwrite the legacy fullName
+    // patch above with the canonical derivation (never forced on callers
+    // who don't touch these fields).
+    let canonicalFullNameForSync: string | undefined;
+    if (args.firstName !== undefined || args.lastName !== undefined) {
+      const nextFirstName =
+        args.firstName !== undefined
+          ? args.firstName.trim()
+          : (user.firstName ?? '');
+      const nextLastName =
+        args.lastName !== undefined
+          ? args.lastName.trim()
+          : (user.lastName ?? '');
+      patch.firstName = nextFirstName || undefined;
+      patch.lastName = nextLastName || undefined;
+      const derivedFullName = [nextFirstName, nextLastName]
+        .filter(Boolean)
+        .join(' ');
+      if (derivedFullName) {
+        patch.fullName = derivedFullName;
+        canonicalFullNameForSync = derivedFullName;
+      }
+    }
 
     // FIXED: retroactive phone-based family member matching when contacts are saved
     // Handles the case where the invited user already had a Convex account when added.
@@ -321,6 +363,26 @@ export const updateMyProfile = mutation({
     }
 
     await ctx.db.patch(userId, patch);
+
+    // Phase 1: claimed-user self name edit synchronization — if the
+    // caller just changed their own canonical name, propagate it to any
+    // of THEIR OWN claimed entity rows (e.g. in a family admin's space).
+    // This is the same displayName they own; no other user's data is
+    // touched here.
+    if (canonicalFullNameForSync) {
+      const myRows = await ctx.db
+        .query('members')
+        .withIndex('by_user', (q) => q.eq('userId', userId))
+        .collect();
+      const myClaimedEntities = myRows.filter(
+        (r) => resolveKind(r) === 'entity' && r.inviteStatus === 'joined'
+      );
+      for (const entity of myClaimedEntities) {
+        await ctx.db.patch(entity._id, {
+          displayName: canonicalFullNameForSync,
+        });
+      }
+    }
 
     // FIXED: selectedPhoneNumber and inviteStatus now persisted to members table
     // Sync resolved family contacts into the members table so the by_phone index
@@ -405,9 +467,20 @@ export const updateMyProfile = mutation({
               contact.name
             );
             if (existing) {
+              // Phase 1: claimed-name protection — a real claimed user
+              // (joined by a different real user than the caller) owns
+              // their own canonical displayName; the family admin
+              // performing this sync must never overwrite it. Other
+              // fields for this contact are still applied normally.
+              const protectedDisplayName = isEntityClaimedByOtherUser(
+                existing,
+                userId
+              )
+                ? existing.displayName
+                : (contact.name ?? existing.displayName);
               await ctx.db.patch(existing._id, {
                 kind: 'entity', // stamp kind on pre-existing rows opportunistically
-                displayName: contact.name ?? existing.displayName,
+                displayName: protectedDisplayName,
                 color: contact.color ?? existing.color,
                 memberType,
               });
@@ -480,13 +553,21 @@ export const updateMyProfile = mutation({
           const existing = existingByPhone ?? existingByName;
 
           if (existing) {
+            // Phase 1: claimed-name protection — see identical rule above
+            // for the manual-member branch.
+            const protectedDisplayName = isEntityClaimedByOtherUser(
+              existing,
+              userId
+            )
+              ? existing.displayName
+              : (contact.name ?? existing.displayName);
             await ctx.db.patch(existing._id, {
               kind: 'entity', // stamp kind on pre-existing rows opportunistically
               selectedPhoneNumber: normalizedPhone,
               inviteStatus: contact.inviteStatus ?? existing.inviteStatus,
               matchedUserId: matchedId ?? existing.matchedUserId,
               userId: matchedId ?? existing.userId,
-              displayName: contact.name ?? existing.displayName,
+              displayName: protectedDisplayName,
               color: contact.color ?? existing.color,
               memberType,
             });

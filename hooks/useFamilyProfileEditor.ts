@@ -9,6 +9,9 @@ import {
 } from '../components/onboarding/ColorPicker';
 import type { FamilyMember } from '../contexts/OnboardingContext';
 import { useOnboarding } from '../contexts/OnboardingContext';
+// Phase 1 final correction: pure guard preventing a hydrated fallback name
+// from being silently persisted as an identity edit on an unrelated save.
+import { buildProfileNameSavePatch } from '../lib/identityEditGuard';
 // Stage 2B+3: actual configured family members determine spaceType, never Q1.
 import { deriveSpaceTypeFromFamilyMembers } from '../lib/spaceTypeDerivation';
 // FIXED: added family-member status fields — maskPhone used when setting selectedPhoneNumber
@@ -50,9 +53,29 @@ export function useFamilyProfileEditor(
 
   // ── Core profile state ────────────────────────────────────────────────────
   // FIXED: added owner personal field hydration — reads firstName/lastName/nickname/personalColor from context
-  const [firstName, setFirstName] = useState(data.firstName || '');
-  const [lastName, setLastName] = useState(data.lastName || '');
+  const [firstName, setFirstNameState] = useState(data.firstName || '');
+  const [lastName, setLastNameState] = useState(data.lastName || '');
   const [nickname, setNickname] = useState(data.nickname || '');
+
+  // Phase 1 final correction: distinguishes a hydrated fallback name
+  // (derived by splitting fullName — see lib/legacyNameHydration.ts) from
+  // an EXPLICIT user identity edit. Initialized to false on every mount —
+  // hydration (via the `data.firstName || ''` initializers above) never
+  // sets this; only the wrapped setFirstName/setLastName below do, and
+  // only in direct response to the user typing. saveProfile() (optional/
+  // returning-user path) uses this to decide whether firstName/lastName
+  // may be sent to updateMyProfile at all — see lib/identityEditGuard.ts.
+  // Mandatory onboarding (saveAll()) is NOT gated by this flag.
+  const [identityEdited, setIdentityEdited] = useState(false);
+
+  const setFirstName = (value: string) => {
+    setIdentityEdited(true);
+    setFirstNameState(value);
+  };
+  const setLastName = (value: string) => {
+    setIdentityEdited(true);
+    setLastNameState(value);
+  };
   const [personalColor, setPersonalColor] = useState<string>(
     data.personalColor || PROFILE_COLORS[5]
   );
@@ -399,33 +422,41 @@ export function useFamilyProfileEditor(
   /**
    * Persist the full profile to OnboardingContext and to Convex.
    * Returns the mutation Promise so callers can await completion before navigating.
+   *
+   * Phase 1: BOTH firstName and lastName are required by finishOnboarding
+   * (mandatory onboarding identity completion — see
+   * lib/mandatoryProfileSetup.ts's isMandatorySetupSaveDisabled, which the
+   * caller must use to keep the Save button disabled until both are
+   * non-empty). This function trims and forwards them as-is; it does not
+   * apply an "ownerFullName"/"משתמש" fallback for the server args since
+   * the caller is expected to have already validated both are present.
    */
   const saveAll = (): Promise<{ spaceId: string }> => {
-    // Build full name: prefer split firstName+lastName, fall back to ownerFullName
-    const splitName = [firstName.trim(), lastName.trim()]
-      .filter(Boolean)
-      .join(' ');
-    const nameSource = splitName || ownerFullName.trim() || 'משתמש';
+    const trimmedFirstName = firstName.trim();
+    const trimmedLastName = lastName.trim();
 
     // Update in-memory context
     updateData({
-      firstName: firstName.trim() || nameSource,
-      lastName: lastName.trim() || undefined,
+      firstName: trimmedFirstName,
+      lastName: trimmedLastName || undefined,
       nickname: nickname.trim() || undefined,
       personalColor,
       familyData: {
         owner: {
-          firstName: firstName.trim() || nameSource,
-          lastName: lastName.trim() || undefined,
+          firstName: trimmedFirstName,
+          lastName: trimmedLastName || undefined,
           color: personalColor,
         },
         familyMembers,
       },
     });
 
-    // Persist to Convex — sets onboardingCompleted: true on the user record.
-    // Called from the mandatory Profile Setup screen to explicitly complete
-    // onboarding; returning users (optional setup) use saveProfile() instead.
+    // Persist to Convex — sets onboardingCompleted: true on the user record
+    // (unless this user has a valid claimed relationship, in which case
+    // finishOnboarding reuses the existing space/access/entity instead —
+    // see convex/onboarding.ts's claimed path). Called from the mandatory
+    // Profile Setup screen to explicitly complete onboarding; returning
+    // users (optional setup) use saveProfile() instead.
     //
     // Stage 2B+3 LOCKED RULE: spaceType is derived from the ACTUAL configured
     // family members (Self-only → personal; Self + a person member → family;
@@ -433,7 +464,8 @@ export function useFamilyProfileEditor(
     // which is analytics/personalization only and must never decide
     // architecture. See lib/spaceTypeDerivation.ts.
     return finishOnboarding({
-      fullName: nameSource,
+      firstName: trimmedFirstName,
+      lastName: trimmedLastName,
       profileColor: personalColor,
       spaceType: deriveSpaceTypeFromFamilyMembers(familyMembers),
       challenges: data.challenges ?? [],
@@ -445,22 +477,40 @@ export function useFamilyProfileEditor(
   /**
    * Persist profile updates to Convex for returning users (no new space created).
    * // FIXED: family profile persistence — use this instead of saveAll() in family-profile.tsx
+   *
+   * Phase 1: unlike saveAll() (mandatory onboarding), neither name field is
+   * required here — this is an optional/returning-user edit and must never
+   * be forced.
+   *
+   * Phase 1 final correction: firstName/lastName/fullName are now only
+   * included in the updateMyProfile payload when the user actually typed
+   * into the name fields during this session (identityEdited — see
+   * lib/identityEditGuard.ts and the wrapped setFirstName/setLastName
+   * above). A legacy user's fullName-derived local state (hydrated purely
+   * for display/edit convenience — see lib/legacyNameHydration.ts) must
+   * never be silently sent back to the server on an unrelated save (e.g.
+   * adding a family member, changing color). When identityEdited is true,
+   * both names are forwarded as before, updateMyProfile regenerates the
+   * canonical fullName, and the caller's own claimed family entity (if
+   * any) is synced to it.
    */
   const saveProfile = (): Promise<void> => {
-    const splitName = [firstName.trim(), lastName.trim()]
+    const trimmedFirstName = firstName.trim();
+    const trimmedLastName = lastName.trim();
+    const splitName = [trimmedFirstName, trimmedLastName]
       .filter(Boolean)
       .join(' ');
     const nameSource = splitName || ownerFullName.trim() || 'משתמש';
 
     updateData({
-      firstName: firstName.trim() || nameSource,
-      lastName: lastName.trim() || undefined,
+      firstName: trimmedFirstName || nameSource,
+      lastName: trimmedLastName || undefined,
       nickname: nickname.trim() || undefined,
       personalColor,
       familyData: {
         owner: {
-          firstName: firstName.trim() || nameSource,
-          lastName: lastName.trim() || undefined,
+          firstName: trimmedFirstName || nameSource,
+          lastName: trimmedLastName || undefined,
           color: personalColor,
         },
         familyMembers,
@@ -471,8 +521,13 @@ export function useFamilyProfileEditor(
     const deduped = familyMembers.filter(
       (m, i, arr) => arr.findIndex((x) => x.id === m.id) === i
     );
+    const namePatch = buildProfileNameSavePatch({
+      identityEdited,
+      firstName,
+      lastName,
+    });
     return updateMyProfile({
-      fullName: nameSource,
+      ...namePatch,
       profileColor: personalColor,
       familyContacts: deduped,
     }).then(() => undefined);

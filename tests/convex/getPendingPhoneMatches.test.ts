@@ -322,8 +322,11 @@ describe('getPendingPhoneMatches — response shape [TEST 11-13]', () => {
   });
 
   it('minimal-safe cleanup: the mapped response object does not include spaceId', () => {
+    // Part 3 UX correction added memberNames (every other existing family
+    // member's display name — see the doc comment above the query) to this
+    // same mapped object; spaceId remains deliberately excluded.
     expect(getPendingPhoneMatchesSrc).toContain(
-      "return safeCandidates.map((row) => ({\n      memberId: row._id,\n      spaceName: spaceNameById.get(row.spaceId) ?? '',\n      displayName: row.displayName,\n    }));"
+      "return safeCandidates.map((row) => ({\n      memberId: row._id,\n      spaceName: spaceNameById.get(row.spaceId) ?? '',\n      displayName: row.displayName,\n      memberNames: memberNamesBySpaceId.get(row.spaceId) ?? [],\n    }));"
     );
   });
 

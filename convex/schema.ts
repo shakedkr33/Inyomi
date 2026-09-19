@@ -15,6 +15,16 @@ export default defineSchema({
     email: v.optional(v.string()),
     emailVerified: v.optional(v.boolean()),
     fullName: v.optional(v.string()),
+    // ── Canonical split-name identity (Phase 1) ────────────────────────────
+    // Optional for backward compatibility — legacy users may have only
+    // fullName populated (firstName/lastName undefined). No migration is
+    // performed for existing users. New users completing mandatory
+    // onboarding write both firstName AND lastName (required there — see
+    // lib/mandatoryProfileSetup.ts). fullName is always kept in sync
+    // (`${firstName} ${lastName}`) on every canonical save for backward
+    // compatibility with existing readers.
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
     profileColor: v.optional(v.string()),
     role: v.union(v.literal('admin'), v.literal('user')),
     userType: v.optional(v.string()),
@@ -62,6 +72,18 @@ export default defineSchema({
     // before this field existed — they are already onboardingCompleted so
     // routing never checks this field for them).
     phoneMatchResolvedAt: v.optional(v.number()),
+    // ── Family Membership Lifecycle Phase 1 — selected pending match ────────
+    // Set by acceptPendingPhoneMatch when the user explicitly selects ONE
+    // discovered phone match to continue toward. This is SELECTION ONLY —
+    // it never implies access/membership by itself (see
+    // convex/members.ts's doc comments on acceptPendingPhoneMatch and
+    // executeFamilyJoin). The actual join transaction (executeFamilyJoin,
+    // invoked by either finishOnboarding's claimed path for a brand-new
+    // user, or completeExistingUserFamilyJoin for an already-onboarded
+    // user) clears this field once real membership is granted. Cleared
+    // without granting access by undoClaimedFamilyMatch ("change your
+    // mind" / Back).
+    pendingMatchMemberId: v.optional(v.id('members')),
   })
     .index('by_email', ['email'])
     .index('by_phone', ['phone'])
@@ -112,7 +134,12 @@ export default defineSchema({
     .index('by_space', ['spaceId'])
     .index('by_user', ['userId'])
     .index('by_kind', ['spaceId', 'kind'])
-    .index('by_phone', ['selectedPhoneNumber']),
+    .index('by_phone', ['selectedPhoneNumber'])
+    // Family Membership Lifecycle Phase 1 — lookup rows discovery-linked to
+    // a given real user via matchOnPhone, independent of the by_phone
+    // index (which is keyed on the entity's own phone, not the matched
+    // user). Used by getMyPendingFamilyPreview / executeFamilyJoin.
+    .index('by_matched_user', ['matchedUserId']),
 
   // ═══════════════════════════════════════════════════════
   // טבלת אירועים
@@ -209,10 +236,27 @@ export default defineSchema({
     // Normalized start-time key for recurring-instance / exception identification.
     // Exact mapping from Google fields is deferred to the copy implementation.
     externalOriginalStartKey: v.optional(v.string()),
+    // ── Canonical ownership scope (Family Membership Lifecycle Phase 0) ────
+    // Stamped ONCE at creation/import — see convex/ownerScope.ts. Answers
+    // "who owns this record" (personal to the creator / family-shared /
+    // community), which is a DIFFERENT concept from sharing state
+    // (allFamily, sharedWithUserIds, sharedWithFamilyMemberIds). Never
+    // recomputed on ordinary edits — see convex/ownerScope.ts doc comment.
+    // Optional/undefined on all pre-existing rows until the deterministic
+    // backfill (convex/backfills.ts) runs; ambiguous rows are reported,
+    // never guessed.
+    ownerScope: v.optional(
+      v.union(
+        v.literal('personal'),
+        v.literal('family'),
+        v.literal('community')
+      )
+    ),
   })
     .index('by_space_and_time', ['spaceId', 'startTime'])
     .index('by_creator', ['createdBy'])
     .index('by_space', ['spaceId'])
+    .index('by_owner_scope', ['spaceId', 'ownerScope'])
     .index('by_community_date', ['communityId', 'startTime'])
     // FIX C.2 — bounded retrieval of RECENT cancellations for Community
     // Main's "מה חשוב עכשיו" (see events.listRecentCancelledCommunityEvents).
@@ -350,11 +394,23 @@ export default defineSchema({
     deletedAt: v.optional(v.number()), // ms timestamp when soft-deleted
     deleteExpiresAt: v.optional(v.number()), // ms timestamp after which hard-delete is safe
     deletedBy: v.optional(v.id('users')), // user who performed the soft delete
+    // ── Canonical ownership scope (Family Membership Lifecycle Phase 0) ────
+    // See the matching comment on `events.ownerScope` above — same
+    // semantics, stamped once at creation, never recomputed on ordinary
+    // edits (e.g. assignee changes).
+    ownerScope: v.optional(
+      v.union(
+        v.literal('personal'),
+        v.literal('family'),
+        v.literal('community')
+      )
+    ),
   })
     .index('by_space_completed', ['spaceId', 'completed'])
     .index('by_assigned', ['assignedTo'])
     .index('by_creator', ['createdBy'])
     .index('by_space', ['spaceId'])
+    .index('by_owner_scope', ['spaceId', 'ownerScope'])
     .index('by_community', ['communityId'])
     .index('by_assigned_source_event', ['assignedTo', 'sourceEventId'])
     .index('by_deleted_by', ['deletedBy', 'deletedAt'])
@@ -427,10 +483,24 @@ export default defineSchema({
     processedData: v.optional(v.any()),
     errorMessage: v.optional(v.string()),
     createdAt: v.number(),
+    // ── Canonical ownership scope (Family Membership Lifecycle Phase 0) ────
+    // Captures are always user-owned personal content today (no production
+    // creation mutation currently exists — see convex/ownerScope.ts). Field
+    // added now so the schema/backfill/migration story is consistent for
+    // when capture creation ships; migratePersonalData (Phase 3) will read
+    // this the same way it reads events/tasks.
+    ownerScope: v.optional(
+      v.union(
+        v.literal('personal'),
+        v.literal('family'),
+        v.literal('community')
+      )
+    ),
   })
     .index('by_space_pending', ['spaceId', 'status'])
     .index('by_user', ['userId'])
-    .index('by_space', ['spaceId']),
+    .index('by_space', ['spaceId'])
+    .index('by_owner_scope', ['spaceId', 'ownerScope']),
 
   // ═══════════════════════════════════════════════════════
   // משימות אירוע (checklist קולבורטיבי באירוע)

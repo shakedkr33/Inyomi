@@ -574,6 +574,18 @@ export default function AuthenticatedLayout() {
     'phone-match-confirmation'
   );
 
+  // Part 7: tracks whether family-profile-setup was ever visited while
+  // onboarding was still incomplete (the MANDATORY case) during this
+  // mounted session, so the exit redirect below never fires for the
+  // OPTIONAL post-auth nudge (reached only once onboardingComplete is
+  // already true). See needsMandatorySetupExitRedirect's doc comment.
+  const wasMandatorySetupRef = useRef(false);
+  useEffect(() => {
+    if (isProfileSetupRoute && userStatus?.onboardingComplete === false) {
+      wasMandatorySetupRef.current = true;
+    }
+  }, [isProfileSetupRoute, userStatus?.onboardingComplete]);
+
   // Stage 2B+3: onboarding-incomplete routing is entirely driven by the
   // pure decision tree in lib/onboardingRouting.ts — see its doc comment
   // for the full locked product flow. 'wait' means keep showing the splash
@@ -605,6 +617,31 @@ export default function AuthenticatedLayout() {
     !familyBootstrapStatus.hasConfiguredFamily &&
     !familyBootstrapStatus.joinedExistingSpace &&
     familyBootstrapStatus.familySetupSkippedAt === null;
+
+  // Part 7 QA fix (NAVIGATE "index" unhandled after Save): family-profile.tsx's
+  // handleSaveMandatorySetup used to call router.navigate('/(authenticated)')
+  // itself from inside saveAll().then(). That screen is mounted as a
+  // Tabs.Screen, so this worked most of the time — but the instant
+  // finishOnboarding's write makes userStatus.onboardingComplete flip to
+  // true, needsHydration (below) becomes true until hydrateFromServer's own
+  // effect runs, which makes isReadyToRoute false for one or more renders —
+  // during which this component renders <InYomiSplashScreen /> INSTEAD OF
+  // <Tabs>. If the imperative navigate call landed in that exact window, the
+  // Tabs navigator it targeted no longer existed, producing exactly the
+  // reported "NAVIGATE {name:'index'}" unhandled warning. Same root cause
+  // class as the phone-match-confirmation race documented above — the fix
+  // is the same: this layout is the ONLY place that performs this
+  // transition, driven by rendered state, never an imperative call from
+  // inside the mutation's own .then(). wasMandatorySetupRef distinguishes
+  // this (mandatory, onboarding-incomplete-on-entry) from the OPTIONAL
+  // post-auth family-profile-setup nudge (reached only when
+  // onboardingComplete is ALREADY true — see family-bootstrap.tsx), which
+  // must never be force-exited on entry.
+  const needsMandatorySetupExitRedirect =
+    isAuthenticated &&
+    isProfileSetupRoute &&
+    userStatus?.onboardingComplete === true &&
+    wasMandatorySetupRef.current;
   // FIXED: family profile persistence — for returning users, hold the spinner until hydrateFromServer
   // has actually run (onboardingCompleted flips true). Without this gate, tabs render with empty
   // OnboardingContext before the hydration effect fires, causing a flash of personal-only state in
@@ -692,6 +729,18 @@ export default function AuthenticatedLayout() {
       router.replace('/(authenticated)/family-bootstrap');
       return;
     }
+
+    if (needsMandatorySetupExitRedirect) {
+      // Same-navigator tab switch (router.navigate, not replace — see the
+      // REPLACE-vs-NAVIGATE precedent documented in
+      // tests/convex/mandatoryProfileSetupRoutingFix.test.ts). This only
+      // runs once Tabs has actually (re)mounted for this render, because
+      // isReadyToRoute/needsHydration have already resolved by the time
+      // this effect body executes.
+      wasMandatorySetupRef.current = false;
+      router.navigate('/(authenticated)');
+      return;
+    }
   }, [
     isAuthenticated,
     isReadyToRoute,
@@ -699,6 +748,7 @@ export default function AuthenticatedLayout() {
     needsPhoneMatchConfirmationRedirect,
     needsMandatoryProfileSetupRedirect,
     needsFamilyBootstrapRedirect,
+    needsMandatorySetupExitRedirect,
     router,
   ]);
 
@@ -816,11 +866,26 @@ export default function AuthenticatedLayout() {
           <Tabs.Screen name="import-calendar" options={{ href: null }} />
           <Tabs.Screen name="import-holidays" options={{ href: null }} />
           <Tabs.Screen name="family-profile" options={{ href: null }} />
-          <Tabs.Screen name="family-profile-setup" options={{ href: null }} />
+          {/* Part 8: family-profile-setup is ONLY ever reached as part of
+              mandatory onboarding (needsMandatoryProfileSetupRedirect
+              above) — the normal Settings entry point uses the separate
+              `family-profile` route above, which keeps the default tab
+              bar. tabBarStyle: { display: 'none' } here hides the
+              persistent bottom tab bar only while this screen is
+              focused; React Navigation restores the navigator's own
+              screenOptions.tabBarStyle automatically once the user
+              leaves this screen (same static-per-screen pattern already
+              used below for `subscription`). */}
+          <Tabs.Screen
+            name="family-profile-setup"
+            options={{ href: null, tabBarStyle: { display: 'none' } }}
+          />
           <Tabs.Screen name="family-bootstrap" options={{ href: null }} />
+          {/* Part 8: mandatory phone-match confirmation is also
+              onboarding-only — hide the bottom tab bar here too. */}
           <Tabs.Screen
             name="phone-match-confirmation"
-            options={{ href: null }}
+            options={{ href: null, tabBarStyle: { display: 'none' } }}
           />
           <Tabs.Screen name="community-create" options={{ href: null }} />
           <Tabs.Screen name="community-edit/[id]" options={{ href: null }} />

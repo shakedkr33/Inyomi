@@ -3,6 +3,7 @@ import { v } from 'convex/values';
 import { buildOnboardingAnswersPatch } from '../lib/onboardingAnswers';
 import type { Id } from './_generated/dataModel';
 import { mutation } from './_generated/server';
+import { executeFamilyJoin, resolveKind } from './members';
 
 // ── Phone normalization ───────────────────────────────────────────────────────
 // FIXED: retroactive phone-based family member matching on initial onboarding save
@@ -29,11 +30,19 @@ type FamilyContactEntry = {
 
 /**
  * פונקציה זו נקראת בסוף תהליך האונבורדינג.
- * היא מעדכנת את פרטי המשתמש ויוצרת עבורו את ה-Space (מרחב העבודה) הראשון.
+ * היא מעדכנת את פרטי המשתמש ויוצרת עבורו את ה-Space (מרחב העבודה) הראשון —
+ * או, אם המשתמש כבר קיבל גישה למשפחה קיימת (claimed path, ראו למטה), משתמשת
+ * מחדש במרחב/גישה/ישות הקיימים במקום ליצור כפילות.
+ *
+ * Phase 1 — canonical identity: firstName + lastName are BOTH required
+ * (see lib/mandatoryProfileSetup.ts for the client-side save-disable rule
+ * that mirrors this server-side validation). fullName is always derived
+ * from them for backward compatibility with existing readers.
  */
 export const finishOnboarding = mutation({
   args: {
-    fullName: v.string(),
+    firstName: v.string(),
+    lastName: v.string(),
     profileColor: v.string(),
     spaceType: v.string(),
     challenges: v.array(v.string()),
@@ -52,6 +61,56 @@ export const finishOnboarding = mutation({
     const user = await ctx.db.get(userId);
     if (!user) throw new Error('משתמש לא נמצא');
 
+    // Phase 1: both first name and last name are mandatory during
+    // onboarding identity completion. Trim and reject blank/whitespace.
+    const firstName = args.firstName.trim();
+    const lastName = args.lastName.trim();
+    if (!firstName) throw new Error('שם פרטי הוא שדה חובה');
+    if (!lastName) throw new Error('שם משפחה הוא שדה חובה');
+    const fullName = `${firstName} ${lastName}`;
+
+    // ── Family Membership Lifecycle Phase 1: claimed-user path ──────────
+    // If the authenticated user previously SELECTED a pending phone match
+    // via acceptPendingPhoneMatch (recorded as `pendingMatchMemberId` —
+    // selection only, no access granted yet), this is where the actual
+    // join happens: executeFamilyJoin re-verifies the match and the
+    // one-active-family guard, then grants real access. This guarantees
+    // no duplicate space is ever created for a claimed user, and that
+    // access is never granted before the user's identity (name) is known.
+    const pendingMemberId = user.pendingMatchMemberId;
+    const pendingEntity = pendingMemberId
+      ? await ctx.db.get(pendingMemberId)
+      : null;
+    const hasValidPendingMatch =
+      pendingEntity !== null &&
+      pendingEntity !== undefined &&
+      resolveKind(pendingEntity) === 'entity' &&
+      pendingEntity.matchedUserId === userId &&
+      (pendingEntity.userId === undefined || pendingEntity.userId === userId);
+
+    if (pendingMemberId && hasValidPendingMatch) {
+      const spaceId = await executeFamilyJoin(ctx, userId, pendingMemberId);
+
+      // Claimed user owns their canonical identity: the entity's
+      // displayName is updated to the canonical full name, even if the
+      // family manager originally created it under a different name.
+      await ctx.db.patch(pendingMemberId, { displayName: fullName });
+
+      await ctx.db.patch(userId, {
+        firstName,
+        lastName,
+        fullName,
+        profileColor: args.profileColor,
+        isActive: true,
+        onboardingCompleted: true,
+        profileSetupCompletedAt: user.profileSetupCompletedAt ?? Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      return { spaceId };
+    }
+
+    // ── Normal new-user path (no valid claimed relationship) ────────────
     // 3. עדכון פרטי המשתמש
     // FIXED: retroactive phone-based family member matching on initial onboarding save
     // Resolve matchedUserId for any family member whose selectedPhoneNumber already
@@ -75,7 +134,9 @@ export const finishOnboarding = mutation({
     }
 
     await ctx.db.patch(userId, {
-      fullName: args.fullName,
+      firstName,
+      lastName,
+      fullName,
       profileColor: args.profileColor,
       familyContacts: resolvedFamilyContacts,
       isActive: true,

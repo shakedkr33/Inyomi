@@ -7,6 +7,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation, mutation, query } from './_generated/server';
 import { insertCommunityActivity } from './communityActivities';
+import { stampEventOwnerScope } from './ownerScope';
 import {
   accumulateMainOverviewCandidate,
   type CommunityEventEarlyRemovalVerdict,
@@ -171,6 +172,12 @@ async function syncCommunityEventImportantItemTasks(
       createdAt: Date.now(),
       sourceType: 'community_event_important_item',
       sourceEventId: args.eventId,
+      // Canonical community checklist item (no assignedTo — see the
+      // assignedTo===undefined filter above that distinguishes this from
+      // a per-user personal copy of the same sourceType, e.g.
+      // toggleImportantItemCheck in convex/tasks.ts). Stamped once here,
+      // never recomputed by later edits — see convex/ownerScope.ts.
+      ownerScope: 'community',
     });
     await ctx.db.patch(taskId, { sourceImportantItemId: taskId });
     keptTaskIds.add(taskId as string);
@@ -1711,6 +1718,15 @@ export const create = mutation({
       isAiGenerated: false,
       createdBy: userId,
       createdAt: now,
+      // Stamped once at creation — see convex/ownerScope.ts. Never
+      // recomputed by update mutations.
+      ownerScope: stampEventOwnerScope({
+        communityId: args.communityId,
+        allFamily: args.allFamily,
+        sharedWithFamilyMemberIds: args.sharedWithFamilyMemberIds,
+        sharedWithUserIds: args.sharedWithUserIds,
+        createdBy: userId,
+      }),
     });
 
     if (args.communityId) {
@@ -2670,6 +2686,12 @@ export const copyGoogleEvents = mutation({
         externalEventId: candidate.externalEventId,
         externalICalUID: candidate.externalICalUID,
         externalOriginalStartKey: candidate.externalOriginalStartKey,
+        // Stamped once at import — see convex/ownerScope.ts. Imported
+        // personal-calendar copies are always personal to the importer.
+        ownerScope: stampEventOwnerScope({
+          source: 'google_copy',
+          createdBy: userId,
+        }),
       });
 
       // ── Create the permanent registry record ──────────────────────────────

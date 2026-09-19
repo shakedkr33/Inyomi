@@ -3,6 +3,7 @@ import { useMutation, useQuery } from 'convex/react';
 import { usePathname, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Modal,
@@ -50,6 +51,7 @@ import {
 import { getSelfProfileAvatarInitials } from '../../lib/avatarInitials';
 import {
   canManageFamilyProfile as canManageFamilyProfileHelper,
+  isClaimedMandatorySetup as isClaimedMandatorySetupHelper,
   isMandatorySetupSaveDisabled,
 } from '../../lib/mandatoryProfileSetup';
 import { normalizeIsraeliPhone } from '../../lib/phoneUtils';
@@ -88,6 +90,10 @@ export default function FamilyProfileScreen() {
       ? 'השלמת הפרופיל שלך'
       : 'רוצה להשלים את הפרופיל שלך?';
 
+  const undoClaimedFamilyMatch = useMutation(
+    api.members.undoClaimedFamilyMatch
+  );
+
   // Initialise from previously saved context data (unlike onboarding which starts empty)
   const editor = useFamilyProfileEditor(data.familyData?.familyMembers ?? []);
 
@@ -102,27 +108,68 @@ export default function FamilyProfileScreen() {
   // on any entity row whose matchedUserId matches the admin (e.g. admin added by a member)
   const mySpaceRole = useQuery(api.members.getMySpaceRole);
   const spaceAdminUserId = useQuery(api.members.getSpaceAdminId);
+  // Family Membership Lifecycle Phase 1: whether the caller has SELECTED
+  // (but not yet joined) a pending family match — see
+  // convex/members.ts hasPendingMatchMemberId. This is the correct signal
+  // for claimed-mandatory-setup detection now that acceptPendingPhoneMatch
+  // no longer grants a real access row immediately.
+  const hasPendingMatchMemberId = useQuery(api.members.hasPendingMatchMemberId);
   // FIXED: admin badge shown only for admin user
   // Previously defaulted to `true` while loading, causing the badge to flash for members.
   // mySpaceRole?.role === 'admin' is false for undefined (loading) and null (no space),
   // so there is no incorrect flash.
   const isAdmin = mySpaceRole?.role === 'admin';
   const adminUserId = spaceAdminUserId ?? undefined;
-  // FIXED: mandatory Profile Setup happens BEFORE any space exists, so
-  // mySpaceRole is always null at that point and isAdmin is always false —
-  // which previously hid every family-member/pet "add" action during
-  // mandatory onboarding (bug: no usable add action available). During
-  // mandatory setup the user is editing their OWN in-progress, not-yet-
-  // persisted family/pet list (local editor state only — nothing is written
-  // to the members table until saveAll()/finishOnboarding runs), so there is
-  // no real admin/member distinction to enforce yet. canManageFamilyProfile
-  // gates add/edit/remove affordances; isAdmin (unchanged) still gates the
-  // "מנהל/ת המשפחה" badge and the real per-space role for completed users.
-  // See lib/mandatoryProfileSetup.ts for the (unit-tested) pure rule.
+  // FIXED: mandatory Profile Setup happens BEFORE any space exists for a
+  // brand-new user, so mySpaceRole is always null at that point and isAdmin
+  // is always false — which previously hid every family-member/pet "add"
+  // action during mandatory onboarding (bug: no usable add action
+  // available). During brand-new mandatory setup the user is editing their
+  // OWN in-progress, not-yet-persisted family/pet list (local editor state
+  // only — nothing is written to the members table until
+  // saveAll()/finishOnboarding runs), so there is no real admin/member
+  // distinction to enforce yet.
+  //
+  // Family Membership Lifecycle Phase 1 correction: a CLAIMED mandatory
+  // setup is different — the user SELECTED an existing family's phone
+  // match (acceptPendingPhoneMatch records pendingMatchMemberId only — it
+  // no longer grants access immediately, see convex/members.ts). Real
+  // access is granted later in THIS SAME flow by finishOnboarding's
+  // claimed path. mySpaceRole stays null/undefined for a claimed-but-not-
+  // yet-joined user just like a brand-new user, so it can no longer be
+  // used as the claimed-detection signal — hasPendingMatchMemberId is.
+  const isMandatorySetupRoleLoading =
+    isMandatorySetup && hasPendingMatchMemberId === undefined;
+  const isClaimedMandatorySetup = isClaimedMandatorySetupHelper(
+    isMandatorySetup,
+    hasPendingMatchMemberId === true
+  );
+  // canManageFamilyProfile gates add/edit/remove affordances; isAdmin
+  // (unchanged) still gates the "מנהל/ת המשפחה" badge and the real
+  // per-space role for completed users. See lib/mandatoryProfileSetup.ts
+  // for the (unit-tested) pure rule.
   const canManageFamilyProfile = canManageFamilyProfileHelper(
     isMandatorySetup,
-    isAdmin
+    isAdmin,
+    isClaimedMandatorySetup
   );
+
+  const [isUndoingClaim, setIsUndoingClaim] = useState(false);
+  const handleBackFromClaimedSetup = (): void => {
+    if (isUndoingClaim) return;
+    setIsUndoingClaim(true);
+    // No manual navigation here — undoClaimedFamilyMatch clears
+    // phoneMatchResolvedAt/defaultSpaceId server-side, which reactively
+    // flips the authenticated layout's onboarding-route decision back to
+    // 'phone-match-confirmation' (see lib/onboardingRouting.ts) and it
+    // performs the actual redirect. A second, racing imperative navigate
+    // call here is exactly what produced the "NAVIGATE index" warning
+    // elsewhere in this flow (see phone-match-confirmation.tsx).
+    undoClaimedFamilyMatch({}).catch(() => {
+      setIsUndoingClaim(false);
+      Alert.alert('שגיאה', 'לא הצלחנו לחזור כרגע. אפשר לנסות שוב.');
+    });
+  };
   const {
     firstName,
     setFirstName,
@@ -216,20 +263,29 @@ export default function FamilyProfileScreen() {
   // explicitly completes onboarding before navigating Home. On failure the
   // user stays on this screen with a retryable error — Home is never
   // reached with onboardingCompleted still false.
+  // Part 7 QA fix (NAVIGATE "index" unhandled after Save): this used to call
+  // router.navigate('/(authenticated)') itself inside saveAll().then(). The
+  // instant finishOnboarding's write flips userStatus.onboardingComplete to
+  // true, the authenticated layout's own needsHydration gate can briefly
+  // render <InYomiSplashScreen /> INSTEAD OF the <Tabs> navigator this
+  // screen lives in (until hydrateFromServer's effect resolves) — if the
+  // imperative navigate call landed in that window, its target no longer
+  // existed, producing exactly the reported unhandled NAVIGATE warning. Same
+  // architectural fix as phone-match-confirmation.tsx: this screen now only
+  // calls the mutation and reports errors — on success it stays in its
+  // saving state until the authenticated layout's OWN reactive redirect
+  // (needsMandatorySetupExitRedirect in app/(authenticated)/_layout.tsx)
+  // performs the tab switch once Tabs has actually (re)mounted.
   const handleSaveMandatorySetup = (): void => {
     if (isSavingMandatorySetup) return;
-    if (!firstName.trim()) return;
+    if (!firstName.trim() || !lastName.trim()) return;
 
     setMandatorySetupError(null);
     setIsSavingMandatorySetup(true);
-    saveAll()
-      .then(() => {
-        router.navigate('/(authenticated)');
-      })
-      .catch(() => {
-        setMandatorySetupError('לא הצלחנו לשמור כרגע. אפשר לנסות שוב.');
-      })
-      .finally(() => setIsSavingMandatorySetup(false));
+    saveAll().catch(() => {
+      setMandatorySetupError('לא הצלחנו לשמור כרגע. אפשר לנסות שוב.');
+      setIsSavingMandatorySetup(false);
+    });
   };
 
   // FIXED: profile form now collapses to saved display card after save
@@ -437,6 +493,26 @@ export default function FamilyProfileScreen() {
     );
   };
 
+  // Part 4: while mySpaceRole is still resolving during mandatory setup,
+  // never render either the "new empty family" state or the claimed-family
+  // state — both would be a guess. Avoids the exact flash this QA report
+  // described (empty new-family UI shown before the real claimed family
+  // data was known).
+  if (isMandatorySetupRoleLoading) {
+    return (
+      <SafeAreaView
+        style={{
+          flex: 1,
+          backgroundColor: '#f6f7f8',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <ActivityIndicator color={colors.primary} size="large" />
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView
       style={[
@@ -457,10 +533,35 @@ export default function FamilyProfileScreen() {
           className={`${tw.flexRow} items-center justify-between px-6 pt-3 pb-1`}
         >
           {isMandatorySetup ? (
-            // Stage 2B+3: no back navigation in mandatory mode — there is
-            // no valid destination while onboarding is still incomplete
-            // (Home must never be reached with onboardingCompleted false).
-            <View className="p-2 w-10" />
+            isClaimedMandatorySetup ? (
+              // Part 6: claimed-family setup gets a real Back affordance —
+              // undoClaimedFamilyMatch safely reverts the accept-created
+              // access/entity relationship first (see its doc comment),
+              // then the authenticated layout's reactive routing returns
+              // the user to the phone-match choice screen.
+              <Pressable
+                onPress={handleBackFromClaimedSetup}
+                disabled={isUndoingClaim}
+                accessible={true}
+                accessibilityRole="button"
+                accessibilityLabel="חזרה"
+                accessibilityHint="חזרה לבחירת פרופיל נפרד או המשך לפרופיל המשפחתי"
+                className="p-2"
+                style={{ opacity: isUndoingClaim ? 0.5 : 1 }}
+              >
+                <MaterialIcons
+                  name="arrow-forward"
+                  size={24}
+                  color={colors.slate}
+                />
+              </Pressable>
+            ) : (
+              // Stage 2B+3: no back navigation for a brand-new mandatory
+              // setup — there is no valid destination while onboarding is
+              // still incomplete (Home must never be reached with
+              // onboardingCompleted false).
+              <View className="p-2 w-10" />
+            )
           ) : (
             <Pressable
               onPress={() =>
@@ -503,7 +604,9 @@ export default function FamilyProfileScreen() {
             <Text
               className={`${tw.textStart} text-sm leading-relaxed text-gray-600`}
             >
-              השם הפרטי הוא שדה חובה להשלמת ההרשמה. בני משפחה הם אופציונליים.
+              {isClaimedMandatorySetup
+                ? 'השלימו את הפרטים האישיים שלכם כדי להמשיך לפרופיל המשפחתי.'
+                : 'שם פרטי ושם משפחה הם שדה חובה להשלמת ההרשמה. בני משפחה הם אופציונליים.'}
             </Text>
           </View>
         ) : null}
@@ -752,12 +855,18 @@ export default function FamilyProfileScreen() {
 
           {/* Member list */}
           {displayMembers.length === 0 && !isAddingNewPerson ? (
-            <View className="items-center py-5 mb-5">
-              <MaterialIcons name="group" size={36} color="#d1d5db" />
-              <Text className="text-gray-400 text-center mt-2 text-sm">
-                עדיין לא הוספת בני משפחה
-              </Text>
-            </View>
+            // Part 4: a claimed family already exists — never claim the
+            // user "hasn't added" family members yet, even in the rare
+            // edge case where the matched family has no OTHER human
+            // members (e.g. pets-only, or a solo claimed profile).
+            isClaimedMandatorySetup ? null : (
+              <View className="items-center py-5 mb-5">
+                <MaterialIcons name="group" size={36} color="#d1d5db" />
+                <Text className="text-gray-400 text-center mt-2 text-sm">
+                  עדיין לא הוספת בני משפחה
+                </Text>
+              </View>
+            )
           ) : (
             <View className="mb-5">
               {/* FIXED: prevented duplicate card render for same family member */}
@@ -981,6 +1090,7 @@ export default function FamilyProfileScreen() {
                 isMandatorySetup
                   ? isMandatorySetupSaveDisabled(
                       firstName,
+                      lastName,
                       isSavingMandatorySetup
                     )
                   : isSavingOptionalSetup
@@ -991,7 +1101,9 @@ export default function FamilyProfileScreen() {
               className="mb-3 h-12 items-center justify-center rounded-2xl bg-[#36a9e2]"
               style={{
                 opacity:
-                  isMandatorySetup && !firstName.trim() ? 0.5 : undefined,
+                  isMandatorySetup && (!firstName.trim() || !lastName.trim())
+                    ? 0.5
+                    : undefined,
               }}
             >
               <Text className="font-bold text-base text-white">

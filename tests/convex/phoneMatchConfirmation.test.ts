@@ -1,12 +1,19 @@
 /**
- * Stage 2B+3 — acceptPendingPhoneMatch / declinePhoneMatches (convex/members.ts)
+ * Family Membership Lifecycle Phase 1 — acceptPendingPhoneMatch /
+ * completeExistingUserFamilyJoin / declinePhoneMatches (convex/members.ts)
+ *
+ * SUPERSEDES the old Stage 2B+3 immediate-join semantics: accepting a
+ * phone match now only SELECTS it (`user.pendingMatchMemberId`) — it no
+ * longer creates an access row, patches entity.userId, or sets
+ * inviteStatus:'joined'. Real membership is granted only by
+ * executeFamilyJoin (invoked by completeExistingUserFamilyJoin here, or by
+ * finishOnboarding's claimed path — see claimedUserCompletion.test.ts).
  *
  * This repo has no Convex mutation test harness (see
  * tests/convex/eventTaskRsvpDecoupling.test.ts's documented precedent).
  * Given that constraint, these invariants are verified via source
  * inspection of the REAL convex/members.ts file — the same pattern used
- * throughout tests/convex/getPendingPhoneMatches.test.ts and
- * tests/convex/persistOnboardingAnswers.test.ts.
+ * throughout tests/convex/getPendingPhoneMatches.test.ts.
  *
  * Run with: bun test tests/convex/phoneMatchConfirmation.test.ts
  */
@@ -37,7 +44,32 @@ function extractExportBlock(source: string, exportName: string): string {
   return source.slice(startIdx, endIdx);
 }
 
+/** Extracts an `export async function NAME(` ... block up to the next top-level export. */
+function extractExportedFunctionBlock(source: string, fnName: string): string {
+  const startMarker = `export async function ${fnName}(`;
+  const startIdx = source.indexOf(startMarker);
+  if (startIdx === -1) {
+    throw new Error(`Could not find exported function "${fnName}" in source`);
+  }
+  const nextExportMatch = /\nexport (const|async function) \w+/.exec(
+    source.slice(startIdx + startMarker.length)
+  );
+  const endIdx =
+    nextExportMatch === null
+      ? source.length
+      : startIdx + startMarker.length + nextExportMatch.index;
+  return source.slice(startIdx, endIdx);
+}
+
 const acceptSrc = extractExportBlock(MEMBERS_SOURCE, 'acceptPendingPhoneMatch');
+const completeJoinSrc = extractExportBlock(
+  MEMBERS_SOURCE,
+  'completeExistingUserFamilyJoin'
+);
+const executeJoinSrc = extractExportedFunctionBlock(
+  MEMBERS_SOURCE,
+  'executeFamilyJoin'
+);
 const declineSrc = extractExportBlock(MEMBERS_SOURCE, 'declinePhoneMatches');
 
 describe('acceptPendingPhoneMatch — args shape', () => {
@@ -57,7 +89,7 @@ describe('acceptPendingPhoneMatch — args shape', () => {
   });
 });
 
-describe('acceptPendingPhoneMatch — full verification chain [1-10]', () => {
+describe('acceptPendingPhoneMatch — full verification chain [1-11]', () => {
   it('[1] rejects unauthenticated callers', () => {
     expect(acceptSrc).toContain('const userId = await getAuthUserId(ctx);');
     expect(acceptSrc).toContain("if (!userId) throw new Error('לא מחובר');");
@@ -109,32 +141,39 @@ describe('acceptPendingPhoneMatch — full verification chain [1-10]', () => {
       "if (!space) throw new Error('המרחב לא נמצא');"
     );
   });
+
+  it('[11] rejects an entity already claimed by a DIFFERENT real user', () => {
+    expect(acceptSrc).toContain(
+      "if (entity.userId !== undefined && entity.userId !== userId) {"
+    );
+  });
 });
 
-describe('acceptPendingPhoneMatch — grant + idempotency', () => {
-  it('checks for an existing valid access row before granting', () => {
-    expect(acceptSrc).toContain("q.eq(q.field('kind'), 'access')");
-    expect(acceptSrc).toContain('if (!existingAccessRow) {');
-  });
-
-  it('when no access exists: patches the entity (userId + joined) and creates exactly one access row', () => {
-    const grantBlock = acceptSrc.slice(
-      acceptSrc.indexOf('if (!existingAccessRow) {')
-    );
-    expect(grantBlock).toContain('await ctx.db.patch(memberId, {');
-    expect(grantBlock).toContain('userId,');
-    expect(grantBlock).toContain("inviteStatus: 'joined',");
-    expect(grantBlock).toContain("await ctx.db.insert('members', {");
-    expect(grantBlock).toContain("kind: 'access',");
-  });
-
-  it('idempotent: always (re-)ensures phoneMatchResolvedAt, onboardingCompleted, defaultSpaceId regardless of branch', () => {
-    const tail = acceptSrc.slice(
+describe('acceptPendingPhoneMatch — SELECTION ONLY, never grants access', () => {
+  it('patches ONLY pendingMatchMemberId and phoneMatchResolvedAt on the user', () => {
+    const patchBlock = acceptSrc.slice(
       acceptSrc.lastIndexOf('await ctx.db.patch(userId, {')
     );
-    expect(tail).toContain('phoneMatchResolvedAt: Date.now()');
-    expect(tail).toContain('onboardingCompleted: true');
-    expect(tail).toContain('defaultSpaceId: spaceId');
+    expect(patchBlock).toContain('pendingMatchMemberId: memberId,');
+    expect(patchBlock).toContain('phoneMatchResolvedAt: Date.now(),');
+  });
+
+  it('never creates a members row (no access row is granted by selection alone)', () => {
+    expect(acceptSrc).not.toContain("ctx.db.insert('members'");
+  });
+
+  it('never patches the entity row itself (userId / inviteStatus stay untouched)', () => {
+    expect(acceptSrc).not.toContain('ctx.db.patch(memberId');
+  });
+
+  it('never sets onboardingCompleted, defaultSpaceId, or a familyContacts mirror', () => {
+    const handlerBody = acceptSrc.slice(
+      acceptSrc.indexOf('handler:'),
+      acceptSrc.indexOf('\n});') + 4
+    );
+    expect(handlerBody).not.toContain('onboardingCompleted');
+    expect(handlerBody).not.toContain('defaultSpaceId');
+    expect(handlerBody).not.toContain('familyContacts');
   });
 
   it('security: never trusts a client-supplied spaceId — derives it only from the verified entity row', () => {
@@ -142,7 +181,61 @@ describe('acceptPendingPhoneMatch — grant + idempotency', () => {
   });
 });
 
-describe('declinePhoneMatches — behavior', () => {
+describe('executeFamilyJoin — the ONLY path that grants real membership', () => {
+  it('re-verifies kind, matchedUserId, and rejects an entity claimed by a different user', () => {
+    expect(executeJoinSrc).toContain(
+      "if (resolveKind(entity) !== 'entity') throw new Error(PERMISSION_DENIED);"
+    );
+    expect(executeJoinSrc).toContain(
+      'if (entity.matchedUserId !== userId) throw new Error(PERMISSION_DENIED);'
+    );
+  });
+
+  it('runs the active-family guard atomically before any final write', () => {
+    const guardIdx = executeJoinSrc.indexOf('assertNoActiveFamilyMembership');
+    const writeIdx = executeJoinSrc.indexOf('existingAccessRow');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(writeIdx);
+  });
+
+  it('idempotently patches entity (userId + joined) and creates exactly one access row only when none exists', () => {
+    expect(executeJoinSrc).toContain('if (!existingAccessRow) {');
+    const grantBlock = executeJoinSrc.slice(
+      executeJoinSrc.indexOf('if (!existingAccessRow) {')
+    );
+    expect(grantBlock).toContain('await ctx.db.patch(memberId, {');
+    expect(grantBlock).toContain("inviteStatus: 'joined',");
+    expect(grantBlock).toContain("await ctx.db.insert('members', {");
+    expect(grantBlock).toContain("kind: 'access',");
+  });
+
+  it('clears pendingMatchMemberId and sets defaultSpaceId once membership is granted', () => {
+    expect(executeJoinSrc).toContain('defaultSpaceId: spaceId,');
+    expect(executeJoinSrc).toContain('pendingMatchMemberId: undefined,');
+  });
+});
+
+describe('completeExistingUserFamilyJoin — already-onboarded user join', () => {
+  it('requires onboardingCompleted === true', () => {
+    expect(completeJoinSrc).toContain(
+      'if (!user.onboardingCompleted) throw new Error(PERMISSION_DENIED);'
+    );
+  });
+
+  it('requires the supplied memberId to exactly match the server-recorded pendingMatchMemberId', () => {
+    expect(completeJoinSrc).toContain(
+      'user.pendingMatchMemberId !== memberId'
+    );
+  });
+
+  it('delegates the actual join to executeFamilyJoin (no duplicated join logic)', () => {
+    expect(completeJoinSrc).toContain(
+      'await executeFamilyJoin(ctx, userId, memberId);'
+    );
+  });
+});
+
+describe('declinePhoneMatches — behavior (unchanged)', () => {
   it('takes no arguments and returns null', () => {
     expect(declineSrc).toContain('args: {},');
     expect(declineSrc).toContain('returns: v.null(),');
@@ -169,7 +262,7 @@ describe('declinePhoneMatches — behavior', () => {
   });
 });
 
-describe('getCurrentUserStatus — Stage 2B+3 extension', () => {
+describe('getCurrentUserStatus — Stage 2B+3 extension (unchanged)', () => {
   const USERS_SOURCE = readFileSync(
     new URL('../../convex/users.ts', import.meta.url),
     'utf8'

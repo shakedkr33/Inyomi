@@ -3,6 +3,7 @@
 import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
+import { stampEventOwnerScope } from './ownerScope';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -163,6 +164,11 @@ export const copyLinkedEvent = mutation({
       createdBy: userId,
       spaceId: linked.spaceId,
       createdAt: now,
+      // Stamped once at creation — see convex/ownerScope.ts. A standalone
+      // copy made from a linked (shared) event is always personal to the
+      // user who copied it; no community/family-sharing fields exist on
+      // this insert.
+      ownerScope: stampEventOwnerScope({ createdBy: userId }),
     });
 
     // Remove the linked record — linked + copy coexisting would cause calendar clutter

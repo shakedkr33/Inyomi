@@ -2,7 +2,7 @@ import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { buildCanonicalFamilyMembers } from '../lib/canonicalFamilyMembers';
 import { filterPendingPhoneMatchCandidates } from '../lib/pendingPhoneMatches';
-import type { Id } from './_generated/dataModel';
+import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation, mutation, query } from './_generated/server';
 
@@ -99,6 +99,213 @@ export async function resolveMySpaceId(
 
 const PERMISSION_DENIED =
   'אין לך הרשאה לבצע פעולה זו. אפשר לפנות למנהל/ת המשפחה.';
+const ALREADY_IN_ACTIVE_FAMILY =
+  'כבר יש לך פרופיל משפחתי פעיל. יש לצאת ממנו לפני הצטרפות למשפחה אחרת.';
+
+// ── isFullyJoined — Family Membership Lifecycle Phase 1 invariant ──────────
+/**
+ * Server-derived invariant: true only when `entity` represents a REAL,
+ * fully-completed family membership — never a discovery-only phone match,
+ * never a selected-but-not-yet-joined pending match (see
+ * `pendingMatchMemberId` / acceptPendingPhoneMatch), and never a corrupted
+ * userId/matchedUserId mismatch.
+ *
+ * ALL of the following must hold:
+ *   1. kind resolves to 'entity' (never 'access')
+ *   2. entity.userId is set
+ *   3. entity.matchedUserId is set
+ *   4. entity.userId === entity.matchedUserId (strict — no mismatch)
+ *   5. entity.inviteStatus === 'joined'
+ *   6. the matched user's onboardingCompleted === true
+ *   7. a valid kind:'access' row exists for that user in the SAME spaceId
+ *
+ * Used by listMyFamilyContacts (exposed to clients as `isFullyJoined` on
+ * each member) and internally by executeFamilyJoin's idempotency check.
+ */
+export async function computeIsFullyJoined(
+  ctx: QueryCtx | MutationCtx,
+  entity: Pick<
+    Doc<'members'>,
+    'kind' | 'displayName' | 'userId' | 'matchedUserId' | 'inviteStatus' | 'spaceId'
+  >
+): Promise<boolean> {
+  if (resolveKind(entity) !== 'entity') return false;
+  if (!entity.userId || !entity.matchedUserId) return false;
+  if (entity.userId !== entity.matchedUserId) return false;
+  if (entity.inviteStatus !== 'joined') return false;
+
+  const joinedUser = await ctx.db.get(entity.userId);
+  if (!joinedUser || joinedUser.onboardingCompleted !== true) return false;
+
+  const accessRow = await ctx.db
+    .query('members')
+    .withIndex('by_user', (q) => q.eq('userId', entity.userId as Id<'users'>))
+    .filter((q) => q.eq(q.field('spaceId'), entity.spaceId))
+    .filter((q) => q.eq(q.field('kind'), 'access'))
+    .first();
+
+  return accessRow !== null;
+}
+
+// ── isSelectableForPicker — participant/assignee picker regression guard ───
+/**
+ * Canonical picker-visibility rule (do NOT filter by isFullyJoined alone —
+ * that would incorrectly hide manual/local profiles with no phone number).
+ *
+ *   - local/manual profile with no selectedPhoneNumber -> selectable
+ *   - phone contact that is not fully joined -> NOT selectable
+ *   - fully joined real user -> selectable
+ */
+export function computeIsSelectableForPicker(
+  entity: Pick<Doc<'members'>, 'selectedPhoneNumber'>,
+  fullyJoined: boolean
+): boolean {
+  return !entity.selectedPhoneNumber || fullyJoined;
+}
+
+// ── assertNoActiveFamilyMembership — one-active-family guard ───────────────
+/**
+ * Throws if `userId` already has a kind:'access' row in a space whose
+ * `type !== 'personal'` — i.e. they are already a member, admin, OR owner
+ * of an active family/couple/business space. A personal-space admin row
+ * is always allowed through (that is the expected pre-join state).
+ *
+ * Must be called as the LAST check before executeFamilyJoin's final
+ * writes, inside the same mutation transaction, so the check and the
+ * writes are atomic.
+ */
+export async function assertNoActiveFamilyMembership(
+  ctx: MutationCtx,
+  userId: Id<'users'>
+): Promise<void> {
+  const rows = await ctx.db
+    .query('members')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .collect();
+
+  const accessRows = rows.filter((r) => resolveKind(r) === 'access');
+  for (const row of accessRows) {
+    const space = await ctx.db.get(row.spaceId);
+    if (space && space.type !== 'personal') {
+      throw new Error(ALREADY_IN_ACTIVE_FAMILY);
+    }
+  }
+}
+
+// ── executeFamilyJoin — shared final join transaction ──────────────────────
+/**
+ * The ONLY code path that may grant real family membership. Used by both:
+ *   - finishOnboarding's claimed path (brand-new user completing identity)
+ *   - completeExistingUserFamilyJoin (already-onboarded user)
+ *
+ * Re-verifies everything server-side (never trusts that a prior
+ * acceptPendingPhoneMatch call was sufficient) and performs the
+ * active-family guard atomically immediately before the final writes.
+ *
+ * NOTE (Phase 1 scope): this does NOT yet migrate the joining user's
+ * personal events/tasks/captures into the family space — that is Phase 3
+ * (migratePersonalData), not yet implemented. Personal data created before
+ * this join remains in the user's personal space until Phase 3 ships.
+ */
+export async function executeFamilyJoin(
+  ctx: MutationCtx,
+  userId: Id<'users'>,
+  memberId: Id<'members'>
+): Promise<Id<'spaces'>> {
+  const user = await ctx.db.get(userId);
+  if (!user) throw new Error('משתמש לא נמצא');
+
+  const entity = await ctx.db.get(memberId);
+  if (!entity) throw new Error('פרופיל לא נמצא');
+  if (resolveKind(entity) !== 'entity') throw new Error(PERMISSION_DENIED);
+  if (entity.matchedUserId !== userId) throw new Error(PERMISSION_DENIED);
+  // Never re-join an entity already fully/partially claimed by someone else.
+  if (entity.userId !== undefined && entity.userId !== userId) {
+    throw new Error(PERMISSION_DENIED);
+  }
+
+  const spaceId = entity.spaceId;
+  const space = await ctx.db.get(spaceId);
+  if (!space) throw new Error('המרחב לא נמצא');
+
+  // Active-family guard — atomic, immediately before final writes.
+  await assertNoActiveFamilyMembership(ctx, userId);
+
+  const existingAccessRow = await ctx.db
+    .query('members')
+    .withIndex('by_user', (q) => q.eq('userId', userId))
+    .filter((q) => q.eq(q.field('spaceId'), spaceId))
+    .filter((q) => q.eq(q.field('kind'), 'access'))
+    .first();
+
+  if (!existingAccessRow) {
+    await ctx.db.patch(memberId, {
+      userId,
+      inviteStatus: 'joined',
+    });
+    await ctx.db.insert('members', {
+      userId,
+      spaceId,
+      role: 'member',
+      kind: 'access',
+      joinedAt: Date.now(),
+    });
+  }
+
+  await ctx.db.patch(userId, {
+    defaultSpaceId: spaceId,
+    pendingMatchMemberId: undefined,
+  });
+
+  // Owner familyContacts mirror — reflects real joined state now that
+  // access has actually been granted (never stamped earlier).
+  const userPhone = user.phone;
+  const normalizedUserPhone = userPhone ? normalizeToE164(userPhone) : null;
+  if (space.ownerId && normalizedUserPhone) {
+    const owner = await ctx.db.get(space.ownerId);
+    const contacts = owner?.familyContacts;
+    if (owner && Array.isArray(contacts)) {
+      let changed = false;
+      const updated = (contacts as FamilyContactEntry[]).map((entry) => {
+        if (!entry.selectedPhoneNumber) return entry;
+        const entryNorm = normalizeToE164(entry.selectedPhoneNumber);
+        if (entryNorm === normalizedUserPhone) {
+          changed = true;
+          return {
+            ...entry,
+            matchedUserId: userId,
+            inviteStatus: 'joined' as const,
+          };
+        }
+        return entry;
+      });
+      if (changed) {
+        await ctx.db.patch(owner._id, { familyContacts: updated });
+      }
+    }
+  }
+
+  return spaceId;
+}
+
+// ── isEntityClaimedByOtherUser — Phase 1 claimed-name protection ────────────
+/**
+ * Pure predicate: true when `entity` is a joined, claimed profile that
+ * belongs to a real authenticated user OTHER than `callerUserId`. Used to
+ * block a family admin/owner from overwriting a claimed user's canonical
+ * displayName via updateMyProfile's familyContacts sync. Does not affect
+ * unclaimed (manual) entities or the caller's own claimed entity.
+ */
+export function isEntityClaimedByOtherUser(
+  entity: { userId?: Id<'users'>; inviteStatus?: string },
+  callerUserId: Id<'users'>
+): boolean {
+  return (
+    entity.inviteStatus === 'joined' &&
+    entity.userId !== undefined &&
+    entity.userId !== callerUserId
+  );
+}
 
 type FamilyContactEntry = {
   id: string;
@@ -217,13 +424,21 @@ export const matchOnPhone = internalMutation({
  *     same space
  *   - excluded if the space is missing/deleted
  *
- * Response shape is intentionally minimal: memberId, spaceName, and
- * optional displayName only. spaceId is deliberately NOT returned — the
- * client does not need it for rendering, and the future accept mutation
- * (Stage 2B+3) will take only memberId and derive/re-verify spaceId
+ * Response shape is intentionally minimal: memberId, spaceName,
+ * displayName, and memberNames only. spaceId is deliberately NOT
+ * returned — the client does not need it for rendering, and the accept
+ * mutation takes only memberId and derives/re-verifies spaceId
  * server-side from the entity row itself. Never returns phone numbers,
- * other users' ids, member lists, permissions, or any other private space
- * content.
+ * other users' ids, permissions, or any other private space content.
+ *
+ * memberNames (Part 3 UX correction): the display names of every OTHER
+ * 'entity' row in the matched space (never 'access' rows, so an admin's
+ * own account row is never listed here as a bare name+phone) — lets the
+ * confirmation screen show the whole existing family being matched, not
+ * just the single matched entity. Uses the same canonical-name resolution
+ * as listMyFamilyContacts: a real claimed user's own current fullName, or
+ * the stored displayName for an unclaimed/manual profile. Never fabricates
+ * a surname and never includes a phone number.
  */
 export const getPendingPhoneMatches = query({
   args: {},
@@ -232,6 +447,7 @@ export const getPendingPhoneMatches = query({
       memberId: v.id('members'),
       spaceName: v.string(),
       displayName: v.optional(v.string()),
+      memberNames: v.array(v.string()),
     })
   ),
   handler: async (ctx) => {
@@ -285,25 +501,58 @@ export const getPendingPhoneMatches = query({
       normalizeToE164,
     });
 
+    // Part 3 UX correction: resolve every OTHER entity's display name in
+    // each safe candidate's space so the confirmation screen can show the
+    // whole existing family, not just the single matched entity. Never
+    // returns 'access' rows (never a bare admin userId+phone) and never
+    // includes phone numbers.
+    const memberNamesBySpaceId = new Map<Id<'spaces'>, string[]>();
+    for (const spaceId of new Set(safeCandidates.map((r) => r.spaceId))) {
+      const spaceRows = await ctx.db
+        .query('members')
+        .withIndex('by_space', (q) => q.eq('spaceId', spaceId))
+        .collect();
+      const names: string[] = [];
+      for (const row of spaceRows) {
+        if (resolveKind(row) !== 'entity') continue;
+        let name = row.displayName?.trim();
+        if (!name && row.matchedUserId) {
+          const matchedUser = await ctx.db.get(row.matchedUserId);
+          name = (
+            matchedUser as { fullName?: string } | null
+          )?.fullName?.trim();
+        }
+        if (name) names.push(name);
+      }
+      memberNamesBySpaceId.set(spaceId, names);
+    }
+
     return safeCandidates.map((row) => ({
       memberId: row._id,
       spaceName: spaceNameById.get(row.spaceId) ?? '',
       displayName: row.displayName,
+      memberNames: memberNamesBySpaceId.get(row.spaceId) ?? [],
     }));
   },
 });
 
-// ── acceptPendingPhoneMatch (Stage 2B+3) ────────────────────────────────────
+// ── acceptPendingPhoneMatch (Family Membership Lifecycle Phase 1) ──────────
 /**
- * Explicit user confirmation step that grants access to ONE previously
- * discovered phone match. This is the ONLY path that can turn a
- * matchOnPhone discovery link into real access — see matchOnPhone's doc
- * comment above for the security invariant this pairs with.
+ * SELECTION ONLY. This is a deliberate hardening of the original Stage
+ * 2B+3 design: accepting a phone match used to grant real access
+ * immediately (create a kind:'access' row + patch entity.userId +
+ * inviteStatus:'joined'). That is exactly the premature-join pattern the
+ * Family Membership Lifecycle plan exists to eliminate — a phone match
+ * (even an explicitly confirmed one) must never by itself imply active
+ * membership.
  *
- * Client supplies ONLY memberId — the server independently re-derives and
- * re-verifies the space and the phone match itself; nothing about the
- * grant is trusted from the client beyond "which entity row did the user
- * pick".
+ * New behavior: re-verifies the full match chain (identical checks to the
+ * previous version) and, if valid, stamps ONLY `user.pendingMatchMemberId`
+ * + `user.phoneMatchResolvedAt`. No entity row is touched. No access row
+ * is created. No familyContacts mirror write. Real membership is granted
+ * later, and only, by executeFamilyJoin — invoked either by
+ * finishOnboarding's claimed path (brand-new user) or by
+ * completeExistingUserFamilyJoin (already-onboarded user).
  *
  * Full verification chain (all required):
  *   1. authenticated user exists
@@ -314,15 +563,11 @@ export const getPendingPhoneMatches = query({
  *   6. entity.selectedPhoneNumber exists
  *   7-9. normalize both phones and re-verify they are equal
  *   10. the entity's space still exists
+ *   11. the entity is not already claimed (userId) by a DIFFERENT user
  *
- * Idempotent: if the user already has a valid kind:'access' row in the
- * target space (e.g. a retried call after an app kill), no duplicate
- * access row is created — the user-level fields are still (re-)ensured and
- * success is returned.
- *
- * Security: accepting ONE of multiple matches grants access to ONLY that
- * selected space. Remaining matched entities are left untouched — the
- * user is never auto-joined to them.
+ * Security: selecting ONE of multiple matches only records intent to
+ * continue toward that one space. Remaining matched entities are left
+ * untouched.
  */
 export const acceptPendingPhoneMatch = mutation({
   args: {
@@ -371,67 +616,193 @@ export const acceptPendingPhoneMatch = mutation({
     const space = await ctx.db.get(spaceId);
     if (!space) throw new Error('המרחב לא נמצא');
 
-    // IDEMPOTENCY: check whether a valid access row already exists.
-    const existingAccessRow = await ctx.db
-      .query('members')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .filter((q) => q.eq(q.field('spaceId'), spaceId))
-      .filter((q) => q.eq(q.field('kind'), 'access'))
-      .first();
-
-    if (!existingAccessRow) {
-      // Patch selected entity only.
-      await ctx.db.patch(memberId, {
-        userId,
-        inviteStatus: 'joined',
-      });
-
-      // Create exactly one access row using the existing canonical
-      // membership shape / role semantics (mirrors matchOnPhone's legacy
-      // access-row creation and finishOnboarding's member-row shape).
-      await ctx.db.insert('members', {
-        userId,
-        spaceId,
-        role: 'member',
-        kind: 'access',
-        joinedAt: Date.now(),
-      });
-
-      // Update the familyContacts mirror on the space owner (only as
-      // required by the current canonical system — same mirror
-      // matchOnPhone maintains) to represent the accepted/joined state.
-      if (space.ownerId) {
-        const owner = await ctx.db.get(space.ownerId);
-        const contacts = owner?.familyContacts;
-        if (owner && Array.isArray(contacts)) {
-          let changed = false;
-          const updated = (contacts as FamilyContactEntry[]).map((entry) => {
-            if (!entry.selectedPhoneNumber) return entry;
-            const entryNorm = normalizeToE164(entry.selectedPhoneNumber);
-            if (entryNorm === normalizedUserPhone) {
-              changed = true;
-              return {
-                ...entry,
-                matchedUserId: userId,
-                inviteStatus: 'joined' as const,
-              };
-            }
-            return entry;
-          });
-          if (changed) {
-            await ctx.db.patch(owner._id, { familyContacts: updated });
-          }
-        }
-      }
+    // 11. not already claimed by a different real user.
+    if (entity.userId !== undefined && entity.userId !== userId) {
+      throw new Error(PERMISSION_DENIED);
     }
 
+    // SELECTION ONLY — no access/entity/mirror writes here. See doc
+    // comment above.
     await ctx.db.patch(userId, {
+      pendingMatchMemberId: memberId,
       phoneMatchResolvedAt: Date.now(),
-      onboardingCompleted: true,
-      defaultSpaceId: spaceId,
     });
 
     return { spaceId };
+  },
+});
+
+// ── completeExistingUserFamilyJoin (Family Membership Lifecycle Phase 1) ───
+/**
+ * Completes the join for an ALREADY-ONBOARDED user who previously selected
+ * a pending match via acceptPendingPhoneMatch. finishOnboarding's claimed
+ * path is the equivalent for a brand-new user still completing identity —
+ * both delegate to the same executeFamilyJoin transaction.
+ *
+ * Requires:
+ *   - the caller is authenticated and onboardingCompleted === true
+ *     (a not-yet-onboarded user must go through finishOnboarding instead —
+ *     this mutation intentionally refuses them to avoid two divergent
+ *     completion paths)
+ *   - `memberId` matches the user's own `pendingMatchMemberId` exactly
+ *     (never trusts an arbitrary client-supplied memberId beyond that it
+ *     matches the server-recorded selection)
+ *
+ * executeFamilyJoin re-verifies the match and re-applies the one-active-
+ * family guard atomically before granting access.
+ */
+export const completeExistingUserFamilyJoin = mutation({
+  args: {
+    memberId: v.id('members'),
+  },
+  returns: v.object({ spaceId: v.id('spaces') }),
+  handler: async (ctx, { memberId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('לא מחובר');
+
+    const user = await ctx.db.get(userId);
+    if (!user) throw new Error('משתמש לא נמצא');
+
+    if (!user.onboardingCompleted) throw new Error(PERMISSION_DENIED);
+    if (!user.pendingMatchMemberId || user.pendingMatchMemberId !== memberId) {
+      throw new Error(PERMISSION_DENIED);
+    }
+
+    const spaceId = await executeFamilyJoin(ctx, userId, memberId);
+    return { spaceId };
+  },
+});
+
+// ── getMyPendingFamilyPreview (Family Membership Lifecycle Phase 1) ────────
+/**
+ * Server-driven, minimal-safe preview of the family the caller has
+ * SELECTED (via acceptPendingPhoneMatch) but not yet joined. Reads only
+ * from `user.pendingMatchMemberId` — never trusts a client-supplied
+ * memberId/spaceId — so the client can render a read-only "this is the
+ * family you're about to join" card before the explicit Join/Confirm step
+ * (completeExistingUserFamilyJoin or finishOnboarding's claimed path).
+ *
+ * `otherFamilyMembers` deliberately EXCLUDES the pending entity itself
+ * (the joining user's own not-yet-joined profile) — never show the
+ * joining user's own card back to themselves. Returns only
+ * displayName/color/memberType per member — no phone numbers, no other
+ * users' ids, no permissions.
+ */
+export const getMyPendingFamilyPreview = query({
+  args: {},
+  returns: v.union(
+    v.object({
+      spaceName: v.string(),
+      otherFamilyMembers: v.array(
+        v.object({
+          displayName: v.optional(v.string()),
+          color: v.optional(v.string()),
+          memberType: v.union(v.literal('person'), v.literal('pet')),
+        })
+      ),
+    }),
+    v.null()
+  ),
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+
+    const user = await ctx.db.get(userId);
+    const pendingMemberId = user?.pendingMatchMemberId;
+    if (!pendingMemberId) return null;
+
+    const entity = await ctx.db.get(pendingMemberId);
+    if (!entity) return null;
+    if (resolveKind(entity) !== 'entity') return null;
+    if (entity.matchedUserId !== userId) return null;
+
+    const space = await ctx.db.get(entity.spaceId);
+    if (!space) return null;
+
+    const spaceRows = await ctx.db
+      .query('members')
+      .withIndex('by_space', (q) => q.eq('spaceId', entity.spaceId))
+      .collect();
+
+    const otherFamilyMembers = await Promise.all(
+      spaceRows
+        .filter((row) => resolveKind(row) === 'entity' && row._id !== pendingMemberId)
+        .map(async (row) => {
+          let displayName = row.displayName?.trim() || undefined;
+          if (!displayName && row.matchedUserId) {
+            const matchedUser = await ctx.db.get(row.matchedUserId);
+            displayName =
+              (matchedUser as { fullName?: string } | null)?.fullName?.trim() ||
+              undefined;
+          }
+          return {
+            displayName,
+            color: row.color,
+            memberType: (row.memberType ?? 'person') as 'person' | 'pet',
+          };
+        })
+    );
+
+    return { spaceName: space.name, otherFamilyMembers };
+  },
+});
+
+// ── hasPendingMatchMemberId (Family Membership Lifecycle Phase 1) ──────────
+/**
+ * Lightweight routing/UI signal: does the caller currently have a
+ * SELECTED (not-yet-joined) pending match? Distinct from
+ * getPendingPhoneMatches (which surfaces UNRESOLVED discovery-only
+ * matches the user hasn't picked from yet) — see the two-concept split in
+ * the approved plan. Never exposes the memberId itself here; callers that
+ * need the actual preview use getMyPendingFamilyPreview.
+ */
+export const hasPendingMatchMemberId = query({
+  args: {},
+  returns: v.boolean(),
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return false;
+    const user = await ctx.db.get(userId);
+    return user?.pendingMatchMemberId !== undefined;
+  },
+});
+
+// ── undoClaimedFamilyMatch (Family Membership Lifecycle Phase 1) ───────────
+/**
+ * "Change your mind" affordance for the mandatory Profile Setup / pending-
+ * family-preview screens. Since acceptPendingPhoneMatch (above) no longer
+ * grants any access — it only records a selection — undoing it is now
+ * simply clearing that selection so getPendingPhoneMatches can surface the
+ * match again immediately. There is no access row or entity patch to
+ * unwind, because none was ever created by selection alone.
+ *
+ * Refuses to run once onboardingCompleted is true — by that point any
+ * join is final and was performed by executeFamilyJoin, not by mere
+ * selection, so this mutation has nothing it is entitled to undo. Safe
+ * no-op if the caller has no pending selection at all.
+ */
+export const undoClaimedFamilyMatch = mutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('לא מחובר');
+
+    const user = await ctx.db.get(userId);
+    if (!user) throw new Error('משתמש לא נמצא');
+
+    if (user.onboardingCompleted) {
+      throw new Error(PERMISSION_DENIED);
+    }
+
+    if (!user.pendingMatchMemberId) return null; // nothing to undo — safe no-op
+
+    await ctx.db.patch(userId, {
+      pendingMatchMemberId: undefined,
+      phoneMatchResolvedAt: undefined,
+    });
+
+    return null;
   },
 });
 
@@ -536,6 +907,8 @@ export const listMyFamilyContacts = query({
       matchedUserId: Id<'users'> | undefined;
       inviteStatus: 'joined';
       memberType: 'person';
+      isFullyJoined: true;
+      isSelectableForPicker: true;
     } | null = null;
 
     if (adminAccessRow && adminAccessRow.userId !== userId) {
@@ -562,6 +935,8 @@ export const listMyFamilyContacts = query({
           matchedUserId: adminAccessRow.userId,
           inviteStatus: 'joined',
           memberType: 'person',
+          isFullyJoined: true,
+          isSelectableForPicker: true,
         };
       }
     }
@@ -607,6 +982,8 @@ export const listMyFamilyContacts = query({
             matchedUserId: userId,
             inviteStatus: 'joined',
             memberType: 'person',
+            isFullyJoined: true,
+            isSelectableForPicker: true,
           };
         }
       }
@@ -624,6 +1001,16 @@ export const listMyFamilyContacts = query({
             (user as { fullName?: string } | null)?.fullName?.trim() ||
             undefined;
         }
+        // Family Membership Lifecycle Phase 1 — server-derived invariants.
+        // See computeIsFullyJoined/computeIsSelectableForPicker doc
+        // comments above. isSelectableForPicker (never isFullyJoined
+        // alone) is the canonical picker-visibility rule — manual/local
+        // profiles with no phone remain selectable.
+        const fullyJoined = await computeIsFullyJoined(ctx, m);
+        const selectableForPicker = computeIsSelectableForPicker(
+          m,
+          fullyJoined
+        );
         return {
           _id: m._id,
           selectedPhoneNumber: m.selectedPhoneNumber,
@@ -634,6 +1021,8 @@ export const listMyFamilyContacts = query({
           color: m.color,
           // Rows without memberType were created before this field existed — treat as 'person'.
           memberType: (m.memberType ?? 'person') as 'person' | 'pet',
+          isFullyJoined: fullyJoined,
+          isSelectableForPicker: selectableForPicker,
         };
       })
     );

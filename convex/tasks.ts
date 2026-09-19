@@ -6,6 +6,7 @@ import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { insertCommunityActivity } from './communityActivities';
 import { isActiveCommunityMember } from './communityMemberUtils';
+import { stampTaskOwnerScope } from './ownerScope';
 import {
   cancelPendingJobsForTaskAndUserHelper,
   cancelPendingJobsForTaskHelper,
@@ -1600,6 +1601,16 @@ export const create = mutation({
       createdBy: userId,
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      // Stamped once at creation — see convex/ownerScope.ts. Never
+      // recomputed by update mutations (e.g. reassignment).
+      ownerScope: stampTaskOwnerScope({
+        communityId: args.communityId,
+        sourceType: undefined,
+        createdBy: userId,
+        assignedTo: normalizedAssignees.assignedTo,
+        assignedToUserIds: normalizedAssignees.assignedToUserIds,
+        assignedToMemberIds: normalizedAssignees.assignedToMemberIds,
+      }),
     });
 
     if (args.communityId && !hasExplicitAssigneeForCommunityActivity(args)) {
@@ -2789,6 +2800,14 @@ export const addEventImportantItemsToMyTasks = mutation({
       createdAt: Date.now(),
       sourceType: 'community_event_important_items_bundle',
       sourceEventId: eventId,
+      // This is the CALLING USER's own personal copy of a community
+      // event's important items (assignedTo === createdBy === userId).
+      // communityId is set only for reference/lookup — it does NOT make
+      // this task community-owned, so the generic stampTaskOwnerScope
+      // heuristic (which treats any communityId as 'community') must NOT
+      // be used here. See convex/ownerScope.ts's doc comment on this
+      // exact distinction. Stamped once, never recomputed by later edits.
+      ownerScope: 'personal',
     });
 
     return { created: 1, alreadyExisted: 0 };
@@ -2924,6 +2943,14 @@ export const toggleImportantItemCheck = mutation({
         sourceType: 'community_event_important_item',
         sourceEventId: eventId,
         sourceImportantItemId: itemId,
+        // This is the CALLING USER's own personal "חשוב לזכור" copy of a
+        // single community event important item (assignedTo === createdBy
+        // === userId) — same sourceType as the canonical community task
+        // in convex/events.ts's syncCommunityEventImportantItemTasks, but
+        // distinguished from it by assignedTo being set here. communityId
+        // is reference-only and must NOT drive ownerScope classification
+        // for this personal copy. Stamped once, never recomputed.
+        ownerScope: 'personal',
       });
     }
   },

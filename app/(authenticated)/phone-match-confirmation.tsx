@@ -1,7 +1,6 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import { useMutation, useQuery } from 'convex/react';
-import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -19,6 +18,49 @@ import { colors as tc } from '@/theme/colors';
 
 const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
 
+type PendingMatchCandidate = {
+  memberId: string;
+  spaceName: string;
+  displayName?: string;
+  memberNames: string[];
+};
+
+/**
+ * Part 3: shows the matched family-profile card — "הפרופיל המשפחתי" as the
+ * primary concept with every existing member's display name wrapped in a
+ * compact list (never a phone number, never a fabricated surname), and the
+ * space name (e.g. "הבית שלנו") only as secondary metadata below it.
+ */
+function MatchCardBody({
+  match,
+}: {
+  match: PendingMatchCandidate;
+}): React.JSX.Element {
+  return (
+    <View style={styles.matchCardText}>
+      <Text style={[styles.matchPrimaryLabel, { textAlign: rtl.textAlign }]}>
+        הפרופיל המשפחתי
+      </Text>
+      {match.memberNames.length > 0 ? (
+        <View
+          style={[styles.memberNamesWrap, { flexDirection: rtl.flexDirection }]}
+        >
+          {match.memberNames.map((name) => (
+            <View key={name} style={styles.memberChip}>
+              <Text style={styles.memberChipText}>{name}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      <Text
+        style={[styles.matchSpaceNameSecondary, { textAlign: rtl.textAlign }]}
+      >
+        {match.spaceName}
+      </Text>
+    </View>
+  );
+}
+
 /**
  * Stage 2B+3 security cutover — explicit phone-match confirmation.
  *
@@ -30,7 +72,6 @@ const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
  * own separate profile instead.
  */
 export default function PhoneMatchConfirmationScreen(): React.JSX.Element {
-  const router = useRouter();
   const pendingMatches = useQuery(api.members.getPendingPhoneMatches, {});
   const acceptPendingPhoneMatch = useMutation(
     api.members.acceptPendingPhoneMatch
@@ -49,56 +90,47 @@ export default function PhoneMatchConfirmationScreen(): React.JSX.Element {
   const effectiveSelectedId =
     selectedMemberId ?? (matches.length === 1 ? matches[0].memberId : null);
 
-  // Defense in depth: if this screen is somehow reached with zero pending
-  // matches (e.g. a match was resolved elsewhere in the meantime), route
-  // onward to mandatory Profile Setup instead of showing an empty screen.
-  // FIXED: routing bug — this screen is mounted as a Tabs.Screen inside the
-  // authenticated Tabs navigator (see app/(authenticated)/_layout.tsx).
-  // Bottom tab navigators do not implement the REPLACE navigation action
-  // (only stack navigators do), so router.replace() to a sibling
-  // Tabs.Screen from here would fail with: `The action 'REPLACE' with
-  // payload {"name":"index","params":{}} was not handled by any
-  // navigator.` router.navigate() performs a normal tab switch instead,
-  // which IS handled by the Tabs navigator.
-  useEffect(() => {
-    if (pendingMatches !== undefined && pendingMatches.length === 0) {
-      router.navigate('/(authenticated)/family-profile-setup');
-    }
-  }, [pendingMatches, router]);
-
+  // Part 7 QA fix: this screen used to imperatively navigate itself
+  // (router.navigate) immediately after acceptPendingPhoneMatch /
+  // declinePhoneMatches / an externally-emptied match list resolved. That
+  // raced against the authenticated layout's OWN reactive redirect effect
+  // (app/(authenticated)/_layout.tsx), which recomputes
+  // resolvePostAuthOnboardingRoute from the exact same server state
+  // (phoneMatchResolvedAt / pendingMatches) and already redirects on its
+  // own the instant either mutation's write becomes visible. When both
+  // fired for the same transition, whichever dispatched second could hit a
+  // Tabs navigator that had already unmounted (the layout renders the
+  // splash screen instead of <Tabs> while a redirect decision is pending),
+  // producing: `The action 'NAVIGATE' with payload {"name":"index"} was
+  // not handled by any navigator.` The fix is architectural, not a
+  // guessed patch: there must be exactly ONE place that decides/performs
+  // this transition. This screen now only calls the mutations and reports
+  // errors — it never navigates itself. The authenticated layout is the
+  // single source of truth for where an onboarding-incomplete user goes
+  // next.
   const handleAccept = (): void => {
     if (!effectiveSelectedId || isAccepting || isDeclining) return;
     setErrorMessage(null);
     setIsAccepting(true);
     acceptPendingPhoneMatch({
       memberId: effectiveSelectedId as Id<'members'>,
-    })
-      .then(() => {
-        // onboardingCompleted is now server-side true — continue through
-        // canonical routing (the authenticated layout will send the user
-        // Home once userStatus reflects the completed mutation).
-        // FIXED: router.navigate() — see routing-bug comment above.
-        router.navigate('/(authenticated)');
-      })
-      .catch(() => {
-        setErrorMessage('לא הצלחנו להמשיך לפרופיל כרגע. אפשר לנסות שוב.');
-      })
-      .finally(() => setIsAccepting(false));
+    }).catch(() => {
+      setErrorMessage('לא הצלחנו להמשיך לפרופיל כרגע. אפשר לנסות שוב.');
+      setIsAccepting(false);
+    });
+    // No .finally()/success navigation — on success this screen stays in
+    // its loading state until the authenticated layout's reactive
+    // redirect (driven by phoneMatchResolvedAt) moves the user forward.
   };
 
   const handleDecline = (): void => {
     if (isAccepting || isDeclining) return;
     setErrorMessage(null);
     setIsDeclining(true);
-    declinePhoneMatches({})
-      .then(() => {
-        // FIXED: router.navigate() — see routing-bug comment above.
-        router.navigate('/(authenticated)/family-profile-setup');
-      })
-      .catch(() => {
-        setErrorMessage('אירעה שגיאה. אפשר לנסות שוב.');
-      })
-      .finally(() => setIsDeclining(false));
+    declinePhoneMatches({}).catch(() => {
+      setErrorMessage('אירעה שגיאה. אפשר לנסות שוב.');
+      setIsDeclining(false);
+    });
   };
 
   if (pendingMatches === undefined) {
@@ -122,8 +154,14 @@ export default function PhoneMatchConfirmationScreen(): React.JSX.Element {
           <MaterialIcons name="person-search" size={40} color={tc.primary} />
         </View>
 
+        {/* Part 3: lead with the family-profile concept, never the paid
+            "InYomi Together" subscription name — see AGENTS.md
+            terminology note. */}
         <Text style={[styles.title, { textAlign: rtl.textAlign }]}>
-          מצאנו שכבר יש לך פרופיל משותף ב־InYomi.{'\n'}אפשר להמשיך אליו עכשיו.
+          מצאנו שכבר יש לך פרופיל משותף ב-InYomi
+        </Text>
+        <Text style={[styles.subtitle, { textAlign: rtl.textAlign }]}>
+          אפשר להמשיך לפרופיל המשפחתי הקיים שלך, או להגדיר פרופיל נפרד.
         </Text>
 
         {isMultiple ? (
@@ -138,9 +176,9 @@ export default function PhoneMatchConfirmationScreen(): React.JSX.Element {
                   accessibilityRole="radio"
                   accessibilityState={{ selected: isSelected }}
                   accessibilityLabel={
-                    m.displayName
-                      ? `${m.spaceName} — ${m.displayName}`
-                      : m.spaceName
+                    m.memberNames.length > 0
+                      ? `הפרופיל המשפחתי — ${m.memberNames.join(', ')}`
+                      : 'הפרופיל המשפחתי'
                   }
                   style={[
                     styles.matchCard,
@@ -156,42 +194,14 @@ export default function PhoneMatchConfirmationScreen(): React.JSX.Element {
                     size={22}
                     color={isSelected ? tc.primary : '#cbd5e1'}
                   />
-                  <View style={styles.matchCardText}>
-                    <Text
-                      style={[
-                        styles.matchSpaceName,
-                        { textAlign: rtl.textAlign },
-                      ]}
-                    >
-                      {m.spaceName}
-                    </Text>
-                    {m.displayName ? (
-                      <Text
-                        style={[
-                          styles.matchDisplayName,
-                          { textAlign: rtl.textAlign },
-                        ]}
-                      >
-                        {m.displayName}
-                      </Text>
-                    ) : null}
-                  </View>
+                  <MatchCardBody match={m} />
                 </Pressable>
               );
             })}
           </View>
         ) : matches.length === 1 ? (
           <View style={styles.singleMatchCard}>
-            <Text style={[styles.matchSpaceName, { textAlign: rtl.textAlign }]}>
-              {matches[0].spaceName}
-            </Text>
-            {matches[0].displayName ? (
-              <Text
-                style={[styles.matchDisplayName, { textAlign: rtl.textAlign }]}
-              >
-                {matches[0].displayName}
-              </Text>
-            ) : null}
+            <MatchCardBody match={matches[0]} />
           </View>
         ) : null}
 
@@ -208,7 +218,7 @@ export default function PhoneMatchConfirmationScreen(): React.JSX.Element {
           disabled={!effectiveSelectedId || isAccepting || isDeclining}
           accessible={true}
           accessibilityRole="button"
-          accessibilityLabel="המשך לפרופיל"
+          accessibilityLabel="המשך לפרופיל המשפחתי"
           style={[
             styles.primaryButton,
             (!effectiveSelectedId || isAccepting || isDeclining) &&
@@ -218,7 +228,7 @@ export default function PhoneMatchConfirmationScreen(): React.JSX.Element {
           {isAccepting ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.primaryButtonText}>המשך לפרופיל</Text>
+            <Text style={styles.primaryButtonText}>המשך לפרופיל המשפחתי</Text>
           )}
         </Pressable>
         <Pressable
@@ -269,6 +279,12 @@ const styles = StyleSheet.create({
     color: '#111827',
     lineHeight: 28,
   },
+  subtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+    lineHeight: 20,
+    marginTop: 8,
+  },
   multiList: { marginTop: 24, gap: 12 },
   matchCard: {
     flexDirection: rtl.flexDirection,
@@ -293,8 +309,24 @@ const styles = StyleSheet.create({
     borderColor: tc.primary,
     padding: 16,
   },
-  matchSpaceName: { fontSize: 16, fontWeight: '700', color: '#111827' },
-  matchDisplayName: { fontSize: 13, color: '#6b7280', marginTop: 2 },
+  matchPrimaryLabel: { fontSize: 16, fontWeight: '700', color: '#111827' },
+  memberNamesWrap: {
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+  memberChip: {
+    backgroundColor: '#f1f5f9',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  memberChipText: { fontSize: 12, color: '#374151', fontWeight: '600' },
+  matchSpaceNameSecondary: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginTop: 8,
+  },
   errorText: { color: '#dc2626', fontSize: 13, marginTop: 16 },
   footer: {
     paddingHorizontal: 24,
