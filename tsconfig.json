@@ -13,6 +13,7 @@
     ".expo",
     "convex/__tests__",
     "lib/services/__tests__",
-    "tests/convex"
+    "tests/convex",
+    "modules/expo-google-calendar-auth/src/__tests__"
   ]
 }

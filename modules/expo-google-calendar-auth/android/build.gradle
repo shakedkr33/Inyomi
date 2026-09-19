@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.shakedkr.inyomi.modules'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.googlecalendarauth"
+}
+
+dependencies {
+  // Google Identity Services AuthorizationClient. 22.0.0 is the current
+  // stable release; it removes only legacy Google Sign-In APIs that this
+  // module does not use. AuthorizationClient itself is unaffected.
+  // See docs/audits or the approved implementation plan for the version
+  // rationale. If a concrete incompatibility with this repo is found,
+  // fall back to 21.6.0 and document the exact issue before downgrading.
+  implementation "com.google.android.gms:play-services-auth:22.0.0"
+}

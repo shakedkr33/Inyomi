@@ -5,7 +5,11 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": ["inyomi", "com.googleusercontent.apps.223048558449-cab0cdv12hiq0g7ujdsibuauoummed6o"],
+    "scheme": [
+      "inyomi",
+      "com.googleusercontent.apps.223048558449-cab0cdv12hiq0g7ujdsibuauoummed6o",
+      "com.shakedkr.inyomi"
+    ],
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {

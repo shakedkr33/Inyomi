@@ -9,9 +9,15 @@
  * Security contract:
  * - Only the calendar.readonly scope is requested. No identity scopes.
  * - The client ID is read and validated exclusively at hook call-time from
- *   EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID. It is never hardcoded.
- * - The redirect URI is derived from the validated client ID inside the hook.
- *   No Google URI is ever constructed from invalid or absent configuration.
+ *   a platform-specific env var — EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID on iOS,
+ *   EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID on Android (see
+ *   lib/services/googleOAuthClient.ts). Neither is ever hardcoded, and
+ *   selection never falls back across platforms.
+ * - The redirect URI is derived from the validated client ID (iOS) or the
+ *   app's package name (Android — Google's Android OAuth client type has
+ *   no redirect-URI field; see googleOAuthClient.ts for why) inside the
+ *   hook. No Google URI is ever constructed from invalid or absent
+ *   configuration.
  * - The access token lives in React state only; it is never written to
  *   AsyncStorage, SecureStore, module globals, analytics, or any Convex function.
  * - The authorization code and PKCE verifier are used only for the token
@@ -25,6 +31,17 @@
  *                 ↓           ↓
  *               denied      error
  *   Any state → idle (via clearAuthorization or silent cancel/dismiss)
+ *
+ * Android platform note:
+ * Android's ACTIVE authorization path uses the native
+ * expo-google-calendar-auth module (Google Identity Services'
+ * AuthorizationClient) instead of the browser/Custom-URI PKCE flow below —
+ * see startAndroidAuthorization(). The browser/PKCE code in this file is
+ * preserved unchanged and stays reachable (useAuthRequest is still called
+ * unconditionally, per Rules of Hooks) so it can be restored as a rollback
+ * if the native AuthorizationClient flow fails physical-device QA. iOS is
+ * completely unaffected and continues to use the browser/PKCE flow below
+ * as its only path.
  */
 
 import {
@@ -36,6 +53,15 @@ import {
   useAuthRequest,
 } from 'expo-auth-session';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Platform } from 'react-native';
+import {
+  deriveGoogleOAuthNativeScheme,
+  resolvePlatformGoogleOAuthClientId,
+} from '@/lib/services/googleOAuthClient';
+import {
+  authorizeGoogleCalendar,
+  type GoogleCalendarAuthResult,
+} from '@/modules/expo-google-calendar-auth/src';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -51,9 +77,6 @@ const GOOGLE_DISCOVERY = {
 
 const CALENDAR_READONLY = 'https://www.googleapis.com/auth/calendar.readonly';
 
-/** Expected suffix for a Google iOS OAuth client ID. */
-const GOOGLE_IOS_SUFFIX = '.apps.googleusercontent.com';
-
 /**
  * Inert placeholder values used by useAuthRequest when the real configuration
  * is absent. These strings are never sent to any authorization server:
@@ -64,30 +87,11 @@ const INERT_CLIENT_ID = 'not-configured';
 const INERT_REDIRECT_URI = 'inyomi://oauth-not-configured';
 
 // ── Configuration helpers ────────────────────────────────────────────────────
-
-/**
- * Validate and return a trimmed Google iOS client ID, or null.
- *
- * Accepts only a non-empty string value ending in ".apps.googleusercontent.com".
- * A missing, non-string, empty, or structurally inconsistent value returns null.
- */
-function resolveClientId(raw: string | undefined): string | null {
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return null;
-  if (!trimmed.endsWith(GOOGLE_IOS_SUFFIX)) return null;
-  return trimmed;
-}
-
-/**
- * Derive the iOS native redirect URI from a validated Google iOS client ID.
- * Reverses the dot-separated components and appends the standard path:
- *   "X.apps.googleusercontent.com" → "com.googleusercontent.apps.X:/oauthredirect"
- */
-function deriveRedirectUri(clientId: string): string {
-  const reversed = clientId.split('.').reverse().join('.');
-  return makeRedirectUri({ native: `${reversed}:/oauthredirect` });
-}
+//
+// Client-id validation, platform selection, and native-scheme derivation are
+// pure functions that live in lib/services/googleOAuthClient.ts (kept out of
+// this file because it must stay unit-testable without a react-native
+// runtime). This file only wires those pure results into `makeRedirectUri`.
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -144,16 +148,26 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
 
   // ── Configuration validation ───────────────────────────────────────────────
   //
-  // Validate the client ID on every render call.
-  // process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID is inlined at build time,
-  // so the result is effectively constant across renders.
+  // Validate the platform-specific client ID on every render call.
+  // process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID / _ANDROID_CLIENT_ID are
+  // inlined at build time, so the result is effectively constant across
+  // renders. Platform.OS is likewise constant for the life of the app.
   //
   // Redirect URI derivation is intentionally deferred to this point (inside
   // the hook) so that no Google URI is ever constructed from absent or
   // malformed configuration at module initialization time.
 
-  const clientId = resolveClientId(process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID);
-  const redirectUri = clientId !== null ? deriveRedirectUri(clientId) : null;
+  const platform = Platform.OS === 'ios' ? 'ios' : 'android';
+  const clientId = resolvePlatformGoogleOAuthClientId(platform, {
+    iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+    androidClientId: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+  });
+  const redirectUri =
+    clientId !== null
+      ? makeRedirectUri({
+          native: deriveGoogleOAuthNativeScheme(platform, clientId),
+        })
+      : null;
   const hasValidConfig = clientId !== null && redirectUri !== null;
 
   // ── Auth request setup ─────────────────────────────────────────────────────
@@ -178,7 +192,7 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
       codeChallengeMethod: CodeChallengeMethod.S256,
       prompt: Prompt.Consent,
     },
-    hasValidConfig ? GOOGLE_DISCOVERY : null,
+    hasValidConfig ? GOOGLE_DISCOVERY : null
   );
 
   const clearAuthorization = useCallback((): void => {
@@ -188,7 +202,64 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
     setErrorMessage(null);
   }, []);
 
+  // ── Android native authorization (ACTIVE path on Android) ──────────────────
+  //
+  // Uses Google Identity Services' AuthorizationClient via the local
+  // expo-google-calendar-auth module instead of the browser/PKCE flow.
+  // Never requests forceAccountSelection — that option exists in the native
+  // API only so a future "change Google account" feature can use it without
+  // another native migration; the normal import flow always omits it.
+  //
+  // This does not need clientId/redirectUri: AuthorizationClient resolves
+  // the Google Cloud OAuth client via the app's package name + signing
+  // SHA-1, not a client ID passed at runtime.
+  const startAndroidAuthorization = useCallback(async (): Promise<void> => {
+    if (isMounted.current) {
+      setStatus('authorizing');
+      setErrorMessage(null);
+      setAccessToken(null);
+    }
+
+    let result: GoogleCalendarAuthResult;
+    try {
+      result = await authorizeGoogleCalendar();
+    } catch {
+      if (isMounted.current) {
+        setStatus('error');
+        setErrorMessage('לא ניתן להשלים את ההרשאה. נסי שוב.');
+        setAccessToken(null);
+      }
+      return;
+    }
+
+    if (!isMounted.current) return;
+
+    // User cancellation is a clean outcome, not an error.
+    if (result.cancelled) {
+      setStatus('idle');
+      setAccessToken(null);
+      return;
+    }
+
+    if (!result.accessToken) {
+      setStatus('error');
+      setErrorMessage('לא ניתן להשלים את ההרשאה. נסי שוב.');
+      setAccessToken(null);
+      return;
+    }
+
+    setAccessToken(result.accessToken);
+    setStatus('authorized');
+  }, []);
+
   const startAuthorization = useCallback(async (): Promise<void> => {
+    // Android's ACTIVE path never touches clientId/redirectUri/useAuthRequest
+    // below — see the Android platform note in the file-level comment.
+    if (Platform.OS === 'android') {
+      await startAndroidAuthorization();
+      return;
+    }
+
     // Configuration gate: fail with a generic message if the client ID is
     // missing, empty, or structurally inconsistent. Do not expose variable
     // names, client ID values, or redirect URIs in the user-facing message.
@@ -276,9 +347,11 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
           redirectUri,
           // Pass the PKCE verifier so the authorization server can validate
           // the code challenge that was included in the authorization request.
-          extraParams: codeVerifier ? { code_verifier: codeVerifier } : undefined,
+          extraParams: codeVerifier
+            ? { code_verifier: codeVerifier }
+            : undefined,
         },
-        { tokenEndpoint: GOOGLE_DISCOVERY.tokenEndpoint },
+        { tokenEndpoint: GOOGLE_DISCOVERY.tokenEndpoint }
       );
 
       if (!isMounted.current) return;
@@ -296,7 +369,20 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
     } finally {
       isExchanging.current = false;
     }
-  }, [request, promptAsync, hasValidConfig, clientId, redirectUri]);
+  }, [
+    startAndroidAuthorization,
+    request,
+    promptAsync,
+    hasValidConfig,
+    clientId,
+    redirectUri,
+  ]);
 
-  return { status, accessToken, errorMessage, startAuthorization, clearAuthorization };
+  return {
+    status,
+    accessToken,
+    errorMessage,
+    startAuthorization,
+    clearAuthorization,
+  };
 }

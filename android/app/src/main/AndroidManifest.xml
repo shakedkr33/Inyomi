@@ -36,6 +36,19 @@
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="exp+inyomi"/>
       </intent-filter>
+      <!-- Google Calendar import OAuth (Android) redirect scheme. Google's
+           "Android" OAuth client type has no redirect-URI field in the Cloud
+           Console (it verifies via package name + signing SHA-1 instead), so
+           the system-browser Authorization Code flow redirects back into the
+           app via its own package-name custom URI scheme instead of the
+           reversed-client-id scheme used on iOS. See
+           lib/services/googleOAuthClient.ts. -->
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <category android:name="android.intent.category.BROWSABLE"/>
+        <data android:scheme="com.shakedkr.inyomi"/>
+      </intent-filter>
       <intent-filter android:autoVerify="true" data-generated="true">
         <action android:name="android.intent.action.VIEW"/>
         <data android:scheme="https" android:host="inyomi.app" android:pathPrefix="/shared/"/>
