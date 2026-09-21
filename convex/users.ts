@@ -43,24 +43,19 @@ export const getCurrentUser = query({
   },
 });
 
-// שליפת משתמש לפי מזהה (ID)
-export const getById = query({
-  args: { userId: v.id('users') },
-  handler: async (ctx, { userId }) => {
-    return await ctx.db.get(userId);
-  },
-});
+// SECURITY (Wave 1 / H-01): getById was a public, unauthenticated query that
+// returned the raw user document (PII incl. phone/email/familyContacts) for
+// ANY caller-supplied userId — no auth check, no object-level authorization.
+// Removed 2026-09: verified zero callers across app/, convex/, tests/ and
+// scripts. If a caller ever needs another user's profile, use/extend a
+// scoped, authorized query (e.g. creatorProfile/assignees projections in
+// tasks.getTaskDetails) instead of reintroducing raw cross-user document
+// access. See docs/audits/ security audit Wave 1, finding H-01.
 
-// שליפת רשימת כל המשתמשים הפעילים
-export const listActive = query({
-  args: {},
-  handler: async (ctx) => {
-    return await ctx.db
-      .query('users')
-      .filter((q) => q.eq(q.field('isActive'), true))
-      .collect();
-  },
-});
+// SECURITY (Wave 1 / C-01): listActive was a public, unauthenticated query
+// that returned the ENTIRE active-users table (global user enumeration incl.
+// PII). Removed 2026-09: verified zero callers across app/, convex/, tests/
+// and scripts. See docs/audits/ security audit Wave 1, finding C-01.
 
 // יצירה או עדכון של משתמש (נקרא בדרך כלל מתהליך האימות)
 export const createOrUpdateUser = mutation({
@@ -104,26 +99,17 @@ export const createOrUpdateUser = mutation({
   },
 });
 
-// עדכון פרופיל המשתמש (למשל, שינוי שם)
-export const updateProfile = mutation({
-  args: {
-    userId: v.id('users'),
-    fullName: v.optional(v.string()),
-  },
-  handler: async (ctx, { userId, fullName }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error('Not authenticated');
-    }
-
-    await ctx.db.patch(userId, {
-      fullName,
-      updatedAt: Date.now(),
-    });
-
-    return userId;
-  },
-});
+// SECURITY (Wave 1 / H-02): updateProfile was a public mutation that
+// accepted a client-supplied userId and patched that user's profile after
+// only checking that SOME identity was authenticated — never that the
+// authenticated caller was the same user as the target userId. This allowed
+// any signed-in user to overwrite any other user's fullName. Removed
+// 2026-09: verified zero callers across app/, convex/, tests/ and scripts.
+// The legitimate, authorized self-profile-update flow is updateMyProfile
+// below (uses getAuthUserId(ctx) as the target — never a client-supplied
+// id — and preserves claimed-name protection). Do not reintroduce a
+// client-supplied-userId profile mutation. See docs/audits/ security audit
+// Wave 1, finding H-02.
 
 // עדכון סוג המשתמש (חינמי/בתשלום)
 export const updateUserType = mutation({
@@ -155,18 +141,16 @@ export const updateUserType = mutation({
   },
 });
 
-// מחיקת משתמש (פעולה למנהלים או למשתמש עצמו - כאן מיושם כמחיקה פיזית)
-export const remove = mutation({
-  args: { userId: v.id('users') },
-  handler: async (ctx, { userId }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error('Not authenticated');
-    }
-
-    await ctx.db.delete(userId);
-  },
-});
+// SECURITY (Wave 1 / C-02): remove was a public mutation that accepted a
+// client-supplied userId and deleted that user record after only checking
+// that SOME identity was authenticated — never that the authenticated
+// caller was the same user as the target userId. This allowed any signed-in
+// user to delete an arbitrary other user's record. Removed 2026-09: verified
+// zero callers across app/, convex/, tests/ and scripts. This fix is
+// intentionally NOT wired into the account-deletion flow — deleteMyAccount
+// (below) is a separate, already-authorized self-service flow and is out of
+// scope for this remediation. See docs/audits/ security audit Wave 1,
+// finding C-02.
 
 // שליפת ה-Space הראשי של המשתמש הנוכחי
 // מחזיר Id<'spaces'> | null — null פירושו "אין מרחב פעיל"

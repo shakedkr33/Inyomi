@@ -321,12 +321,51 @@ export const listMyCommunities = query({
 });
 
 // ─────────────────────────────────────────────────────────────
-// שליפת קהילה לפי ID (ללא בדיקת חברות — לשימוש ב-calendar filter)
+// שליפת מטא-דאטה מוגבלת של קהילה לפי ID
+//
+// SECURITY (Wave 1 / H-04): previously returned the RAW community document
+// (unauthenticated, no membership check) — including `inviteCode`, a join
+// secret. Verified current callers (EventDetailsBottomSheet.tsx,
+// calendar.tsx, event/[id].tsx) only ever read `.name` and `.archived`, and
+// in every one of those call sites the viewer is already required to be an
+// active member of this exact community by an upstream query
+// (events.getById / events.listByCommunity both call
+// isActiveCommunityMember before exposing event.communityId to the caller).
+// So this query now: (1) requires authentication, (2) requires the caller
+// to be an active member of THIS community, and (3) returns an explicit
+// minimal projection — never the raw document, never inviteCode. The
+// dedicated join flow (getCommunityByInviteCode / joinByInviteCode) is the
+// only path that may resolve an invite code, and it never returns one back
+// to the client either.
 // ─────────────────────────────────────────────────────────────
 export const getById = query({
   args: { communityId: v.id('communities') },
+  returns: v.union(
+    v.object({
+      name: v.string(),
+      archived: v.optional(v.boolean()),
+    }),
+    v.null()
+  ),
   handler: async (ctx, { communityId }) => {
-    return await ctx.db.get(communityId);
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+
+    const community = await ctx.db.get(communityId);
+    if (!community) return null;
+
+    const membership = await ctx.db
+      .query('communityMembers')
+      .withIndex('by_community_user', (q) =>
+        q.eq('communityId', communityId).eq('userId', userId)
+      )
+      .unique();
+    if (!isActiveCommunityMember(membership)) return null;
+
+    return {
+      name: community.name,
+      archived: community.archived,
+    };
   },
 });
 

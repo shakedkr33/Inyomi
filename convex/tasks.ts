@@ -1835,16 +1835,14 @@ export const dismissCommunityReminderForMe = mutation({
   },
 });
 
-// ─────────────────────────────────────────────────────────────
-// שליפת משימה בודדת לפי ID (לדף עריכה)
-// ─────────────────────────────────────────────────────────────
-export const getById = query({
-  args: { id: v.id('tasks') },
-  handler: async (ctx, { id }) => {
-    // TODO: לאמת שהמשתמש הנוכחי שייך ל-space של המשימה
-    return await ctx.db.get(id);
-  },
-});
+// SECURITY (Wave 1 / H-03): getById was a public query that returned the
+// raw task document by id with NO authentication/authorization (see the
+// TODO that used to sit here). Removed 2026-09: its only caller,
+// TaskEditorScreen.tsx, was migrated to the canonical authorized query
+// getTaskDetails below, which spreads the same raw task fields plus
+// creatorProfile/assignees/canEdit, and returns null for any unauthenticated
+// or unauthorized caller instead of the raw document. See docs/audits/
+// security audit Wave 1, finding H-03.
 
 // ─────────────────────────────────────────────────────────────
 // שליפת פרטי משימה מועשרת להצגה במסך Task Details

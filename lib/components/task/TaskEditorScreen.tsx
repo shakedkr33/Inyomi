@@ -641,8 +641,14 @@ export default function TaskEditorScreen({
   const mySpace = useQuery(api.users.getMySpace);
   const currentUser = useQuery(api.users.getCurrentUser);
   const familyContacts = useQuery(api.members.listMyFamilyContacts);
+  // SECURITY (Wave 1 / H-03): previously used api.tasks.getById, an
+  // unauthenticated/unauthorized raw-document query. Migrated to the
+  // canonical authorized query — same object shape (getTaskDetails spreads
+  // the raw task document plus adds derived fields TaskEditorScreen already
+  // ignores below), but now returns null for any non-participant instead of
+  // exposing task content to an unauthorized caller.
   const existingTask = useQuery(
-    api.tasks.getById,
+    api.tasks.getTaskDetails,
     !isCreate && taskId ? { id: taskId as Id<'tasks'> } : 'skip'
   );
   const createTask = useMutation(api.tasks.create);
