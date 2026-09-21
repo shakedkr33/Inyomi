@@ -10,6 +10,7 @@
 
 import type * as appleReviewAuth from "../appleReviewAuth.js";
 import type * as auth from "../auth.js";
+import type * as backfills from "../backfills.js";
 import type * as birthdays from "../birthdays.js";
 import type * as communities from "../communities.js";
 import type * as communityActivities from "../communityActivities.js";
@@ -27,6 +28,7 @@ import type * as http from "../http.js";
 import type * as linkedEvents from "../linkedEvents.js";
 import type * as members from "../members.js";
 import type * as onboarding from "../onboarding.js";
+import type * as ownerScope from "../ownerScope.js";
 import type * as personalEventCalendar from "../personalEventCalendar.js";
 import type * as profileCircles from "../profileCircles.js";
 import type * as pushNotifications from "../pushNotifications.js";
@@ -48,6 +50,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   appleReviewAuth: typeof appleReviewAuth;
   auth: typeof auth;
+  backfills: typeof backfills;
   birthdays: typeof birthdays;
   communities: typeof communities;
   communityActivities: typeof communityActivities;
@@ -65,6 +68,7 @@ declare const fullApi: ApiFromModules<{
   linkedEvents: typeof linkedEvents;
   members: typeof members;
   onboarding: typeof onboarding;
+  ownerScope: typeof ownerScope;
   personalEventCalendar: typeof personalEventCalendar;
   profileCircles: typeof profileCircles;
   pushNotifications: typeof pushNotifications;
