@@ -110,10 +110,64 @@ describe('classifyTaskForBackfill', () => {
     expect(classifyTaskForBackfill({ createdBy: USER })).toBe('ambiguous');
   });
 
-  it('reports a legacy task assigned only to its own creator as ambiguous, not personal', () => {
+  it('deterministically classifies a legacy task explicitly assigned only to its own creator as personal', () => {
     expect(
       classifyTaskForBackfill({ createdBy: USER, assignedTo: USER })
+    ).toBe('personal');
+  });
+
+  it('deterministically classifies assignedToUserIds containing only the creator as personal', () => {
+    expect(
+      classifyTaskForBackfill({
+        createdBy: USER,
+        assignedTo: USER,
+        assignedToUserIds: [USER],
+      })
+    ).toBe('personal');
+  });
+
+  it('does not force personal when another user appears in assignedToUserIds', () => {
+    expect(
+      classifyTaskForBackfill({
+        createdBy: USER,
+        assignedTo: USER,
+        assignedToUserIds: [USER, OTHER_USER],
+      })
+    ).toBe('family');
+  });
+
+  it('does not force personal when a member assignment exists', () => {
+    expect(
+      classifyTaskForBackfill({
+        createdBy: USER,
+        assignedTo: USER,
+        assignedToUserIds: [USER],
+        assignedToMemberIds: ['member_1'],
+      })
+    ).toBe('family');
+  });
+
+  it('leaves an unassigned legacy task (assignedTo undefined, no assignees) ambiguous', () => {
+    expect(
+      classifyTaskForBackfill({ createdBy: USER, assignedToUserIds: [] })
     ).toBe('ambiguous');
+  });
+
+  it('still classifies a community task as community even when creator-only assignment shape also matches', () => {
+    expect(
+      classifyTaskForBackfill({
+        communityId: 'community_1',
+        createdBy: USER,
+        assignedTo: USER,
+        assignedToUserIds: [USER],
+      })
+    ).toBe('community');
+  });
+
+  it('leaves a currently-valid family classification (other assignee) unchanged', () => {
+    expect(
+      classifyTaskForBackfill({ createdBy: USER, assignedTo: OTHER_USER })
+    ).toBe('family');
   });
 });
 

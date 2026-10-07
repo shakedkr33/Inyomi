@@ -138,9 +138,27 @@ export function classifyTaskForBackfill(input: {
     (input.assignedToMemberIds?.length ?? 0) > 0;
   if (hasOtherAssignee) return 'family';
 
-  // No community and no assignment signal pointing away from the creator.
-  // Ambiguous: could be a personal task, or a family task currently
-  // assigned only to its own creator/unassigned. Do not guess.
+  // Deterministic legacy shape: assignedTo is explicitly set to the task's
+  // own creator (not undefined — undefined never equals a defined
+  // createdBy string), every entry of assignedToUserIds (if any) also
+  // points only at the creator, and there are zero member assignees. This
+  // is exactly what the live creation-time stamper (stampTaskOwnerScope)
+  // computes as 'personal' for this shape today, so it is safe to backfill
+  // deterministically. An UNASSIGNED legacy task (assignedTo undefined,
+  // no assignedToUserIds/assignedToMemberIds) does NOT match this rule and
+  // falls through to 'ambiguous' below — current task-visibility rules can
+  // still expose an unassigned task to other space members, so the absence
+  // of an assignee must never be guessed as personal.
+  const onlyAssigneeIsCreator =
+    input.assignedTo === input.createdBy &&
+    (input.assignedToUserIds ?? []).every((id) => id === input.createdBy) &&
+    (input.assignedToMemberIds?.length ?? 0) === 0;
+  if (onlyAssigneeIsCreator) return 'personal';
+
+  // No community, no assignment signal pointing away from the creator, and
+  // not explicitly self-assigned either (assignedTo undefined). Ambiguous:
+  // could be a personal task, or a family task nobody has assigned yet.
+  // Do not guess.
   return 'ambiguous';
 }
 

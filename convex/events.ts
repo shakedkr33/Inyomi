@@ -31,7 +31,7 @@ import {
   selectRecentCancelledCommunityEvents,
 } from './communityCalendarState';
 import { isActiveCommunityMember } from './communityMemberUtils';
-import { resolveMySpaceId } from './members';
+import { hasCreatorOrphanAuthority, resolveMySpaceId } from './members';
 import {
   isStorageReferencedByOtherDocument,
   safeDeleteStorageIfUnreferenced,
@@ -1868,7 +1868,18 @@ export const update = mutation({
         throw new Error('אין הרשאה לערוך את האירוע');
       }
     } else if (existing.createdBy !== userId) {
-      throw new Error('אין הרשאה לערוך את האירוע');
+      // Creator-orphan fallback (see lib/creatorOrphanAuthority.ts): if the
+      // creator account was deleted, the family space admin may manage
+      // this event in their place. A live creator's authority is
+      // unaffected — this can only add authority, never remove it.
+      const hasOrphanFallback = await hasCreatorOrphanAuthority(ctx, {
+        createdBy: existing.createdBy,
+        spaceId: existing.spaceId,
+        callerId: userId,
+      });
+      if (!hasOrphanFallback) {
+        throw new Error('אין הרשאה לערוך את האירוע');
+      }
     }
 
     let stampedAttachments: typeof existing.attachments | undefined;
@@ -2147,7 +2158,16 @@ export const cancelEvent = mutation({
         membership.role === 'owner' || membership.role === 'admin';
       if (!isCreator && !isOwnerOrAdmin) throw new Error('אין הרשאה');
     } else if (event.createdBy !== userId) {
-      throw new Error('אין הרשאה');
+      // Creator-orphan fallback — see lib/creatorOrphanAuthority.ts and the
+      // matching comment in `update` above.
+      const hasOrphanFallback = await hasCreatorOrphanAuthority(ctx, {
+        createdBy: event.createdBy,
+        spaceId: event.spaceId,
+        callerId: userId,
+      });
+      if (!hasOrphanFallback) {
+        throw new Error('אין הרשאה');
+      }
     }
 
     const cancelledAt = Date.now();
@@ -2464,7 +2484,17 @@ export const deleteEvent = mutation({
       );
     }
     if (event.createdBy !== userId) {
-      throw new Error('אין הרשאה');
+      // Creator-orphan fallback — see lib/creatorOrphanAuthority.ts and the
+      // matching comment in `update` above. event.communityId is already
+      // excluded above, so this is always non-community content.
+      const hasOrphanFallback = await hasCreatorOrphanAuthority(ctx, {
+        createdBy: event.createdBy,
+        spaceId: event.spaceId,
+        callerId: userId,
+      });
+      if (!hasOrphanFallback) {
+        throw new Error('אין הרשאה');
+      }
     }
 
     // Patch linked events before deleting — recipients will fall back to snapshot
@@ -2494,8 +2524,19 @@ export const softDeletePersonalEvent = mutation({
     if (!event) throw new Error('אירוע לא נמצא');
     if (event.communityId)
       throw new Error('לא ניתן למחוק אירוע קהילתי בדרך זו');
-    if ((event.createdBy as string) !== (userId as string))
-      throw new Error('אין הרשאה למחוק אירוע זה');
+    if ((event.createdBy as string) !== (userId as string)) {
+      // Creator-orphan fallback — see lib/creatorOrphanAuthority.ts and the
+      // matching comment in `update` above. event.communityId is already
+      // excluded above, so this is always non-community content.
+      const hasOrphanFallback = await hasCreatorOrphanAuthority(ctx, {
+        createdBy: event.createdBy,
+        spaceId: event.spaceId,
+        callerId: userId,
+      });
+      if (!hasOrphanFallback) {
+        throw new Error('אין הרשאה למחוק אירוע זה');
+      }
+    }
 
     // Idempotent — already soft-deleted
     if (event.deletedAt !== undefined) return { success: true as const };

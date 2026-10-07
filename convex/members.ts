@@ -1,6 +1,7 @@
 import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { buildCanonicalFamilyMembers } from '../lib/canonicalFamilyMembers';
+import { hasCreatorOrphanFallbackAuthority } from '../lib/creatorOrphanAuthority';
 import { filterPendingPhoneMatchCandidates } from '../lib/pendingPhoneMatches';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -1142,6 +1143,57 @@ export const getMyResolvedSpaceId = query({
     return await resolveMySpaceId(ctx, userId);
   },
 });
+
+// ── hasCreatorOrphanAuthority ────────────────────────────────────────────────
+/**
+ * DB-backed wrapper around `hasCreatorOrphanFallbackAuthority`
+ * (lib/creatorOrphanAuthority.ts) — resolves `creatorExists` and
+ * `callerIsSpaceAdmin` from ctx.db, then delegates the actual decision to
+ * that pure helper. See its doc comment for the full invariant list.
+ *
+ * Used by the narrow family event/task authorization fallback (events.ts
+ * `update`/`cancelEvent`/`deleteEvent`/`softDeletePersonalEvent`, tasks.ts
+ * `update`'s full-edit-right calculation, `softDeleteTask`'s delete
+ * eligibility, and the subtask mutations' shared edit-access gate) so that
+ * content whose creator has been deleted (see convex/accountDeletion.ts)
+ * remains manageable by the family space's actual admin authority, without
+ * ever broadening permissions for a live creator or granting authority to
+ * ordinary family members.
+ */
+export async function hasCreatorOrphanAuthority(
+  ctx: QueryCtx | MutationCtx,
+  params: {
+    createdBy: Id<'users'>;
+    spaceId?: Id<'spaces'>;
+    communityId?: Id<'communities'>;
+    callerId: Id<'users'>;
+  }
+): Promise<boolean> {
+  if (params.communityId !== undefined) return false;
+  if (!params.spaceId) return false;
+
+  const creator = await ctx.db.get(params.createdBy);
+  const creatorExists = creator !== null;
+  if (creatorExists) return false;
+
+  const callerRows = await ctx.db
+    .query('members')
+    .withIndex('by_user', (q) => q.eq('userId', params.callerId))
+    .collect();
+  const callerIsSpaceAdmin = callerRows.some(
+    (row) =>
+      row.spaceId === params.spaceId &&
+      resolveKind(row) === 'access' &&
+      row.role === 'admin'
+  );
+
+  return hasCreatorOrphanFallbackAuthority({
+    creatorExists,
+    isCommunityContent: params.communityId !== undefined,
+    hasSpace: true,
+    callerIsSpaceAdmin,
+  });
+}
 
 // ── requireSpaceAdmin ─────────────────────────────────────────────────────────
 // FIXED: permission guard helper for admin-only mutations

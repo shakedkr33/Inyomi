@@ -617,12 +617,20 @@ describe('convex/devTools.ts — resetQaUser shape invariants (source inspection
     );
     expect(lastDeleteSectionIdx).toBeGreaterThan(-1);
     expect(userDeleteIdx).toBeGreaterThan(lastDeleteSectionIdx);
-    // Nothing after the user-row delete should perform another db.delete —
-    // it must be the final destructive step.
-    const afterUserDelete = DEV_TOOLS_SOURCE.slice(
-      userDeleteIdx + 'await ctx.db.delete(qaUserId);'.length
+    // Nothing after the user-row delete, but still WITHIN resetQaUser's own
+    // mutation body, should perform another db.delete — it must be the
+    // final destructive step of THIS mutation. (Scoped to resetQaUser's own
+    // closing brace rather than end-of-file, since devTools.ts may contain
+    // other, later, separately-guarded dev/QA mutations — e.g.
+    // repairAccountDeletionResidualReferences — with their own independent
+    // deletion steps.)
+    const resetQaUserEndIdx = DEV_TOOLS_SOURCE.indexOf('\n});', userDeleteIdx);
+    expect(resetQaUserEndIdx).toBeGreaterThan(userDeleteIdx);
+    const afterUserDeleteWithinResetQaUser = DEV_TOOLS_SOURCE.slice(
+      userDeleteIdx + 'await ctx.db.delete(qaUserId);'.length,
+      resetQaUserEndIdx
     );
-    expect(afterUserDelete).not.toContain('ctx.db.delete(');
+    expect(afterUserDeleteWithinResetQaUser).not.toContain('ctx.db.delete(');
   });
 
   it('external entity rows are only ever patched, never deleted', () => {

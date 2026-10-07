@@ -42,6 +42,10 @@
 
 import { v } from 'convex/values';
 import {
+  isTaskStrandedInDeletingUsersTrash,
+  planEventSharedUserIdsCleanup,
+} from '../lib/accountDeletion';
+import {
   checkAuthAccountOwnership,
   checkUsersLookup,
   computeSafeToExecute,
@@ -829,6 +833,369 @@ export const resetQaUser = internalMutation({
       safeToExecute,
       executed: true,
       completed: true,
+    };
+  },
+});
+
+// ============================================================================
+// repairAccountDeletionResidualReferences — ONE-TIME, GUARDED, DEV/QA-ONLY
+// ============================================================================
+//
+// Repairs the exact, already-verified residual-reference gaps left behind
+// by an account deletion that ran BEFORE the data-integrity fixes in
+// convex/accountDeletion.ts (see that file's "Residual-reference cleanup"
+// write/verify sections). Fixes ONLY:
+//   - events.sharedWithUserIds still containing the already-deleted userId
+//   - tasks.deletedBy === the already-deleted userId (hard-deletes the
+//     stranded soft-deleted task — see lib/accountDeletion.ts
+//     `isTaskStrandedInDeletingUsersTrash`'s doc comment for why this is
+//     the only safe outcome — never restored, never left dangling)
+//
+// This never touches expected historical references (`createdBy`,
+// `communityActivities.actorUserId`), unrelated orphan users, or any
+// content outside the exact two categories above.
+//
+// ── NARROWED SCOPE (do not widen without an explicit, independently-proven
+//    source member id) ──────────────────────────────────────────────────
+//
+// An earlier version of this tool also attempted to repair
+// `events.sharedWithFamilyMemberIds` / `tasks.assignedToMemberId` /
+// `tasks.assignedToMemberIds` / `communityMembers.associatedProfileIds` by
+// EMPIRICALLY discovering "the deleted access-row id": scanning each
+// candidate space for every member-id reference that no longer resolves to
+// any existing `members` row, and remapping it to the one surviving
+// detached entity row matching the given phone — ONLY when a space had
+// exactly one such dangling id.
+//
+// This is unsafe in general and was proven unsafe in practice: a space can
+// contain MULTIPLE distinct pre-existing dangling member ids for completely
+// unrelated reasons (other, older deleted/removed profiles that have
+// nothing to do with this account deletion), and "exactly one dangling id
+// in the space" does not prove that id is THIS deletion's access row — it
+// only proves no OTHER dangling id happens to coexist with it. There is no
+// current data (not `familyContacts`, not event/task metadata, not logs)
+// that reliably ties an arbitrary dangling member id to a specific deleted
+// access row. Guessing risks silently attaching unrelated people's
+// events/tasks/community associations to the wrong surviving family
+// profile — a correctness and privacy regression, not just a cosmetic one.
+//
+// This tool therefore NEVER infers or remaps a member-id reference. It
+// optionally REPORTS dangling member-id reference counts for the
+// phone-matched candidate space(s) as informational-only diagnostics (see
+// `informationalOnly` in the return shape below) — these counts are never
+// part of the planned write set, never contribute to `blockers`, and never
+// block `safeToExecute`. A future repair for a SPECIFIC member-id reference
+// requires an explicit, independently-proven source member id to be
+// supplied by a caller — this tool will not be extended to guess it.
+//
+// SAFETY MODEL — identical hard guards to `resetQaUser` above:
+//   - QA_RESET_ENABLED === 'true' AND phone in QA_RESET_ALLOWED_PHONES.
+//   - Refuses to run if a LIVE `users` row currently exists for this phone.
+//   - Refuses to run if a `users` row still exists for `deletedUserId`
+//     (confirms the account really is already deleted).
+//   - dryRun defaults to true; a real write requires BOTH `dryRun: false`
+//     AND `execute: true`. NOT executed as part of this task.
+//   - Reuses `isTaskStrandedInDeletingUsersTrash` (the exact same pure rule
+//     convex/accountDeletion.ts uses) for the `deletedBy` hard-delete, and
+//     `planEventSharedUserIdsCleanup` (a deliberately narrower sibling of
+//     convex/accountDeletion.ts's `planEventResidualReferenceCleanup` that
+//     never reads/returns `sharedWithFamilyMemberIds`) for the
+//     `sharedWithUserIds` cleanup — see lib/accountDeletion.ts doc comments
+//     for both.
+// ============================================================================
+
+const repairAccountDeletionResidualReferencesReturns = v.object({
+  normalizedPhone: v.string(),
+  deletedUserId: v.id('users'),
+  allowlisted: v.boolean(),
+  environmentEnabled: v.boolean(),
+  isDryRun: v.boolean(),
+  blockers: v.array(v.string()),
+  warnings: v.array(v.string()),
+  safeToExecute: v.boolean(),
+  executed: v.boolean(),
+  // ── Actually planned/performed by this tool ─────────────────────────────
+  plannedRepair: v.object({
+    eventSharedUserRefsFound: v.number(),
+    eventSharedUserRefsPatched: v.number(),
+    softDeletedTasksFound: v.number(),
+    softDeletedTasksDeleted: v.number(),
+  }),
+  // ── Diagnostics only — NEVER part of the write set, NEVER a blocker ─────
+  informationalOnly: v.object({
+    candidateSpaceIds: v.array(v.id('spaces')),
+    unrelatedDanglingMemberIdsFound: v.number(),
+    unrelatedMemberReferenceCounts: v.object({
+      eventSharedFamilyMemberRefs: v.number(),
+      taskMemberRefs: v.number(),
+      communityMemberProfileRefs: v.number(),
+    }),
+  }),
+});
+
+/** True if `id` currently resolves to NO `members` row — i.e. it references a row that was already deleted. Used ONLY for informational diagnostics below — never to drive a remap. */
+async function isDanglingMemberId(
+  ctx: { db: { get: (id: Id<'members'>) => Promise<unknown> } },
+  id: string
+): Promise<boolean> {
+  try {
+    const row = await ctx.db.get(id as Id<'members'>);
+    return row === null;
+  } catch {
+    // Malformed id (never a real members id) — treat as dangling for
+    // diagnostic-counting purposes only.
+    return true;
+  }
+}
+
+export const repairAccountDeletionResidualReferences = internalMutation({
+  args: {
+    phone: v.string(),
+    deletedUserId: v.id('users'),
+    dryRun: v.optional(v.boolean()),
+    execute: v.optional(v.boolean()),
+  },
+  returns: repairAccountDeletionResidualReferencesReturns,
+  handler: async (ctx, args) => {
+    // ── 1. Hard guards — throw, never a soft blocker ───────────────────────
+    const environmentEnabled = process.env.QA_RESET_ENABLED === 'true';
+    if (!environmentEnabled) {
+      throw new Error(
+        '[repairAccountDeletionResidualReferences] QA_RESET_ENABLED is not set to "true" in this Convex deployment. Refusing to run.'
+      );
+    }
+    const normalizedPhone = normalizeQaPhone(args.phone);
+    if (!normalizedPhone) {
+      throw new Error(
+        '[repairAccountDeletionResidualReferences] Could not normalize the provided phone number to E.164.'
+      );
+    }
+    const allowlist = parseQaResetAllowlist(
+      process.env.QA_RESET_ALLOWED_PHONES
+    );
+    const allowlisted = isPhoneAllowlisted(normalizedPhone, allowlist);
+    if (!allowlisted) {
+      throw new Error(
+        `[repairAccountDeletionResidualReferences] Phone ${normalizedPhone} is not present in QA_RESET_ALLOWED_PHONES. Refusing to run.`
+      );
+    }
+
+    const { isDryRun, canExecuteLive } = resolveExecutionMode(args);
+    const deletedUserId = args.deletedUserId;
+
+    const blockers: string[] = [];
+    const warnings: string[] = [];
+
+    // ── 2. Contradictory live-state guards — the ONLY source of blockers
+    //      for this narrowed tool. ──────────────────────────────────────
+    const activeUserForPhone = await ctx.db
+      .query('users')
+      .withIndex('by_phone', (q) => q.eq('phone', normalizedPhone))
+      .unique();
+    if (activeUserForPhone) {
+      blockers.push(
+        `A live users row (${activeUserForPhone._id}) currently exists for this phone — refusing to run (this tool is only for already-deleted accounts).`
+      );
+    }
+    const deletedUserRowStillExists =
+      (await ctx.db.get(deletedUserId)) !== null;
+    if (deletedUserRowStillExists) {
+      blockers.push(
+        `A users row still exists for deletedUserId ${deletedUserId} — this account is not actually deleted. Refusing to run.`
+      );
+    }
+
+    // ── 3. PLANNED REPAIR — events.sharedWithUserIds (no space scoping
+    //      needed: sharing is not confined to a space the sharer/viewer has
+    //      access to — see lib/accountDeletion.ts's matching comment). ────
+    const personalEvents = await ctx.db
+      .query('events')
+      .withIndex('by_community_date', (q) => q.eq('communityId', undefined))
+      .collect();
+    const eventsNeedingUserShareCleanup = personalEvents.filter((event) =>
+      (event.sharedWithUserIds ?? []).includes(deletedUserId)
+    );
+
+    // ── 4. PLANNED REPAIR — tasks.deletedBy stranded-in-own-trash. ───────
+    const strandedTasks = (
+      await ctx.db
+        .query('tasks')
+        .withIndex('by_deleted_by', (q) => q.eq('deletedBy', deletedUserId))
+        .collect()
+    ).filter((t) => isTaskStrandedInDeletingUsersTrash(t, deletedUserId));
+
+    const safeToExecute = computeSafeToExecute(blockers);
+
+    // ── 5. INFORMATIONAL ONLY — report (never remap) dangling member-id
+    //      references in the phone-matched candidate space(s), so an
+    //      operator can see what still needs a manually-proven remap
+    //      without this tool ever guessing it. Computed unconditionally
+    //      (dry-run and live paths both report the same diagnostics) and
+    //      NEVER contributes to `blockers`/`safeToExecute`. ───────────────
+    const candidateEntities = (
+      await ctx.db
+        .query('members')
+        .withIndex('by_phone', (q) =>
+          q.eq('selectedPhoneNumber', normalizedPhone)
+        )
+        .collect()
+    ).filter(
+      (row) =>
+        resolveKind(row) === 'entity' &&
+        row.userId === undefined &&
+        row.matchedUserId === undefined
+    );
+    const candidateSpaceIds = new Set(
+      candidateEntities.map((row) => row.spaceId)
+    );
+    if (candidateEntities.length === 0) {
+      warnings.push(
+        'No preserved detached family entity found for this phone in any space — informational dangling member-id diagnostics are unavailable. This never blocks the sharedWithUserIds/deletedBy repair above.'
+      );
+    }
+
+    const danglingMemberIds = new Set<string>();
+    const eventsWithDanglingMemberRefs = new Set<Id<'events'>>();
+    for (const event of personalEvents) {
+      const eventSpaceId = event.spaceId;
+      if (!eventSpaceId || !candidateSpaceIds.has(eventSpaceId)) continue;
+      for (const id of event.sharedWithFamilyMemberIds ?? []) {
+        if (await isDanglingMemberId(ctx, id)) {
+          danglingMemberIds.add(id);
+          eventsWithDanglingMemberRefs.add(event._id);
+        }
+      }
+    }
+
+    const tasksWithDanglingMemberRefs = new Set<Id<'tasks'>>();
+    for (const spaceId of candidateSpaceIds) {
+      const spaceTasks = await ctx.db
+        .query('tasks')
+        .withIndex('by_space', (q) => q.eq('spaceId', spaceId))
+        .collect();
+      for (const task of spaceTasks) {
+        const ids = [
+          ...(task.assignedToMemberId ? [task.assignedToMemberId] : []),
+          ...(task.assignedToMemberIds ?? []),
+        ];
+        for (const id of ids) {
+          if (await isDanglingMemberId(ctx, id)) {
+            danglingMemberIds.add(id);
+            tasksWithDanglingMemberRefs.add(task._id);
+          }
+        }
+      }
+    }
+
+    const otherUsersInCandidateSpaces = new Set<Id<'users'>>();
+    for (const spaceId of candidateSpaceIds) {
+      const spaceMembers = await ctx.db
+        .query('members')
+        .withIndex('by_space', (q) => q.eq('spaceId', spaceId))
+        .collect();
+      for (const m of spaceMembers) {
+        if (resolveKind(m) === 'access' && m.userId !== undefined) {
+          otherUsersInCandidateSpaces.add(m.userId);
+        }
+      }
+    }
+    const communityMembershipsWithDanglingRefs = new Set<
+      Id<'communityMembers'>
+    >();
+    for (const otherUserId of otherUsersInCandidateSpaces) {
+      const rows = await ctx.db
+        .query('communityMembers')
+        .withIndex('by_user', (q) => q.eq('userId', otherUserId))
+        .collect();
+      for (const row of rows) {
+        for (const id of row.associatedProfileIds ?? []) {
+          if (await isDanglingMemberId(ctx, id)) {
+            danglingMemberIds.add(id);
+            communityMembershipsWithDanglingRefs.add(row._id);
+          }
+        }
+      }
+    }
+    if (danglingMemberIds.size > 0) {
+      warnings.push(
+        `${danglingMemberIds.size} distinct dangling member-id reference(s) found across ${candidateSpaceIds.size} phone-matched space(s) — reported for informational purposes only. This tool does NOT infer or remap them; a future repair requires an explicit, independently-proven source member id.`
+      );
+    }
+
+    const informationalOnly = {
+      candidateSpaceIds: [...candidateSpaceIds],
+      unrelatedDanglingMemberIdsFound: danglingMemberIds.size,
+      unrelatedMemberReferenceCounts: {
+        eventSharedFamilyMemberRefs: eventsWithDanglingMemberRefs.size,
+        taskMemberRefs: tasksWithDanglingMemberRefs.size,
+        communityMemberProfileRefs: communityMembershipsWithDanglingRefs.size,
+      },
+    };
+
+    // ── 6. Dry-run / not-executable exit — ZERO writes performed above ──
+    if (!canExecuteLive || !safeToExecute) {
+      return {
+        normalizedPhone,
+        deletedUserId,
+        allowlisted,
+        environmentEnabled,
+        isDryRun,
+        blockers,
+        warnings,
+        safeToExecute,
+        executed: false,
+        plannedRepair: {
+          eventSharedUserRefsFound: eventsNeedingUserShareCleanup.length,
+          eventSharedUserRefsPatched: 0,
+          softDeletedTasksFound: strandedTasks.length,
+          softDeletedTasksDeleted: 0,
+        },
+        informationalOnly,
+      };
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // LIVE EXECUTION — every guard above passed. NOT executed as part of
+    // this task (dryRun/execute are never both flipped by this codebase).
+    // Touches ONLY events.sharedWithUserIds and hard-deletes stranded
+    // tasks — never sharedWithFamilyMemberIds / assignedToMemberId(s) /
+    // associatedProfileIds.
+    // ══════════════════════════════════════════════════════════════════════
+    let eventSharedUserRefsPatched = 0;
+    for (const event of eventsNeedingUserShareCleanup) {
+      const cleanup = planEventSharedUserIdsCleanup(event, deletedUserId);
+      if (!cleanup.changed) continue;
+      await ctx.db.patch(event._id, {
+        sharedWithUserIds: cleanup.sharedWithUserIds as
+          | Id<'users'>[]
+          | undefined,
+      });
+      eventSharedUserRefsPatched += 1;
+    }
+
+    let softDeletedTasksDeleted = 0;
+    for (const task of strandedTasks) {
+      await ctx.db.delete(task._id);
+      softDeletedTasksDeleted += 1;
+    }
+
+    return {
+      normalizedPhone,
+      deletedUserId,
+      allowlisted,
+      environmentEnabled,
+      isDryRun,
+      blockers,
+      warnings,
+      safeToExecute,
+      executed: true,
+      plannedRepair: {
+        eventSharedUserRefsFound: eventsNeedingUserShareCleanup.length,
+        eventSharedUserRefsPatched,
+        softDeletedTasksFound: strandedTasks.length,
+        softDeletedTasksDeleted,
+      },
+      informationalOnly,
     };
   },
 });

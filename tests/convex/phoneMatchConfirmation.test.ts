@@ -262,25 +262,38 @@ describe('declinePhoneMatches — behavior (unchanged)', () => {
   });
 });
 
-describe('getCurrentUserStatus — Stage 2B+3 extension (unchanged)', () => {
+describe('getCurrentUserStatus — Stage 2B+3 extension + post-delete race fix', () => {
   const USERS_SOURCE = readFileSync(
     new URL('../../convex/users.ts', import.meta.url),
     'utf8'
   );
   const statusSrc = extractExportBlock(USERS_SOURCE, 'getCurrentUserStatus');
 
-  it('includes phoneMatchResolvedAt in both the no-user and normal response branches', () => {
-    expect(statusSrc).toContain('phoneMatchResolvedAt: null,');
+  it('includes phoneMatchResolvedAt in the normal (user row exists) response branch', () => {
     expect(statusSrc).toContain(
       'phoneMatchResolvedAt: user.phoneMatchResolvedAt ?? null,'
     );
   });
 
-  it('preserves the existing hasProfile/onboardingComplete shape for current callers', () => {
-    expect(statusSrc).toContain('hasProfile: false,');
+  it('preserves the existing hasProfile/onboardingComplete shape for the real-user branch', () => {
     expect(statusSrc).toContain('hasProfile: true,');
     expect(statusSrc).toContain(
       'onboardingComplete: user.onboardingCompleted === true,'
     );
+  });
+
+  // ROOT-CAUSE FIX (post-delete onboarding race): a valid auth identity
+  // whose `users` row no longer exists (the transient window right after
+  // deleteMyAccount succeeds, before signOut() clears the token) must
+  // return the SAME `null` sentinel as "not authenticated" — never a fake
+  // hasProfile:false/onboardingComplete:false object, which every current
+  // consumer (app/(authenticated)/_layout.tsx) would otherwise interpret
+  // as "existing user who needs onboarding" and try to persist onboarding
+  // answers against a deleted account.
+  it('returns null (not a fake onboarding-incomplete object) when the auth identity resolves but the users row is missing', () => {
+    expect(statusSrc).toMatch(
+      /const user = await ctx\.db\.get\(userId\);\s*\n\s*if \(!user\) \{\s*\n(?:[^\n]*\n)*?\s*return null;/
+    );
+    expect(statusSrc).not.toContain('hasProfile: false,');
   });
 });

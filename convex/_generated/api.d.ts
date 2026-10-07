@@ -8,6 +8,8 @@
  * @module
  */
 
+import type * as accountDeletion from "../accountDeletion.js";
+import type * as accountDeletionPreview from "../accountDeletionPreview.js";
 import type * as appleReviewAuth from "../appleReviewAuth.js";
 import type * as auth from "../auth.js";
 import type * as backfills from "../backfills.js";
@@ -48,6 +50,8 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  accountDeletion: typeof accountDeletion;
+  accountDeletionPreview: typeof accountDeletionPreview;
   appleReviewAuth: typeof appleReviewAuth;
   auth: typeof auth;
   backfills: typeof backfills;

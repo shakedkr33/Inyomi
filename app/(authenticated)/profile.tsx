@@ -2,7 +2,7 @@ import { useAuthActions } from '@convex-dev/auth/react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useMutation, useQuery } from 'convex/react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Image,
@@ -29,6 +29,11 @@ import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { api } from '@/convex/_generated/api';
 import { useEffectiveAccess } from '@/hooks/useEffectiveAccess';
+import {
+  createAccountDeletionGuard,
+  executeAccountDeletion,
+  runAccountDeletionCleanup,
+} from '@/lib/accountDeletionUi';
 import { getSelfProfileAvatarInitials } from '@/lib/avatarInitials';
 // Canonical family/profile membership signal (Stage 2B+3 locked rule) — the
 // ACTUAL configured family members determine 'family' vs 'personal', never
@@ -259,6 +264,11 @@ export default function ProfileScreen() {
   const deleteMyAccount = useMutation(api.users.deleteMyAccount);
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const [isDebugUnlocked, setIsDebugUnlocked] = useState(false);
+  // Delete-account single-flight guard + loading flag. Guards against a
+  // second concurrent `deleteMyAccount` call (e.g. a double tap on the
+  // final destructive confirmation) — see lib/accountDeletionUi.ts.
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const deleteAccountGuardRef = useRef(createAccountDeletionGuard());
 
   const [devPlan, setDevPlanState] = useState<EffectiveAccess | null>(() =>
     getDevPlanOverride()
@@ -354,38 +364,81 @@ export default function ProfileScreen() {
     );
   };
 
-  const handleDeleteAccount = async () => {
+  // ── Delete account — Step 3: run the real backend deletion ──────────────
+  // Backend success is the ONLY gate for every local destructive step.
+  // If `deleteMyAccount` throws for any reason, this NEVER calls signOut,
+  // clearOnboardingDraft or resetData, and NEVER shows a success message —
+  // the account/session stays fully intact and the backend's own (already
+  // actionable, Hebrew) blocker message is shown when available.
+  const runDeleteAccountFlow = async () => {
+    const result = await deleteAccountGuardRef.current.run(async () => {
+      setIsDeletingAccount(true);
+      return await executeAccountDeletion(deleteMyAccount);
+    });
+
+    // `result` is null only when a previous deletion request is still in
+    // flight — the guard intentionally skipped this call rather than
+    // firing a second concurrent `deleteMyAccount`.
+    if (result === null) {
+      return;
+    }
+
+    if (!result.ok) {
+      setIsDeletingAccount(false);
+      Alert.alert('לא ניתן למחוק את החשבון', result.message);
+      return;
+    }
+
+    // Backend deletion succeeded — local cleanup + sign-out must happen
+    // immediately and deterministically, WITHOUT waiting for any further
+    // user interaction. `signOut()` (inside runAccountDeletionCleanup)
+    // already tolerates the backend having deleted the Auth account/session
+    // rows itself (@convex-dev/auth's signOut swallows the resulting
+    // "already signed out" error and still clears local tokens), and
+    // flipping `isAuthenticated` to false is exactly what the authenticated
+    // layout's existing routing effect uses to `router.replace('/(auth)/sign-in')`
+    // — no bespoke navigation call is added here. RevenueCat local identity
+    // is reset the same way an ordinary logout already resets it: once
+    // convexUserId becomes null, RevenueCatProvider's identity-transition
+    // effect (contexts/RevenueCatContext.tsx) clears isPremium/customerData
+    // for this device — reused as-is, not duplicated here.
+    await runAccountDeletionCleanup({
+      clearOnboardingDraft,
+      resetData,
+      signOut,
+    });
+
+    // Success feedback ONLY after backend success + local cleanup/sign-out
+    // have already run. Alert.alert is a native overlay, not tied to this
+    // screen's React tree, so it stays visible even as the auth-state
+    // navigation effect above replaces this screen with the sign-in route
+    // in the background — the message is never lost to the route change.
+    Alert.alert('החשבון נמחק בהצלחה', 'החשבון ומידע האישי נמחקו לצמיתות.');
+  };
+
+  // ── Delete account — Step 2: neutral store-subscription warning ─────────
+  // Deliberately does NOT show a "ניהול מנוי" / Customer Center CTA here:
+  // current family/shared Together behavior cannot reliably prove the
+  // current user is the payer or has a manageable store subscription.
+  const showDeleteAccountSubscriptionWarning = () => {
     Alert.alert(
-      '⚠️ מחיקת חשבון',
-      'האם אתה בטוח שברצונך למחוק את החשבון שלך?\n\nפעולה זו תמחק לצמיתות את:\n• פרטי החשבון שלך\n• כל הנתונים המשויכים אליך\n• היסטוריית השימוש שלך\n\n⚠️ לא ניתן לשחזר את הנתונים לאחר המחיקה!',
+      'לפני שממשיכים',
+      'מחיקת חשבון InYomi אינה מבטלת בהכרח מנוי דרך App Store או Google Play. אם קיים מנוי בתשלום, יש לנהל או לבטל אותו בנפרד דרך החנות.',
       [
-        { text: 'ביטול', style: 'cancel' },
+        { text: 'חזרה', style: 'cancel' },
         {
           text: 'המשך למחיקה',
-          style: 'destructive',
           onPress: () => {
             Alert.alert(
-              '🚨 אישור סופי',
-              'זוהי ההזדמנות האחרונה שלך לבטל!\n\nהחשבון שלך וכל הנתונים ימחקו לצמיתות ולא יהיה ניתן לשחזר אותם.\n\nהאם אתה בטוח לחלוטין?',
+              'מחיקת החשבון לצמיתות?',
+              'הפעולה אינה ניתנת לביטול.',
               [
-                { text: 'ביטול - אל תמחק', style: 'cancel' },
+                { text: 'ביטול', style: 'cancel' },
                 {
-                  text: 'כן, מחק את החשבון',
+                  text: 'מחקו את החשבון',
                   style: 'destructive',
-                  onPress: async () => {
-                    try {
-                      await deleteMyAccount();
-                      await signOut();
-                      Alert.alert(
-                        'החשבון נמחק',
-                        'החשבון שלך נמחק בהצלחה. תודה שהשתמשת באפליקציה שלנו.'
-                      );
-                    } catch (_error) {
-                      Alert.alert(
-                        'שגיאה',
-                        'אירעה שגיאה במחיקת החשבון. אנא נסה שוב או צור קשר עם התמיכה.'
-                      );
-                    }
+                  onPress: () => {
+                    void runDeleteAccountFlow();
                   },
                 },
               ],
@@ -393,6 +446,22 @@ export default function ProfileScreen() {
             );
           },
         },
+      ],
+      { cancelable: true }
+    );
+  };
+
+  // ── Delete account — Step 1: destructive warning entry point ────────────
+  const handleDeleteAccount = () => {
+    if (isDeletingAccount) {
+      return;
+    }
+    Alert.alert(
+      'מחיקת חשבון',
+      'מחיקת החשבון תמחק לצמיתות את החשבון ואת המידע האישי המשויך אליו. לא ניתן לבטל את הפעולה לאחר השלמתה.\n\nאם קיימות קהילות בבעלות החשבון ובהן חברים נוספים, הבעלות תועבר אוטומטית לאחד מחברי הקהילה בהתאם להרשאות ולוותק.',
+      [
+        { text: 'ביטול', style: 'cancel' },
+        { text: 'המשך', onPress: showDeleteAccountSubscriptionWarning },
       ],
       { cancelable: true }
     );
@@ -538,10 +607,11 @@ export default function ProfileScreen() {
         <View style={[styles.card, styles.settingsCard, styles.dangerCard]}>
           <SettingsRow label="התנתקות" danger onPress={handleSignOut} />
           <SettingsRow
-            label="מחיקת חשבון"
+            label={isDeletingAccount ? 'מוחק את החשבון…' : 'מחיקת חשבון'}
             danger
             hideChevron
             isLast
+            disabled={isDeletingAccount}
             onPress={handleDeleteAccount}
           />
         </View>
@@ -743,6 +813,7 @@ function SettingsRow({
   note,
   hideChevron = false,
   isLast = false,
+  disabled = false,
 }: {
   label: string;
   onPress: () => void;
@@ -750,14 +821,21 @@ function SettingsRow({
   note?: string;
   hideChevron?: boolean;
   isLast?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <TouchableOpacity
-      onPress={onPress}
-      style={[styles.row, !isLast && styles.rowBorder]}
+      onPress={disabled ? undefined : onPress}
+      disabled={disabled}
+      style={[
+        styles.row,
+        !isLast && styles.rowBorder,
+        disabled && styles.rowDisabled,
+      ]}
       accessible={true}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{ disabled }}
     >
       <View style={styles.rowTextContainer}>
         <Text style={[styles.rowLabel, danger && styles.rowLabelDanger]}>
@@ -1041,6 +1119,9 @@ const styles = StyleSheet.create({
   },
   rowLabelDanger: {
     color: '#ef4444',
+  },
+  rowDisabled: {
+    opacity: 0.5,
   },
   rowNote: {
     fontSize: 12,

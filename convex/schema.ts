@@ -526,7 +526,13 @@ export default defineSchema({
     respondedAt: v.optional(v.number()),
   })
     .index('by_event', ['eventId'])
-    .index('by_event_order', ['eventId', 'order']),
+    .index('by_event_order', ['eventId', 'order'])
+    // Account-deletion assignment discovery/cleanup (see
+    // convex/accountDeletion.ts) — deterministic, complete (non-bounded)
+    // lookup of every eventTasks row that references a given user as
+    // assignee/assigner, without a full table scan.
+    .index('by_assigned_user', ['assignedToUserId'])
+    .index('by_assigned_by', ['assignedByUserId']),
 
   // ═══════════════════════════════════════════════════════
   // טבלת RSVP לאירועים

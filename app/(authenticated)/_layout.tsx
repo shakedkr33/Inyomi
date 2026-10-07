@@ -329,6 +329,22 @@ export default function AuthenticatedLayout() {
     isAuthenticated ? {} : 'skip'
   );
 
+  // ROOT-CAUSE FIX (post-delete onboarding race): getCurrentUserStatus
+  // (convex/users.ts) returns `null` for an authenticated identity whose
+  // `users` row no longer exists — this is EXACTLY the transient window
+  // right after a successful deleteMyAccount, before this screen's own
+  // signOut() call (profile.tsx → runAccountDeletionCleanup) has cleared
+  // the auth token. This explicit guard exists so every consumer below
+  // (persist-answers effect, routing decision, hydration, push-token
+  // registration) can be audited/tested independently of the inline
+  // `userStatus === null` checks that already (correctly) no-op for this
+  // state. isDeletedAccountState must NEVER trigger onboarding
+  // persistence, retry scheduling, or an onboarding route — the splash
+  // screen stays up (via isOnboardingDecisionPending below) until
+  // isAuthenticated flips false and normal unauthenticated routing takes
+  // over.
+  const isDeletedAccountState = isAuthenticated && userStatus === null;
+
   // Stage 2B+3: family-bootstrap's optional "haven't configured family yet"
   // nudge is only for users who are ALREADY onboardingCompleted — the
   // incomplete-onboarding path never routes through family-bootstrap at
@@ -407,10 +423,15 @@ export default function AuthenticatedLayout() {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — persistRetryTick (last dep) is a trigger-only value to force a retry after a 3s backoff; it is never read inside the effect body.
   useEffect(() => {
+    // isDeletedAccountState: never persist onboarding answers (and never
+    // schedule a retry) for a deleted/missing app user — see its doc
+    // comment above. userStatus === null already implies this, but the
+    // explicit check keeps the invariant self-evident at this call site.
     if (
       !isAuthenticated ||
       userStatus === undefined ||
       userStatus === null ||
+      isDeletedAccountState ||
       userStatus.onboardingComplete ||
       !hasCompletedOnboardingLocally ||
       answersPersisted ||
@@ -447,6 +468,7 @@ export default function AuthenticatedLayout() {
   }, [
     isAuthenticated,
     userStatus,
+    isDeletedAccountState,
     hasCompletedOnboardingLocally,
     answersPersisted,
     validOnboardingIntent,

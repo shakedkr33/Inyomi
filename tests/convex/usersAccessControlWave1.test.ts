@@ -118,9 +118,18 @@ describe('Wave 1 — legitimate self-service replacements remain intact', () => 
     expect(block).toContain('isEntityClaimedByOtherUser');
   });
 
-  it('deleteMyAccount still resolves its target only from ctx.auth.getUserIdentity() (self only, unaffected by this task)', () => {
+  it('deleteMyAccount resolves its target only from getAuthUserId(ctx) (self only) — fixed by the account-deletion engine task; see tests/convex/accountDeletion.test.ts for full coverage of that fix', () => {
+    // UPDATED: deleteMyAccount previously used the raw, composite Convex
+    // Auth Phone OTP `identity.subject` (via `ctx.auth.getUserIdentity()`)
+    // as if it were a `users` table Id directly — a confirmed root bug
+    // (could silently fail to find the real user and report a false
+    // success). A later, explicitly-scoped task fixed this using the
+    // canonical `getAuthUserId(ctx)` resolver and delegated the rest of
+    // the deletion to convex/accountDeletion.ts. This guard now protects
+    // the FIXED behavior instead of the bug.
     const block = extractExportBlock(USERS_SOURCE, 'deleteMyAccount');
-    expect(block).toContain('ctx.auth.getUserIdentity()');
+    expect(block).toContain('getAuthUserId(ctx)');
+    expect(block).not.toContain('identity.subject');
     const argsBlock = block.slice(0, block.indexOf('handler:'));
     expect(argsBlock).toMatch(/args:\s*\{\s*\}/);
   });

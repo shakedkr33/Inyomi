@@ -6,6 +6,7 @@ import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { insertCommunityActivity } from './communityActivities';
 import { isActiveCommunityMember } from './communityMemberUtils';
+import { hasCreatorOrphanAuthority } from './members';
 import { stampTaskOwnerScope } from './ownerScope';
 import {
   cancelPendingJobsForTaskAndUserHelper,
@@ -547,6 +548,48 @@ function isUserParticipantInTask(
   if (task.createdBy === userId) return true;
   if (task.assignedTo === userId) return true;
   return (task.assignedToUserIds ?? []).some((id) => id === userId);
+}
+
+/**
+ * Shared subtask-edit-access gate for toggleSubtaskCompleted,
+ * setSubtaskAttachment, addSubtask, removeSubtask, and reorderSubtasks —
+ * these five mutations previously duplicated the identical two-check
+ * pattern inline. Throws the same two Hebrew errors they always threw,
+ * with one narrow addition: the creator-orphan fallback (see
+ * lib/creatorOrphanAuthority.ts / convex/members.ts
+ * `hasCreatorOrphanAuthority`) — when the task's creator account has been
+ * deleted, the family space admin gains the same subtask-edit authority
+ * the creator would have had. A live creator's authority, and ordinary
+ * participants' lack of full-edit authority, are both completely
+ * unaffected.
+ */
+async function assertSubtaskEditAccess(
+  ctx: MutationCtx,
+  existing: Doc<'tasks'>,
+  userId: Id<'users'>
+): Promise<void> {
+  const isParticipant = isUserParticipantInTask(existing, userId);
+  const isCreator = existing.createdBy === userId;
+
+  let hasOrphanFallback = false;
+  if ((!isParticipant || !isCreator) && existing.communityId === undefined) {
+    hasOrphanFallback = await hasCreatorOrphanAuthority(ctx, {
+      createdBy: existing.createdBy,
+      spaceId: existing.spaceId,
+      callerId: userId,
+    });
+  }
+
+  if (!isParticipant && !hasOrphanFallback) {
+    throw new Error('אין הרשאה לעדכן משימה זו');
+  }
+  if (
+    !isCreator &&
+    !(existing.allowParticipantEditing ?? false) &&
+    !hasOrphanFallback
+  ) {
+    throw new Error('יוצר/ת המשימה לא אפשר/ה עריכת תתי־משימות');
+  }
 }
 
 /** When no assignee was chosen in the UI, persist creator as assignee (no orphan tasks). */
@@ -2132,12 +2175,30 @@ export const update = mutation({
       }
     }
 
-    if (!isParticipant && !isCommunityManager) {
+    // Creator-orphan fallback (see lib/creatorOrphanAuthority.ts): if the
+    // task's creator account has been deleted, the family space admin may
+    // manage this task in their place — including gaining full edit
+    // rights even if they are not otherwise a participant. A live
+    // creator's authority is completely unaffected; ordinary family
+    // members never gain this fallback. Community content is unaffected
+    // (isCommunityManager already handles community owner/admin
+    // authority separately).
+    let hasOrphanFallback = false;
+    if (!isCreator && !isCommunityManager && existing.communityId === undefined) {
+      hasOrphanFallback = await hasCreatorOrphanAuthority(ctx, {
+        createdBy: existing.createdBy,
+        spaceId: existing.spaceId,
+        callerId: userId,
+      });
+    }
+
+    if (!isParticipant && !isCommunityManager && !hasOrphanFallback) {
       throw new Error('אין הרשאה לעדכן משימה זו');
     }
 
-    // Community managers get full edit rights (same as creator).
-    const hasFullEditRight = isCreator || isCommunityManager;
+    // Community managers and the orphan-fallback space admin get full edit
+    // rights (same as creator).
+    const hasFullEditRight = isCreator || isCommunityManager || hasOrphanFallback;
 
     if (!hasFullEditRight) {
       if (
@@ -2481,15 +2542,7 @@ export const toggleSubtaskCompleted = mutation({
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error('משימה לא נמצאה');
 
-    if (!isUserParticipantInTask(existing, userId)) {
-      throw new Error('אין הרשאה לעדכן משימה זו');
-    }
-    if (
-      existing.createdBy !== userId &&
-      !(existing.allowParticipantEditing ?? false)
-    ) {
-      throw new Error('יוצר/ת המשימה לא אפשר/ה עריכת תתי־משימות');
-    }
+    await assertSubtaskEditAccess(ctx, existing, userId);
 
     const subtasks = existing.subtasks ?? [];
     const nextSubtasks = subtasks.map((subtask) =>
@@ -2529,15 +2582,7 @@ export const setSubtaskAttachment = mutation({
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error('משימה לא נמצאה');
 
-    if (!isUserParticipantInTask(existing, userId)) {
-      throw new Error('אין הרשאה לעדכן משימה זו');
-    }
-    if (
-      existing.createdBy !== userId &&
-      !(existing.allowParticipantEditing ?? false)
-    ) {
-      throw new Error('יוצר/ת המשימה לא אפשר/ה עריכת תתי־משימות');
-    }
+    await assertSubtaskEditAccess(ctx, existing, userId);
 
     const subtasks = (existing.subtasks ?? []).map((st) =>
       st.id === subtaskId ? { ...st, attachment: attachment ?? undefined } : st
@@ -2559,15 +2604,7 @@ export const addSubtask = mutation({
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error('משימה לא נמצאה');
 
-    if (!isUserParticipantInTask(existing, userId)) {
-      throw new Error('אין הרשאה לעדכן משימה זו');
-    }
-    if (
-      existing.createdBy !== userId &&
-      !(existing.allowParticipantEditing ?? false)
-    ) {
-      throw new Error('יוצר/ת המשימה לא אפשר/ה עריכת תתי־משימות');
-    }
+    await assertSubtaskEditAccess(ctx, existing, userId);
 
     const newSubtask = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -2591,15 +2628,7 @@ export const removeSubtask = mutation({
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error('משימה לא נמצאה');
 
-    if (!isUserParticipantInTask(existing, userId)) {
-      throw new Error('אין הרשאה לעדכן משימה זו');
-    }
-    if (
-      existing.createdBy !== userId &&
-      !(existing.allowParticipantEditing ?? false)
-    ) {
-      throw new Error('יוצר/ת המשימה לא אפשר/ה עריכת תתי־משימות');
-    }
+    await assertSubtaskEditAccess(ctx, existing, userId);
 
     await ctx.db.patch(id, {
       subtasks: (existing.subtasks ?? []).filter((st) => st.id !== subtaskId),
@@ -2617,15 +2646,7 @@ export const reorderSubtasks = mutation({
     const existing = await ctx.db.get(id);
     if (!existing) throw new Error('משימה לא נמצאה');
 
-    if (!isUserParticipantInTask(existing, userId)) {
-      throw new Error('אין הרשאה לעדכן משימה זו');
-    }
-    if (
-      existing.createdBy !== userId &&
-      !(existing.allowParticipantEditing ?? false)
-    ) {
-      throw new Error('יוצר/ת המשימה לא אפשר/ה עריכת תתי־משימות');
-    }
+    await assertSubtaskEditAccess(ctx, existing, userId);
 
     const subtaskMap = new Map(
       (existing.subtasks ?? []).map((st) => [st.id, st])
@@ -3100,7 +3121,21 @@ export const softDeleteTask = mutation({
     if (!task) throw new Error('משימה לא נמצאה');
 
     if (!isPersonallyDeletableTask(task, userId)) {
-      throw new Error('לא ניתן למחוק משימה זו');
+      // Creator-orphan fallback — see lib/creatorOrphanAuthority.ts. Only
+      // applies to non-community tasks (isPersonallyDeletableTask already
+      // excludes community reminders, and the fallback itself never
+      // applies to community content).
+      const hasOrphanFallback =
+        task.communityId === undefined
+          ? await hasCreatorOrphanAuthority(ctx, {
+              createdBy: task.createdBy,
+              spaceId: task.spaceId,
+              callerId: userId,
+            })
+          : false;
+      if (!hasOrphanFallback) {
+        throw new Error('לא ניתן למחוק משימה זו');
+      }
     }
 
     // Idempotent — already soft-deleted

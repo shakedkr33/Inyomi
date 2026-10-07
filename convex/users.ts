@@ -2,6 +2,7 @@ import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import type { Id } from './_generated/dataModel';
 import { mutation, query } from './_generated/server';
+import { runAccountDeletion } from './accountDeletion';
 // FIXED: updateMyProfile and listMyFamilyContacts now use identical spaceId resolution
 import {
   isEntityClaimedByOtherUser,
@@ -180,45 +181,43 @@ export const getMySpace = query({
 
 // מחיקת חשבון המשתמש הנוכחי וכל הנתונים המשויכים אליו
 // ⚠️ אזהרה: פעולה זו בלתי הפיכה ותמחק את כל הנתונים לצמיתות!
+//
+// Delegates the entire deletion (planning, blockers, transaction-size
+// preflight, destructive writes, verification, Auth cleanup) to the
+// production account-deletion engine in convex/accountDeletion.ts. See that
+// file's top-of-file doc comment for the full behavior contract.
+//
+// ROOT-CAUSE FIX: the previous implementation used the raw, composite
+// Convex Auth Phone OTP `identity.subject` (`userId|sessionId`) as if it
+// were a `users` table Id directly, which could silently fail to find the
+// real user and report a false success. `getAuthUserId(ctx)` is the
+// canonical resolver and is used here instead. If it cannot resolve a
+// userId, this throws — it NEVER returns `{ success: true, deletedCount: 0 }`.
 export const deleteMyAccount = mutation({
   args: {},
+  returns: v.object({
+    success: v.literal(true),
+    deletedSpaceCount: v.number(),
+    deletedCommunityCount: v.number(),
+    transferredCommunityCount: v.number(),
+    deletedEventCount: v.number(),
+    deletedTaskCount: v.number(),
+  }),
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
       throw new Error('לא מחובר למערכת');
     }
 
-    // קבלת מזהה המשתמש מה-identity
-    const userId = identity.subject;
-    let deletedCount = 0;
-
-    // כאן תוכל להוסיף מחיקה של טבלאות נוספות שקשורות למשתמש
-    // לדוגמה:
-    // const userPosts = await ctx.db
-    //   .query('posts')
-    //   .withIndex('by_user', (q) => q.eq('userId', userId))
-    //   .collect();
-    // for (const post of userPosts) {
-    //   await ctx.db.delete(post._id);
-    //   deletedCount += 1;
-    // }
-
-    // מחיקת המשתמש מטבלת המשתמשים
-    // הערה: Convex Auth מנהל את טבלת המשתמשים, אך אנחנו יכולים למחוק את הרשומה
-    const user = await ctx.db
-      .query('users')
-      .filter((q) => q.eq(q.field('_id'), userId))
-      .first();
-
-    if (user) {
-      await ctx.db.delete(user._id);
-      deletedCount += 1;
-    }
+    const summary = await runAccountDeletion(ctx, userId);
 
     return {
-      success: true,
-      message: `נמחקו ${deletedCount} רשומות עבור משתמש ${userId}`,
-      deletedCount,
+      success: true as const,
+      deletedSpaceCount: summary.deletedSpaceIds.length,
+      deletedCommunityCount: summary.deletedCommunityIds.length,
+      transferredCommunityCount: summary.transferredCommunityIds.length,
+      deletedEventCount: summary.deletedEventCount,
+      deletedTaskCount: summary.deletedTaskCount,
     };
   },
 });
@@ -755,19 +754,50 @@ export const getIsQaUser = query({
 // phone-match decision (accept one match / decline all). Existing callers
 // that only read hasProfile/onboardingComplete are unaffected — this is an
 // additive field on the same response shape.
+//
+// ROOT-CAUSE FIX (post-delete onboarding race): `getAuthUserId(ctx)` can
+// resolve a valid userId whose `users` row no longer exists — this is
+// EXACTLY the transient window right after `deleteMyAccount` succeeds
+// (the row is already gone) but before the client's auth token/session
+// has been cleared by the Delete Account flow's `signOut()` call. The
+// `!userId` branch above already means "no valid identity at all" and
+// every current caller (app/(authenticated)/_layout.tsx,
+// app/(authenticated)/family-bootstrap.tsx) already treats a `null`
+// result as "not a real authenticated app user — do not persist
+// onboarding answers, do not route to onboarding, fall back to
+// sign-in/neutral routing". A deleted-but-not-yet-signed-out identity is
+// the SAME kind of state, so it reuses this exact same `null` sentinel
+// rather than inventing a new one.
+//
+// This branch is NOT reachable for a legitimate new user: Convex Auth's
+// `createOrUpdateUser` callback (convex/auth.ts) synchronously inserts
+// the `users` row (and the Apple Review sign-in path does the same in
+// convex/appleReviewAuth.ts) BEFORE the sign-in mutation returns a
+// session/token to the client — so by the time `useConvexAuth()` ever
+// reports `isAuthenticated === true` for ANY user, including a brand-new
+// one, the corresponding `users` row already exists. There is no
+// legitimate "authenticated identity, no app user row yet" bootstrap
+// phase in this app's auth flow — the only way to reach `!user` below is
+// a `users` row that existed and was deleted (account deletion).
 export const getCurrentUserStatus = query({
   args: {},
+  returns: v.union(
+    v.null(),
+    v.object({
+      hasProfile: v.boolean(),
+      onboardingComplete: v.boolean(),
+      phoneMatchResolvedAt: v.union(v.number(), v.null()),
+    })
+  ),
   handler: async (ctx) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return null;
 
     const user = await ctx.db.get(userId);
     if (!user) {
-      return {
-        hasProfile: false,
-        onboardingComplete: false,
-        phoneMatchResolvedAt: null,
-      };
+      // Deleted-account transient state — see the doc comment above.
+      // NEVER represent this as an onboarding-incomplete profile.
+      return null;
     }
 
     return {
