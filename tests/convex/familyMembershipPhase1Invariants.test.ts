@@ -173,11 +173,17 @@ describe('getMyPendingFamilyPreview — minimal-safe, deduplicated preview (sour
     expect(src).toContain('row._id !== pendingMemberId');
   });
 
-  it('exposes only displayName/color/memberType per member — no phone numbers, no user ids', () => {
+  it('exposes displayName/color/memberType plus two safe booleans per member — never the actual phone digits or any user id', () => {
     const returnsBlock = src.slice(src.indexOf('returns:'), src.indexOf('handler:'));
     expect(returnsBlock).toContain('displayName: v.optional(v.string())');
     expect(returnsBlock).toContain('color: v.optional(v.string())');
     expect(returnsBlock).toContain('memberType: v.union');
+    // QA fix: hasPhoneNumber/isConnected are plain booleans — they let the
+    // client distinguish manual vs. contact-pending vs. connected members
+    // (see FamilyMemberCard.tsx) without ever exposing the real phone
+    // string or another user's id.
+    expect(returnsBlock).toContain('hasPhoneNumber: v.boolean()');
+    expect(returnsBlock).toContain('isConnected: v.boolean()');
     expect(returnsBlock).not.toContain('selectedPhoneNumber');
     expect(returnsBlock).not.toContain("v.id('users')");
   });

@@ -20,6 +20,12 @@ export interface FamilyMember {
   maskedPhone?: string;
   inviteStatus?: 'none' | 'invited' | 'joined';
   matchedUserId?: string;
+  // FIXED: QA — minimal-safe connected signal for read-only preview rows
+  // (pending-family onboarding) that never receive matchedUserId itself
+  // (see getMyPendingFamilyPreview's isConnected boolean). Admin-visible
+  // rows keep using matchedUserId directly; this is purely a fallback so
+  // FamilyMemberCard.tsx can show the "מחובר" state without the real id.
+  isConnected?: boolean;
 }
 
 export interface FamilyData {

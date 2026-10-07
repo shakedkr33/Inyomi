@@ -53,6 +53,7 @@ function baseInput(candidateRows: PendingMatchCandidateRow[]) {
     candidateRows,
     accessSpaceIds: new Set<string>(),
     existingSpaceIds: new Set<string>(candidateRows.map((r) => r.spaceId)),
+    personalSpaceIds: new Set<string>(),
     resolveKind,
     normalizeToE164,
   };
@@ -257,11 +258,101 @@ describe('filterPendingPhoneMatchCandidates — exclusion rules [TEST 6-10]', ()
         'space_already',
         // space_deleted intentionally absent
       ]),
+      personalSpaceIds: new Set<string>(),
       resolveKind,
       normalizeToE164,
     });
 
     expect(result).toEqual([safe]);
+  });
+});
+
+describe('filterPendingPhoneMatchCandidates — personal-space exclusion [PRODUCT RULE]', () => {
+  it('A/B: entity in a personal space is excluded even though every other check passes', () => {
+    const personalRow: PendingMatchCandidateRow = {
+      _id: 'm_personal',
+      spaceId: 'space_personal',
+      kind: 'entity',
+      matchedUserId: CURRENT_USER,
+      selectedPhoneNumber: NORMALIZED_PHONE,
+      displayName: 'Old org contact',
+    };
+    const input = baseInput([personalRow]);
+    const result = filterPendingPhoneMatchCandidates({
+      ...input,
+      personalSpaceIds: new Set(['space_personal']),
+    });
+    expect(result).toEqual([]);
+  });
+
+  it('A: family entity + personal entity, same phone → ONLY the family entity is returned', () => {
+    const familyRow: PendingMatchCandidateRow = {
+      _id: 'm_family',
+      spaceId: 'space_family',
+      kind: 'entity',
+      matchedUserId: CURRENT_USER,
+      selectedPhoneNumber: NORMALIZED_PHONE,
+      displayName: 'הבית שלנו entity',
+    };
+    const personalRow: PendingMatchCandidateRow = {
+      _id: 'm_personal',
+      spaceId: 'space_personal',
+      kind: 'entity',
+      matchedUserId: CURRENT_USER,
+      selectedPhoneNumber: NORMALIZED_PHONE,
+      displayName: 'Old org contact',
+    };
+    const input = baseInput([familyRow, personalRow]);
+    const result = filterPendingPhoneMatchCandidates({
+      ...input,
+      personalSpaceIds: new Set(['space_personal']),
+    });
+    expect(result).toEqual([familyRow]);
+  });
+
+  it('C: two eligible shared (non-personal) spaces with the same phone → BOTH remain valid pending offers (no collapsing)', () => {
+    const sharedRow1: PendingMatchCandidateRow = {
+      _id: 'm_shared1',
+      spaceId: 'space_shared1',
+      kind: 'entity',
+      matchedUserId: CURRENT_USER,
+      selectedPhoneNumber: NORMALIZED_PHONE,
+    };
+    const sharedRow2: PendingMatchCandidateRow = {
+      _id: 'm_shared2',
+      spaceId: 'space_shared2',
+      kind: 'entity',
+      matchedUserId: CURRENT_USER,
+      selectedPhoneNumber: NORMALIZED_PHONE,
+    };
+    const input = baseInput([sharedRow1, sharedRow2]);
+    const result = filterPendingPhoneMatchCandidates({
+      ...input,
+      personalSpaceIds: new Set<string>(), // neither is personal
+    });
+    expect(result).toHaveLength(2);
+    expect(result).toEqual([sharedRow1, sharedRow2]);
+  });
+
+  it('missing/deleted space takes priority independently of personalSpaceIds (not marked personal, but still excluded)', () => {
+    const row: PendingMatchCandidateRow = {
+      _id: 'm1',
+      spaceId: 'space_deleted',
+      kind: 'entity',
+      matchedUserId: CURRENT_USER,
+      selectedPhoneNumber: NORMALIZED_PHONE,
+    };
+    const result = filterPendingPhoneMatchCandidates({
+      currentUserId: CURRENT_USER,
+      normalizedUserPhone: NORMALIZED_PHONE,
+      candidateRows: [row],
+      accessSpaceIds: new Set<string>(),
+      existingSpaceIds: new Set<string>(), // deleted — not personal, just gone
+      personalSpaceIds: new Set<string>(),
+      resolveKind,
+      normalizeToE164,
+    });
+    expect(result).toEqual([]);
   });
 });
 
@@ -383,5 +474,42 @@ describe('matchOnPhone — Stage 2B+3 security cutover: DISCOVERY ONLY', () => {
 
   it('does not reference the Stage 2A helper (getPendingPhoneMatches logic stays fully separate)', () => {
     expect(matchOnPhoneSrc).not.toContain('filterPendingPhoneMatchCandidates');
+  });
+});
+
+describe('matchOnPhone — PRODUCT RULE: personal spaces are never phone-join targets', () => {
+  it('resolves the member row\u2019s space and skips stamping matchedUserId when space.type === "personal"', () => {
+    expect(matchOnPhoneSrc).toContain(
+      'const space = await ctx.db.get(member.spaceId);'
+    );
+    expect(matchOnPhoneSrc).toContain(
+      "if (space && space.type === 'personal') continue;"
+    );
+  });
+
+  it('the personal-space check runs before the matchedUserId patch, for every candidate row', () => {
+    const checkIdx = matchOnPhoneSrc.indexOf(
+      "if (space && space.type === 'personal') continue;"
+    );
+    const patchIdx = matchOnPhoneSrc.indexOf('await ctx.db.patch(member._id,');
+    expect(checkIdx).toBeGreaterThan(-1);
+    expect(patchIdx).toBeGreaterThan(checkIdx);
+  });
+
+  it('the familyContacts mirror only iterates spaces that were actually eligible (affectedSpaceIds is built after the personal-space skip)', () => {
+    const skipIdx = matchOnPhoneSrc.indexOf(
+      "if (space && space.type === 'personal') continue;"
+    );
+    const addIdx = matchOnPhoneSrc.indexOf('affectedSpaceIds.add(');
+    expect(addIdx).toBeGreaterThan(skipIdx);
+  });
+});
+
+describe('getPendingPhoneMatches — PRODUCT RULE: personal spaces are never phone-join targets', () => {
+  it('independently collects personalSpaceIds and passes them to the pure filter (never trusts matchOnPhone alone)', () => {
+    expect(getPendingPhoneMatchesSrc).toContain(
+      "if (space.type === 'personal') personalSpaceIds.add(spaceId);"
+    );
+    expect(getPendingPhoneMatchesSrc).toContain('personalSpaceIds,');
   });
 });

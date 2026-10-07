@@ -229,6 +229,17 @@ export async function executeFamilyJoin(
   const space = await ctx.db.get(spaceId);
   if (!space) throw new Error('המרחב לא נמצא');
 
+  // PRODUCT RULE / FINAL SERVER-SIDE INTEGRITY BOUNDARY: a personal space is
+  // NEVER a phone-join target. This is the last gate before any join write
+  // — executeFamilyJoin is the ONLY code path that may grant real family
+  // membership (see doc comment above), so this check must never be
+  // skippable by a stale client, a manipulated call, an old pending id, or
+  // a legacy matchedUserId stamped on a personal-space entity before this
+  // invariant existed. Re-validated here independently of
+  // acceptPendingPhoneMatch/getPendingPhoneMatches — never trusts that an
+  // earlier step already enforced it.
+  if (space.type === 'personal') throw new Error(PERMISSION_DENIED);
+
   // Active-family guard — atomic, immediately before final writes.
   await assertNoActiveFamilyMembership(ctx, userId);
 
@@ -352,8 +363,34 @@ export const matchOnPhone = internalMutation({
       )
       .collect();
 
+    // PRODUCT RULE: a personal space is NEVER a phone-join target. Entities
+    // may legitimately live in a personal space for organizational/display
+    // purposes (assignments, birthdays, sharing) but must never be stamped
+    // as a discovery match — doing so would let
+    // getPendingPhoneMatches/acceptPendingPhoneMatch/executeFamilyJoin
+    // surface or finalize a "join" into someone else's personal space. If
+    // the space is missing entirely, preserve prior safe behavior by simply
+    // not matching it (ctx.db.get returns null for a deleted space, so
+    // `space?.type` is undefined and the exclusion does not apply — same as
+    // before this change).
+    //
+    // `affectedSpaceIds` tracks only the spaces actually stamped above, so
+    // the familyContacts mirror below (which is keyed by space, not by
+    // member row) never touches the owner's mirror for a personal-space
+    // entity — this prevents a personal space's owner (who may also own an
+    // unrelated eligible family space) from having their family mirror
+    // entry silently marked matchedUserId from a skipped personal-space
+    // candidate, which could otherwise mask the legitimate family-space
+    // match in a later redundant pass (item 8 of the fix spec).
+    const affectedSpaceIds = new Set<Id<'spaces'>>();
     for (const member of matchingMembers) {
       if (member.matchedUserId) continue; // already matched — do not overwrite
+
+      const space = await ctx.db.get(member.spaceId);
+      if (space && space.type === 'personal') continue;
+
+      affectedSpaceIds.add(member.spaceId);
+
       // SECURITY (Stage 2B+3): discovery linkage ONLY — matchedUserId is the
       // sole write here. userId, inviteStatus, and the access row are
       // intentionally NOT written. Access is only granted after the user
@@ -367,10 +404,8 @@ export const matchOnPhone = internalMutation({
     // OnboardingContext hydration (getMyProfile) still works without a
     // migration. SECURITY (Stage 2B+3): mirrors matchedUserId ONLY — never
     // inviteStatus:'joined', since a phone match alone must never imply
-    // joined/access status in this mirror either.
-    const affectedSpaceIds = [
-      ...new Set(matchingMembers.map((m) => m.spaceId)),
-    ];
+    // joined/access status in this mirror either. Only iterates
+    // `affectedSpaceIds` (never a personal space) — see comment above.
     for (const spaceId of affectedSpaceIds) {
       const space = await ctx.db.get(spaceId);
       if (!space?.ownerId) continue;
@@ -483,12 +518,20 @@ export const getPendingPhoneMatches = query({
 
     const candidateSpaceIds = [...new Set(candidateRows.map((r) => r.spaceId))];
     const existingSpaceIds = new Set<Id<'spaces'>>();
+    // PRODUCT RULE: a personal space is NEVER a phone-join target. Collected
+    // here (independently of matchOnPhone) so this query enforces the
+    // invariant itself rather than relying solely on matchOnPhone having
+    // already skipped the stamp — a legacy/pre-fix matchedUserId stamped on
+    // a personal-space entity before this change must still never surface
+    // here.
+    const personalSpaceIds = new Set<Id<'spaces'>>();
     const spaceNameById = new Map<Id<'spaces'>, string>();
     for (const spaceId of candidateSpaceIds) {
       const space = await ctx.db.get(spaceId);
       if (space) {
         existingSpaceIds.add(spaceId);
         spaceNameById.set(spaceId, space.name);
+        if (space.type === 'personal') personalSpaceIds.add(spaceId);
       }
     }
 
@@ -497,6 +540,7 @@ export const getPendingPhoneMatches = query({
       normalizedUserPhone,
       candidateRows,
       accessSpaceIds,
+      personalSpaceIds,
       existingSpaceIds,
       resolveKind,
       normalizeToE164,
@@ -617,6 +661,15 @@ export const acceptPendingPhoneMatch = mutation({
     const space = await ctx.db.get(spaceId);
     if (!space) throw new Error('המרחב לא נמצא');
 
+    // 12. PRODUCT RULE: a personal space is NEVER a phone-join target.
+    // Re-validated here independently of matchOnPhone/getPendingPhoneMatches
+    // — this mutation must never trust that the client only ever sends a
+    // memberId it received from the already-filtered pending list. A stale
+    // client, a manipulated call, or a legacy matchedUserId stamped before
+    // this invariant existed must all be rejected the same way, with a
+    // user-safe error that reveals no internal ids.
+    if (space.type === 'personal') throw new Error(PERMISSION_DENIED);
+
     // 11. not already claimed by a different real user.
     if (entity.userId !== undefined && entity.userId !== userId) {
       throw new Error(PERMISSION_DENIED);
@@ -685,9 +738,15 @@ export const completeExistingUserFamilyJoin = mutation({
  *
  * `otherFamilyMembers` deliberately EXCLUDES the pending entity itself
  * (the joining user's own not-yet-joined profile) — never show the
- * joining user's own card back to themselves. Returns only
- * displayName/color/memberType per member — no phone numbers, no other
- * users' ids, no permissions.
+ * joining user's own card back to themselves. Returns
+ * displayName/color/memberType per member plus two SAFE booleans
+ * (`hasPhoneNumber`, `isConnected`) — never the actual phone digits or
+ * any other user's id. These booleans exist so the client can render the
+ * same manual/contact/connected distinction used everywhere else in the
+ * app (see allServerMembers in app/(authenticated)/family-profile.tsx,
+ * which derives sourceType from selectedPhoneNumber the same way) —
+ * without that distinction, the preview previously had no reliable
+ * signal and every row was mislabeled "פרופיל ידני" (QA fix).
  */
 export const getMyPendingFamilyPreview = query({
   args: {},
@@ -699,6 +758,8 @@ export const getMyPendingFamilyPreview = query({
           displayName: v.optional(v.string()),
           color: v.optional(v.string()),
           memberType: v.union(v.literal('person'), v.literal('pet')),
+          hasPhoneNumber: v.boolean(),
+          isConnected: v.boolean(),
         })
       ),
     }),
@@ -740,6 +801,8 @@ export const getMyPendingFamilyPreview = query({
             displayName,
             color: row.color,
             memberType: (row.memberType ?? 'person') as 'person' | 'pet',
+            hasPhoneNumber: Boolean(row.selectedPhoneNumber),
+            isConnected: Boolean(row.matchedUserId),
           };
         })
     );

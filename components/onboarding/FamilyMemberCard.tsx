@@ -1,7 +1,11 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { colors, shadows } from '../../constants/theme';
+import {
+  deriveFamilyMemberBadge,
+  deriveFamilyMemberSecondaryLabel,
+} from '@/lib/familyMemberLabels';
 import { rtl, tw } from '@/lib/rtl';
+import { colors, shadows } from '../../constants/theme';
 import type { FamilyMember } from '../../contexts/OnboardingContext';
 import { ColorPicker, type TakenColor } from './ColorPicker';
 
@@ -9,26 +13,10 @@ import { ColorPicker, type TakenColor } from './ColorPicker';
 // FIXED: manual members no longer show a status badge — descriptive secondary line shown instead
 // FIXED: card now renders correct secondary line and badge per member type
 // FIXED: role-aware card — isAdmin controls which actions are rendered
+// Badge/secondary-label derivation now lives in lib/familyMemberLabels.ts
+// (pure, unit-tested — see lib/services/__tests__/familyMemberLabels.test.ts)
+// so it can be tested without the RN/expo-vector-icons deps this file pulls in.
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Only 3 real badge values — manual members return null (no badge rendered)
-type FamilyMemberBadge = 'מחובר' | 'שלח שוב' | 'שלח הזמנה' | null;
-
-// FIXED: deriveFamilyMemberBadge returns null for manual members (no badge shown)
-// Backward compat: members without sourceType are inferred from phone/contactId presence.
-function deriveFamilyMemberBadge(member: FamilyMember): FamilyMemberBadge {
-  if (member.matchedUserId) return 'מחובר';
-  const effectiveSourceType =
-    member.sourceType ??
-    (member.phone || member.contactId ? 'contact' : 'manual');
-  const effectivePhone =
-    member.selectedPhoneNumber ??
-    (effectiveSourceType === 'contact' ? member.phone : undefined);
-  if (effectiveSourceType === 'contact' && member.inviteStatus === 'invited')
-    return 'שלח שוב';
-  if (effectiveSourceType === 'contact' && effectivePhone) return 'שלח הזמנה';
-  return null; // manual member — no badge
-}
 
 interface DisplayCardProps {
   member: FamilyMember;
@@ -248,14 +236,12 @@ export function FamilyMemberManagementCard({
   const badge = deriveFamilyMemberBadge(member);
 
   // FIXED: card now renders correct secondary line per member type
-  // Contact → masked phone; Manual → descriptive text, no badge
-  const effectiveSourceType =
-    member.sourceType ??
-    (member.phone || member.contactId ? 'contact' : 'manual');
-  const secondaryLabel =
-    effectiveSourceType === 'contact' && (member.maskedPhone ?? member.phone)
-      ? (member.maskedPhone ?? member.phone)
-      : 'פרופיל ידני - ללא התחברות לאפליקציה';
+  // Contact → masked phone; pending contact → "ממתין להתחברות";
+  // genuine manual → "פרופיל ידני"; connected → no text (badge shows it).
+  const secondaryLabel = deriveFamilyMemberSecondaryLabel(
+    member,
+    badge === 'מחובר'
+  );
 
   // FIXED: admin badge — shown when this entity row's matchedUserId is the space admin
   const isAdminEntity = Boolean(
@@ -333,12 +319,14 @@ export function FamilyMemberManagementCard({
                 </View>
               )}
             </View>
-            <Text
-              className={`text-xs text-gray-400 mt-0.5 ${tw.textStart}`}
-              numberOfLines={1}
-            >
-              {secondaryLabel}
-            </Text>
+            {secondaryLabel ? (
+              <Text
+                className={`text-xs text-gray-400 mt-0.5 ${tw.textStart}`}
+                numberOfLines={1}
+              >
+                {secondaryLabel}
+              </Text>
+            ) : null}
           </Pressable>
         ) : (
           <View style={{ flex: 1 }}>
@@ -378,12 +366,14 @@ export function FamilyMemberManagementCard({
                 </View>
               )}
             </View>
-            <Text
-              className={`text-xs text-gray-400 mt-0.5 ${tw.textStart}`}
-              numberOfLines={1}
-            >
-              {secondaryLabel}
-            </Text>
+            {secondaryLabel ? (
+              <Text
+                className={`text-xs text-gray-400 mt-0.5 ${tw.textStart}`}
+                numberOfLines={1}
+              >
+                {secondaryLabel}
+              </Text>
+            ) : null}
           </View>
         )}
       </View>

@@ -1,7 +1,7 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import { useMutation, useQuery } from 'convex/react';
 import { usePathname, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -54,7 +54,9 @@ import {
   isClaimedMandatorySetup as isClaimedMandatorySetupHelper,
   isMandatorySetupSaveDisabled,
 } from '../../lib/mandatoryProfileSetup';
+import { executeMandatorySetupFinalSave } from '../../lib/mandatorySetupFinalSave';
 import { normalizeIsraeliPhone } from '../../lib/phoneUtils';
+import { validateProfileName } from '../../lib/profileNameValidation';
 import { maskPhone } from '../../lib/utils/contactPhone';
 
 // FIXED: share-sheet invitation implemented for "שלח הזמנה" and "שלח שוב"
@@ -138,12 +140,32 @@ export default function FamilyProfileScreen() {
   // claimed path. mySpaceRole stays null/undefined for a claimed-but-not-
   // yet-joined user just like a brand-new user, so it can no longer be
   // used as the claimed-detection signal — hasPendingMatchMemberId is.
-  const isMandatorySetupRoleLoading =
-    isMandatorySetup && hasPendingMatchMemberId === undefined;
   const isClaimedMandatorySetup = isClaimedMandatorySetupHelper(
     isMandatorySetup,
     hasPendingMatchMemberId === true
   );
+  // Family Membership Lifecycle Phase 1 — QA fix: read-only preview of the
+  // family the caller has SELECTED but not yet joined. listMyFamilyContacts
+  // (above) always returns an empty list for a claimed-but-not-yet-joined
+  // user — resolveMySpaceId (convex/members.ts) looks up rows by `userId`,
+  // which is only written at final join (executeFamilyJoin). This query
+  // reads `user.pendingMatchMemberId` directly instead, so the existing
+  // family's other members/pets can be shown read-only BEFORE final Save.
+  // Gated with 'skip' until isClaimedMandatorySetup is confirmed true so a
+  // brand-new (non-claimed) user never issues this query at all. This is a
+  // display-only addition — it changes no mutation, no membership state.
+  const pendingFamilyPreview = useQuery(
+    api.members.getMyPendingFamilyPreview,
+    isClaimedMandatorySetup ? {} : 'skip'
+  );
+  // Part 4 (extended): while mySpaceRole/hasPendingMatchMemberId is still
+  // resolving, OR while a confirmed-claimed user's preview data hasn't
+  // loaded yet, never render either the "new empty family" state or a
+  // half-loaded claimed-family state — both would be a guess.
+  const isMandatorySetupRoleLoading =
+    isMandatorySetup &&
+    (hasPendingMatchMemberId === undefined ||
+      (isClaimedMandatorySetup && pendingFamilyPreview === undefined));
   // canManageFamilyProfile gates add/edit/remove affordances; isAdmin
   // (unchanged) still gates the "מנהל/ת המשפחה" badge and the real
   // per-space role for completed users. See lib/mandatoryProfileSetup.ts
@@ -232,6 +254,38 @@ export default function FamilyProfileScreen() {
   const [mandatorySetupError, setMandatorySetupError] = useState<string | null>(
     null
   );
+  // QA fix (silent required-field no-op): per-field validation errors for
+  // the self-profile first/last name card. Set by handleSaveProfile (mid-
+  // form "שמירת פרטים") and by the final "שמירה והמשך" orchestration below
+  // — both go through the same pure validateProfileName helper (see
+  // lib/profileNameValidation.ts) so the Hebrew copy and "is this field
+  // required here" rule never diverge between the two call sites.
+  const [firstNameError, setFirstNameError] = useState<string | null>(null);
+  const [lastNameError, setLastNameError] = useState<string | null>(null);
+  // QA fix (final CTA must auto-save unsaved profile details): tracks the
+  // LAST successfully-persisted first/last name values — via either
+  // "שמירת פרטים" or the final CTA's own auto-save — so the final CTA can
+  // tell whether the currently-visible fields are dirty without relying on
+  // the card's expanded/collapsed display state (which the user never has
+  // to interact with for this to work correctly). `null` means "nothing
+  // persisted yet in this session" (always dirty).
+  const [lastSavedProfileName, setLastSavedProfileName] = useState<{
+    firstName: string;
+    lastName: string;
+  } | null>(() =>
+    firstName.trim()
+      ? { firstName: firstName.trim(), lastName: lastName.trim() }
+      : null
+  );
+  const isProfileNameDirty =
+    !lastSavedProfileName ||
+    lastSavedProfileName.firstName !== firstName.trim() ||
+    lastSavedProfileName.lastName !== lastName.trim();
+  // Re-entrancy guard for the final-save orchestration below — held in a
+  // ref (not React state) so it is claimed synchronously, in the same tick
+  // a rapid double-tap would otherwise race against. See
+  // lib/mandatorySetupFinalSave.ts.
+  const finalSaveStateRef = useRef({ isSaving: false });
   const { effectiveAccess } = useEffectiveAccess();
   const canExpandFamilyProfile =
     effectiveAccess === 'trial_active' || effectiveAccess === 'family';
@@ -276,15 +330,59 @@ export default function FamilyProfileScreen() {
   // saving state until the authenticated layout's OWN reactive redirect
   // (needsMandatorySetupExitRedirect in app/(authenticated)/_layout.tsx)
   // performs the tab switch once Tabs has actually (re)mounted.
+  // QA fix: the final CTA used to only check that firstName/lastName were
+  // currently non-blank, then call saveAll() directly — it never routed
+  // through the SAME canonical save function as "שמירת פרטים", so a user
+  // who typed valid names but never pressed "שמירת פרטים" relied entirely
+  // on saveAll() happening to re-read the live field values itself. That
+  // left no explicit "auto-save unsaved profile details" step and no
+  // shared validation-error UX with the mid-form card. This now always
+  // runs through executeMandatorySetupFinalSave (lib/mandatorySetupFinalSave.ts):
+  // validate → (if dirty) persist via handleSavePersonalName → only then
+  // join via saveAll(). See that module's doc comment for the full
+  // sequence and every guard branch.
   const handleSaveMandatorySetup = (): void => {
-    if (isSavingMandatorySetup) return;
-    if (!firstName.trim() || !lastName.trim()) return;
-
-    setMandatorySetupError(null);
-    setIsSavingMandatorySetup(true);
-    saveAll().catch(() => {
-      setMandatorySetupError('לא הצלחנו לשמור כרגע. אפשר לנסות שוב.');
-      setIsSavingMandatorySetup(false);
+    void executeMandatorySetupFinalSave(finalSaveStateRef.current, {
+      validate: () => validateProfileName(firstName, lastName, true),
+      isDirty: () => isProfileNameDirty,
+      saveProfileName: () => {
+        const didSave = handleSavePersonalName(true);
+        if (didSave) {
+          setProfileSaved(true);
+          setLastSavedProfileName({
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+          });
+        }
+        return didSave;
+      },
+      joinFamily: () => saveAll().then(() => undefined),
+      onStart: () => {
+        setMandatorySetupError(null);
+        setIsSavingMandatorySetup(true);
+      },
+    }).then((result) => {
+      switch (result.status) {
+        case 'skipped':
+          return;
+        case 'invalid':
+          setFirstNameError(result.validation.firstNameError);
+          setLastNameError(result.validation.lastNameError);
+          return;
+        case 'profileSaveFailed':
+        case 'joinFailed':
+          setMandatorySetupError('לא הצלחנו לשמור כרגע. אפשר לנסות שוב.');
+          setIsSavingMandatorySetup(false);
+          return;
+        case 'joined':
+          // Intentionally stays in its "saving" state — see the doc
+          // comment above handleSaveMandatorySetup's previous
+          // implementation: the authenticated layout's own reactive
+          // redirect performs the tab switch once Tabs has (re)mounted.
+          return;
+        default:
+          return;
+      }
     });
   };
 
@@ -300,18 +398,51 @@ export default function FamilyProfileScreen() {
   // FIXED: delete confirmation dialog text aligned right (RTL)
   const [deleteTarget, setDeleteTarget] = useState<FamilyMember | null>(null);
 
+  // QA fix: clear a field's validation error the moment the user types a
+  // non-blank value into it — stale error states must never survive a
+  // correction (see lib/profileNameValidation.ts).
   const handleFirstNameChange = (v: string) => {
     setFirstName(v);
     setProfileSaved(false);
+    if (firstNameError && v.trim()) setFirstNameError(null);
   };
   const handleLastNameChange = (v: string) => {
     setLastName(v);
     setProfileSaved(false);
+    if (lastNameError && v.trim()) setLastNameError(null);
   };
 
+  // QA fix: last name is now required alongside first name during
+  // mandatory Profile Setup (fresh OR claimed-pending) — see
+  // handleSavePersonalName's doc comment in useFamilyProfileEditor.ts.
+  // Outside mandatory setup (optional/returning-user edit), last name
+  // stays optional, unchanged. The card only collapses to its "saved"
+  // display state when the save actually happened.
+  //
+  // QA fix (silent no-op): a missing required field used to make this
+  // button appear to do nothing. It now always shows field-level errors
+  // (red border + Hebrew error text, see the render below) instead of
+  // silently returning — the button itself stays enabled/tappable at all
+  // times (per approved UX: only disable buttons for in-flight saves, not
+  // validation state).
   const handleSaveProfile = () => {
-    handleSavePersonalName();
-    setProfileSaved(true);
+    const validation = validateProfileName(
+      firstName,
+      lastName,
+      isMandatorySetup
+    );
+    setFirstNameError(validation.firstNameError);
+    setLastNameError(validation.lastNameError);
+    if (validation.firstNameError || validation.lastNameError) return;
+
+    const didSave = handleSavePersonalName(isMandatorySetup);
+    if (didSave) setProfileSaved(true);
+    if (didSave) {
+      setLastSavedProfileName({
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+      });
+    }
   };
 
   // FIXED: nickname removed from self-profile UI (locked product decision)
@@ -380,6 +511,43 @@ export default function FamilyProfileScreen() {
   const selfEntityId = serverFamilyContacts?.selfEntityId;
   const allServerMembers = serverFamilyContacts?.members ?? [];
 
+  // Family Membership Lifecycle Phase 1 — QA fix: read-only rows derived
+  // from getMyPendingFamilyPreview for a claimed-but-not-yet-joined user.
+  // Never has the actual phone digits/matchedUserId/inviteStatus (the
+  // preview query never exposes those — see
+  // convex/members.ts#getMyPendingFamilyPreview) — those fields stay
+  // omitted here; the display cards already treat them as optional.
+  // QA fix: the preview DOES carry two safe booleans (hasPhoneNumber,
+  // isConnected) which let sourceType/isConnected be derived correctly
+  // instead of hardcoding 'manual' for every row — the prior hardcode is
+  // exactly why genuine contact profiles (e.g. "אבא שלי") were mislabeled
+  // "פרופיל ידני" here. Synthetic ids are safe: this list is read-only and
+  // never targets a mutation (no edit/remove affordance is wired to these
+  // rows below).
+  const previewPersonMembers: FamilyMember[] = (
+    pendingFamilyPreview?.otherFamilyMembers ?? []
+  )
+    .filter((m) => m.memberType !== 'pet')
+    .map((m, index) => ({
+      id: `pending-person-${index}`,
+      name: m.displayName ?? '',
+      color: m.color ?? '#36a9e2',
+      type: 'person' as const,
+      sourceType: m.hasPhoneNumber ? ('contact' as const) : ('manual' as const),
+      isConnected: m.isConnected,
+    }));
+  const previewPetMembers: FamilyMember[] = (
+    pendingFamilyPreview?.otherFamilyMembers ?? []
+  )
+    .filter((m) => m.memberType === 'pet')
+    .map((m, index) => ({
+      id: `pending-pet-${index}`,
+      name: m.displayName ?? '',
+      color: m.color ?? '#36a9e2',
+      type: 'pet' as const,
+      sourceType: 'manual' as const,
+    }));
+
   // FIXED: member users now see all family members except themselves.
   // FIXED: admin entry now includes phone from users record, shown as linked user not manual.
   // sourceType derived from selectedPhoneNumber so FamilyMemberManagementCard shows the
@@ -393,41 +561,46 @@ export default function FamilyProfileScreen() {
   // would never render in the list.
   const displayMembers: FamilyMember[] = canManageFamilyProfile
     ? mergedPersonMembers
-    : allServerMembers
-        .filter((m) => m._id !== selfEntityId && m.memberType !== 'pet')
-        .map((contact) => {
-          const phone = contact.selectedPhoneNumber;
-          return {
-            id: contact._id,
-            name: contact.displayName ?? '',
-            color: contact.color ?? '#36a9e2',
-            type: 'person' as const,
-            selectedPhoneNumber: phone,
-            matchedUserId: contact.matchedUserId,
-            inviteStatus: contact.inviteStatus as FamilyMember['inviteStatus'],
-            sourceType: phone ? ('contact' as const) : ('manual' as const),
-            maskedPhone:
-              contact.maskedPhone ?? (phone ? maskPhone(phone) : undefined),
-          };
-        });
+    : isClaimedMandatorySetup
+      ? previewPersonMembers
+      : allServerMembers
+          .filter((m) => m._id !== selfEntityId && m.memberType !== 'pet')
+          .map((contact) => {
+            const phone = contact.selectedPhoneNumber;
+            return {
+              id: contact._id,
+              name: contact.displayName ?? '',
+              color: contact.color ?? '#36a9e2',
+              type: 'person' as const,
+              selectedPhoneNumber: phone,
+              matchedUserId: contact.matchedUserId,
+              inviteStatus:
+                contact.inviteStatus as FamilyMember['inviteStatus'],
+              sourceType: phone ? ('contact' as const) : ('manual' as const),
+              maskedPhone:
+                contact.maskedPhone ?? (phone ? maskPhone(phone) : undefined),
+            };
+          });
 
   // FIXED: non-admin members now see pets in the pets section.
   // Admin reads from local editor state (petMembers) so in-progress edits are reflected.
   // Non-admin reads from the server query filtered to memberType === 'pet'.
   const displayPetMembers: FamilyMember[] = canManageFamilyProfile
     ? petMembers
-    : allServerMembers
-        .filter((m) => m.memberType === 'pet')
-        .map((contact) => ({
-          id: contact._id,
-          name: contact.displayName ?? '',
-          color: contact.color ?? '#36a9e2',
-          type: 'pet' as const,
-          selectedPhoneNumber: contact.selectedPhoneNumber,
-          matchedUserId: contact.matchedUserId,
-          inviteStatus: contact.inviteStatus as FamilyMember['inviteStatus'],
-          sourceType: 'manual' as const,
-        }));
+    : isClaimedMandatorySetup
+      ? previewPetMembers
+      : allServerMembers
+          .filter((m) => m.memberType === 'pet')
+          .map((contact) => ({
+            id: contact._id,
+            name: contact.displayName ?? '',
+            color: contact.color ?? '#36a9e2',
+            type: 'pet' as const,
+            selectedPhoneNumber: contact.selectedPhoneNumber,
+            matchedUserId: contact.matchedUserId,
+            inviteStatus: contact.inviteStatus as FamilyMember['inviteStatus'],
+            sourceType: 'manual' as const,
+          }));
 
   // Look up the real Convex entity row _id from serverFamilyContacts for a given local member.
   // Used to pass to removeMember so removeEntityMember is called with the correct Convex ID,
@@ -611,10 +784,28 @@ export default function FamilyProfileScreen() {
           </View>
         ) : null}
 
+        {/* FIXED: card alignment QA — horizontal padding moved from the
+            ScrollView's own className (px-6, applied to the non-scrolling
+            outer wrapper) into contentContainerStyle (applied to the
+            actual scrollable content box), matching the pattern used by
+            every other ScrollView in this app (e.g. verify.tsx,
+            phone-match-confirmation.tsx). Padding set directly on a
+            ScrollView's style measured as asymmetric on-device under
+            native RTL (~46px effective left inset vs ~2px right inset) —
+            cards/text rendered inside it hugged the right edge instead of
+            being centered with equal margins, while sibling plain Views
+            using the identical px-6 class (e.g. the bottom "שמירה והמשך"
+            bar) rendered correctly symmetric. This is the root-layout fix
+            (not a hardcoded per-platform offset) — same contentContainerStyle
+            paddingHorizontal works identically on iOS and Android. */}
         <ScrollView
-          className="flex-1 px-6"
+          className="flex-1"
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={{ paddingTop: 16, paddingBottom: 200 }}
+          contentContainerStyle={{
+            paddingTop: 16,
+            paddingBottom: 200,
+            paddingHorizontal: 24,
+          }}
           keyboardShouldPersistTaps="handled"
         >
           {/* ── Owner card ────────────────────────────────────────────────── */}
@@ -707,30 +898,78 @@ export default function FamilyProfileScreen() {
                   >
                     שם פרטי ושם משפחה
                   </Text>
+                  {/* QA fix: each field gets its own wrapper so a red
+                      border + Hebrew error line can render directly below
+                      THAT field (existing app error/destructive token —
+                      colors.error — reused, no second validation design
+                      invented). First name is always required (shown with
+                      "*"); last name is only marked required ("*") during
+                      mandatory Profile Setup — optional/settings edits are
+                      unaffected. */}
                   <View className={`${tw.flexRow} gap-2 mb-2`}>
-                    <TextInput
-                      value={firstName}
-                      onChangeText={handleFirstNameChange}
-                      placeholder="שם פרטי"
-                      placeholderTextColor="#9ca3af"
-                      className="flex-1 bg-[#f6f7f8] rounded-xl px-3 text-base"
-                      style={{ height: 44, textAlign: rtl.inputTextAlign }}
-                      returnKeyType="next"
-                      accessible={true}
-                      accessibilityLabel="שם פרטי"
-                    />
-                    <TextInput
-                      value={lastName}
-                      onChangeText={handleLastNameChange}
-                      placeholder="שם משפחה"
-                      placeholderTextColor="#9ca3af"
-                      className="flex-1 bg-[#f6f7f8] rounded-xl px-3 text-base"
-                      style={{ height: 44, textAlign: rtl.inputTextAlign }}
-                      returnKeyType="done"
-                      onSubmitEditing={handleSaveProfile}
-                      accessible={true}
-                      accessibilityLabel="שם משפחה"
-                    />
+                    <View className="flex-1">
+                      <TextInput
+                        value={firstName}
+                        onChangeText={handleFirstNameChange}
+                        placeholder="שם פרטי *"
+                        placeholderTextColor="#9ca3af"
+                        className="bg-[#f6f7f8] rounded-xl px-3 text-base"
+                        style={{
+                          height: 44,
+                          textAlign: rtl.inputTextAlign,
+                          borderWidth: firstNameError ? 1 : 0,
+                          borderColor: firstNameError
+                            ? colors.error
+                            : 'transparent',
+                        }}
+                        returnKeyType="next"
+                        accessible={true}
+                        accessibilityLabel="שם פרטי"
+                      />
+                      {firstNameError ? (
+                        <Text
+                          className={`text-xs ${tw.textStart} mt-1`}
+                          style={{ color: colors.error }}
+                          accessible={true}
+                          accessibilityLabel={firstNameError}
+                        >
+                          {firstNameError}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <View className="flex-1">
+                      <TextInput
+                        value={lastName}
+                        onChangeText={handleLastNameChange}
+                        placeholder={
+                          isMandatorySetup ? 'שם משפחה *' : 'שם משפחה'
+                        }
+                        placeholderTextColor="#9ca3af"
+                        className="bg-[#f6f7f8] rounded-xl px-3 text-base"
+                        style={{
+                          height: 44,
+                          textAlign: rtl.inputTextAlign,
+                          borderWidth: lastNameError ? 1 : 0,
+                          borderColor: lastNameError
+                            ? colors.error
+                            : 'transparent',
+                        }}
+                        returnKeyType="done"
+                        onSubmitEditing={handleSaveProfile}
+                        accessible={true}
+                        accessibilityLabel="שם משפחה"
+                      />
+                      {lastNameError ? (
+                        <Text
+                          className={`text-xs ${tw.textStart} mt-1`}
+                          style={{ color: colors.error }}
+                          accessible={true}
+                          accessibilityLabel={lastNameError}
+                        >
+                          {lastNameError}
+                        </Text>
+                      ) : null}
+                    </View>
                   </View>
                   {/* FIXED: nickname field removed from self-profile UI (locked
                       product decision) — first/last name only. */}
@@ -947,7 +1186,7 @@ export default function FamilyProfileScreen() {
                 lineHeight: 18,
               }}
             >
-              רק מנהל/ת המשפחה יכול/ה לערוך את הפרופיל המשפחתי
+              עריכת הפרופיל המשפחתי זמינה למנהלי המשפחה בלבד.
             </Text>
           )}
 

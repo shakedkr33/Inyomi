@@ -365,8 +365,23 @@ export function useFamilyProfileEditor(
     setConvertingToContactId(null);
   };
 
-  const handleSavePersonalName = () => {
-    if (!firstName.trim()) return;
+  /**
+   * QA fix: last name must be required for the joining user's own profile
+   * during mandatory Profile Setup (fresh OR claimed-pending) — mirrors
+   * the same BOTH-required rule saveAll()/isMandatorySetupSaveDisabled
+   * already enforce on the final "שמירה והמשך" button, so a user can no
+   * longer collapse this mid-form "שמירת פרטים" card with an empty last
+   * name only to be blocked later at final save with no earlier feedback.
+   * `requireLastName` defaults to false so the optional/returning-user
+   * edit path (saveProfile(), used outside mandatory setup) keeps its
+   * existing "neither name field is required" behavior unchanged.
+   * Returns whether the save actually happened, so the caller only
+   * collapses the card to its "saved" display state on a real save —
+   * exactly like the pre-existing firstName-empty no-op already behaved.
+   */
+  const handleSavePersonalName = (requireLastName = false): boolean => {
+    if (!firstName.trim()) return false;
+    if (requireLastName && !lastName.trim()) return false;
     updateData({
       firstName: firstName.trim(),
       lastName: lastName.trim() || undefined,
@@ -381,6 +396,7 @@ export function useFamilyProfileEditor(
       () => setPersonalSaved(false),
       1500
     );
+    return true;
   };
 
   const handleSaveOwnerName = () => {

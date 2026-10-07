@@ -144,8 +144,34 @@ describe('acceptPendingPhoneMatch — full verification chain [1-11]', () => {
 
   it('[11] rejects an entity already claimed by a DIFFERENT real user', () => {
     expect(acceptSrc).toContain(
-      "if (entity.userId !== undefined && entity.userId !== userId) {"
+      'if (entity.userId !== undefined && entity.userId !== userId) {'
     );
+  });
+});
+
+describe('acceptPendingPhoneMatch — PRODUCT RULE: personal spaces are never phone-join targets [TEST D]', () => {
+  it('re-validates space.type AFTER fetching the space and rejects personal spaces with the same user-safe PERMISSION_DENIED error (no internal ids leaked)', () => {
+    const spaceCheckIdx = acceptSrc.indexOf(
+      "if (space.type === 'personal') throw new Error(PERMISSION_DENIED);"
+    );
+    const spaceFetchIdx = acceptSrc.indexOf(
+      'const space = await ctx.db.get(spaceId);'
+    );
+    expect(spaceCheckIdx).toBeGreaterThan(-1);
+    expect(spaceCheckIdx).toBeGreaterThan(spaceFetchIdx);
+  });
+
+  it('the personal-space rejection happens BEFORE the pendingMatchMemberId/phoneMatchResolvedAt writes — no partial write on an invalid target', () => {
+    const spaceCheckIdx = acceptSrc.indexOf(
+      "if (space.type === 'personal') throw new Error(PERMISSION_DENIED);"
+    );
+    const writeIdx = acceptSrc.indexOf('await ctx.db.patch(userId, {');
+    expect(spaceCheckIdx).toBeGreaterThan(-1);
+    expect(spaceCheckIdx).toBeLessThan(writeIdx);
+  });
+
+  it('does not rely on the client only sending ids from the already-filtered getPendingPhoneMatches list (re-derives space from the entity row itself)', () => {
+    expect(acceptSrc).toContain('const spaceId = entity.spaceId;');
   });
 });
 
@@ -215,6 +241,30 @@ describe('executeFamilyJoin — the ONLY path that grants real membership', () =
   });
 });
 
+describe('executeFamilyJoin — PRODUCT RULE: personal spaces are never phone-join targets [TEST E]', () => {
+  it('rejects a personal-space target with PERMISSION_DENIED, re-validated independently of acceptPendingPhoneMatch', () => {
+    expect(executeJoinSrc).toContain(
+      "if (space.type === 'personal') throw new Error(PERMISSION_DENIED);"
+    );
+  });
+
+  it('the personal-space check runs AFTER resolving the space but BEFORE the active-family guard and BEFORE any join writes — the final integrity boundary', () => {
+    const spaceFetchIdx = executeJoinSrc.indexOf(
+      'const space = await ctx.db.get(spaceId);'
+    );
+    const personalCheckIdx = executeJoinSrc.indexOf(
+      "if (space.type === 'personal') throw new Error(PERMISSION_DENIED);"
+    );
+    const guardIdx = executeJoinSrc.indexOf('assertNoActiveFamilyMembership');
+    const writeIdx = executeJoinSrc.indexOf('existingAccessRow');
+
+    expect(spaceFetchIdx).toBeGreaterThan(-1);
+    expect(personalCheckIdx).toBeGreaterThan(spaceFetchIdx);
+    expect(personalCheckIdx).toBeLessThan(guardIdx);
+    expect(personalCheckIdx).toBeLessThan(writeIdx);
+  });
+});
+
 describe('completeExistingUserFamilyJoin — already-onboarded user join', () => {
   it('requires onboardingCompleted === true', () => {
     expect(completeJoinSrc).toContain(
@@ -223,9 +273,7 @@ describe('completeExistingUserFamilyJoin — already-onboarded user join', () =>
   });
 
   it('requires the supplied memberId to exactly match the server-recorded pendingMatchMemberId', () => {
-    expect(completeJoinSrc).toContain(
-      'user.pendingMatchMemberId !== memberId'
-    );
+    expect(completeJoinSrc).toContain('user.pendingMatchMemberId !== memberId');
   });
 
   it('delegates the actual join to executeFamilyJoin (no duplicated join logic)', () => {

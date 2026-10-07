@@ -47,6 +47,17 @@ export interface FilterPendingPhoneMatchCandidatesInput<
   accessSpaceIds: ReadonlySet<string>;
   /** spaceIds that still exist (not deleted/missing). */
   existingSpaceIds: ReadonlySet<string>;
+  /**
+   * spaceIds whose `type === 'personal'`. A personal space is NEVER a valid
+   * phone-join target — see AGENTS.md / the approved product rule: personal
+   * spaces may still contain entity rows with phone numbers (organizational
+   * contacts, children, etc.) but those rows must never be offered as a
+   * family-join candidate. Kept as a separate set from `existingSpaceIds` so
+   * "space missing" and "space is personal" remain independently testable
+   * and independently safe (a missing space is already excluded regardless
+   * of this set).
+   */
+  personalSpaceIds: ReadonlySet<string>;
   resolveKind: (row: {
     kind?: 'access' | 'entity';
     displayName?: string;
@@ -60,7 +71,9 @@ export interface FilterPendingPhoneMatchCandidatesInput<
  * phone match for the caller: entity rows (never access rows) that were
  * discovery-matched to the caller (matchedUserId === currentUserId) via a
  * phone number the caller still holds, excluding spaces the caller already
- * has access to and any space that no longer exists.
+ * has access to, any space that no longer exists, and any space whose
+ * `type === 'personal'` (personal spaces are never phone-join targets —
+ * see AGENTS.md / the approved product rule).
  *
  * Generic over TRow so real Convex `Doc<'members'>` rows (with branded
  * `Id<...>` fields) can be passed in and returned unchanged — the caller
@@ -97,6 +110,12 @@ export function filterPendingPhoneMatchCandidates<
 
     // Space no longer exists — nothing safe to offer.
     if (!input.existingSpaceIds.has(row.spaceId)) return false;
+
+    // Personal spaces are NEVER phone-join targets — see doc comment on
+    // `personalSpaceIds` above. Entities may still live there for
+    // organizational/display purposes; they simply must never be offered
+    // as a pending family-join candidate.
+    if (input.personalSpaceIds.has(row.spaceId)) return false;
 
     return true;
   });
