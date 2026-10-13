@@ -1,7 +1,9 @@
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { Fragment, type PropsWithChildren, useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,6 +17,11 @@ import type { RenderItemParams } from 'react-native-draggable-flatlist';
 import DraggableFlatList, {
   OpacityDecorator,
 } from 'react-native-draggable-flatlist';
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
+import { personalAssignmentPresentation } from '@/lib/personalEventTaskPresentation';
 import { rtl } from '@/lib/rtl';
 import type { EventTask, Participant } from '@/lib/types/event';
 
@@ -22,6 +29,7 @@ const PRIMARY = '#36a9e2';
 const TINT = '#e8f5fd';
 
 interface RelatedTasksSectionProps {
+  personalAssignment?: boolean;
   defaultAssigneeId?: string;
   showAssignmentSelector?: boolean;
   tasks: EventTask[];
@@ -32,6 +40,7 @@ interface RelatedTasksSectionProps {
   onChange: (tasks: EventTask[]) => void;
   onToggleVisibility: (val: boolean) => void;
   visibilityOffHelperText: string;
+  visibilityHelperText?: string;
   /** Called when user taps "הוסף" in the no-participants state of the assign sheet */
   onAddParticipants?: () => void;
   assignmentTitle?: string;
@@ -40,8 +49,28 @@ interface RelatedTasksSectionProps {
   showAddParticipantsEmptyAction?: boolean;
 }
 
+// Measure the native modal window, not an app inset it may already consume.
+const AssignmentModalRoot =
+  Platform.OS === 'android' ? SafeAreaProvider : Fragment;
+
+function AssignmentSheet({ children }: PropsWithChildren) {
+  const insets = useSafeAreaInsets();
+  return (
+    <Pressable
+      style={[
+        s.sheet,
+        Platform.OS === 'android' && { paddingBottom: 32 + insets.bottom },
+      ]}
+      onPress={() => undefined}
+    >
+      {children}
+    </Pressable>
+  );
+}
+
 export function RelatedTasksSection({
   tasks,
+  personalAssignment = false,
   defaultAssigneeId,
   showAssignmentSelector = true,
   participants,
@@ -51,6 +80,7 @@ export function RelatedTasksSection({
   onChange,
   onToggleVisibility,
   visibilityOffHelperText,
+  visibilityHelperText,
   onAddParticipants,
   assignmentTitle = 'הקצאת משימה',
   assignmentEmptyText = 'לא צורפו משתתפים לצורך הקצאת המשימה',
@@ -83,6 +113,25 @@ export function RelatedTasksSection({
         : t
     );
     onChange(updated);
+    closeAssignSheet();
+  };
+
+  const assigningTask = tasks.find((task) => task.id === assigningTaskId);
+  const assignmentPresentation = (task?: EventTask) => {
+    const id = task?.assignedParticipantIds?.[0];
+    const name =
+      participants.find((p) => p.id === id)?.name ??
+      (id && id === task?.assigneeId ? task.assignee?.name : undefined);
+    return personalAssignmentPresentation(Boolean(id), name);
+  };
+  const unassignDraft = () => {
+    onChange(
+      tasks.map((task) =>
+        task.id === assigningTaskId
+          ? { ...task, assignedParticipantIds: [] }
+          : task
+      )
+    );
     closeAssignSheet();
   };
 
@@ -155,8 +204,21 @@ export function RelatedTasksSection({
     return (
       <View style={s.avatarsRow}>
         {visible.map((p) => (
-          <View key={p.id} style={s.miniAvatar}>
-            <Text style={s.miniAvatarText}>
+          <View
+            key={p.id}
+            style={[
+              s.miniAvatar,
+              defaultAssigneeId && {
+                backgroundColor: p.color,
+                borderColor: p.color,
+              },
+            ]}
+            accessible
+            accessibilityLabel={p.name === '?' ? 'חשבון לא מזוהה' : p.name}
+          >
+            <Text
+              style={[s.miniAvatarText, defaultAssigneeId && { color: '#fff' }]}
+            >
               {(p.name.trim() || '?')[0]?.toUpperCase() ?? '?'}
             </Text>
           </View>
@@ -236,12 +298,30 @@ export function RelatedTasksSection({
                     <MaterialIcons name="check" size={14} color="#fff" />
                   )}
                 </View>
-                <Text
-                  style={[s.taskTitle, task.completed && s.taskTitleDone]}
-                  numberOfLines={1}
-                >
-                  {task.title}
-                </Text>
+                {personalAssignment ? (
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text
+                      style={[
+                        s.taskTitle,
+                        { flex: 0 },
+                        task.completed && s.taskTitleDone,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {task.title}
+                    </Text>
+                    <Text style={s.assignmentLabel} numberOfLines={2}>
+                      {assignmentPresentation(task).label}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text
+                    style={[s.taskTitle, task.completed && s.taskTitleDone]}
+                    numberOfLines={1}
+                  >
+                    {task.title}
+                  </Text>
+                )}
                 {task.colorDot != null && (
                   <View
                     style={[s.colorDot, { backgroundColor: task.colorDot }]}
@@ -255,13 +335,23 @@ export function RelatedTasksSection({
               {showAssignmentSelector ? (
                 <Pressable
                   onPress={() => openAssignSheet(task)}
-                  style={s.assignBtn}
+                  style={[
+                    s.assignBtn,
+                    personalAssignment && {
+                      minHeight: 44,
+                      justifyContent: 'center',
+                    },
+                  ]}
                   accessible={true}
                   accessibilityRole="button"
-                  accessibilityLabel={`הקצה משימה: ${task.title}`}
+                  accessibilityLabel={`${personalAssignment ? assignmentPresentation(task).action : 'הקצה משימה'}: ${task.title}`}
                   hitSlop={6}
                 >
-                  <Text style={s.assignBtnText}>הקצה</Text>
+                  <Text style={s.assignBtnText}>
+                    {personalAssignment
+                      ? assignmentPresentation(task).action
+                      : 'הקצה'}
+                  </Text>
                 </Pressable>
               ) : null}
 
@@ -307,9 +397,10 @@ export function RelatedTasksSection({
           <View style={s.visibilityTextWrap}>
             <Text style={s.visibilityTitle}>משימות גלויות למשתתפים</Text>
             <Text style={s.visibilityText}>
-              {tasksVisibleToParticipants
-                ? 'כל חברי הקהילה יראו את המשימות וההקצאות ויוכלו להשתבץ'
-                : visibilityOffHelperText}
+              {visibilityHelperText ??
+                (tasksVisibleToParticipants
+                  ? 'כל חברי הקהילה יראו את המשימות וההקצאות ויוכלו להשתבץ'
+                  : visibilityOffHelperText)}
             </Text>
           </View>
           <Switch
@@ -396,123 +487,157 @@ export function RelatedTasksSection({
         animationType="slide"
         onRequestClose={closeAssignSheet}
       >
-        <Pressable
-          style={s.sheetOverlay}
-          onPress={closeAssignSheet}
-          accessible={false}
-        >
-          <Pressable style={s.sheet} onPress={() => undefined}>
-            {/* Handle */}
-            <View style={s.sheetHandle} />
+        <AssignmentModalRoot>
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'android' ? 'height' : undefined}
+          >
+            <Pressable
+              style={s.sheetOverlay}
+              onPress={closeAssignSheet}
+              accessible={false}
+            >
+              <AssignmentSheet>
+                {/* Handle */}
+                <View style={s.sheetHandle} />
 
-            {/* Title */}
-            <Text style={s.sheetTitle}>{assignmentTitle}</Text>
-
-            {participants.length === 0 ? (
-              /* ── No-participants state ── */
-              <View style={s.noParticipantsBox}>
-                <MaterialIcons name="group-off" size={32} color="#cbd5e1" />
-                <Text style={s.noParticipantsText}>{assignmentEmptyText}</Text>
-                {showAddParticipantsEmptyAction ? (
+                {/* Title */}
+                <Text style={s.sheetTitle}>
+                  {personalAssignment
+                    ? assignmentPresentation(assigningTask).title
+                    : assignmentTitle}
+                </Text>
+                {personalAssignment &&
+                assigningTask?.assignedParticipantIds?.length ? (
                   <Pressable
-                    style={s.addParticipantsBtn}
-                    onPress={() => {
-                      closeAssignSheet();
-                      onAddParticipants?.();
-                    }}
-                    accessible={true}
+                    onPress={unassignDraft}
+                    style={s.clearAssignment}
                     accessibilityRole="button"
-                    accessibilityLabel="הוסף משתתפים"
+                    accessibilityLabel="בטל הקצאה"
                   >
-                    <Text style={s.addParticipantsBtnText}>הוסף משתתפים</Text>
+                    <Text
+                      style={{ color: '#ef4444', textAlign: rtl.textAlign }}
+                    >
+                      בטל הקצאה
+                    </Text>
                   </Pressable>
                 ) : null}
-              </View>
-            ) : (
-              /* ── Participant list ── */
-              <>
-                <Text style={s.sheetSectionLabel}>
-                  {assignmentSectionLabel}
-                </Text>
-                <ScrollView
-                  style={s.participantList}
-                  keyboardShouldPersistTaps="handled"
-                  showsVerticalScrollIndicator={false}
-                >
-                  {participants.map((p) => {
-                    const selected = draftSelected.includes(p.id);
-                    return (
+
+                {participants.length === 0 ? (
+                  /* ── No-participants state ── */
+                  <View style={s.noParticipantsBox}>
+                    <MaterialIcons name="group-off" size={32} color="#cbd5e1" />
+                    <Text style={s.noParticipantsText}>
+                      {assignmentEmptyText}
+                    </Text>
+                    {showAddParticipantsEmptyAction ? (
                       <Pressable
-                        key={p.id}
-                        style={[
-                          s.participantRow,
-                          selected && s.participantRowSelected,
-                        ]}
-                        onPress={() => toggleParticipantDraft(p.id)}
+                        style={s.addParticipantsBtn}
+                        onPress={() => {
+                          closeAssignSheet();
+                          onAddParticipants?.();
+                        }}
                         accessible={true}
-                        accessibilityRole="checkbox"
-                        accessibilityState={{ checked: selected }}
-                        accessibilityLabel={p.name}
+                        accessibilityRole="button"
+                        accessibilityLabel="הוסף משתתפים"
                       >
-                        {/* Selection indicator */}
-                        <View
-                          style={[
-                            s.participantCheck,
-                            selected && s.participantCheckSelected,
-                          ]}
-                        >
-                          {selected && (
-                            <MaterialIcons
-                              name="check"
-                              size={14}
-                              color="#fff"
-                            />
-                          )}
-                        </View>
-
-                        {/* Name + secondary */}
-                        <View style={s.participantInfo}>
-                          <Text style={s.participantName}>{p.name}</Text>
-                          {(p.phone ?? p.email) != null && (
-                            <Text
-                              style={s.participantSecondary}
-                              numberOfLines={1}
-                            >
-                              {p.phone ?? p.email}
-                            </Text>
-                          )}
-                        </View>
-
-                        {/* Avatar */}
-                        <View
-                          style={[
-                            s.participantAvatar,
-                            { backgroundColor: p.color },
-                          ]}
-                        >
-                          <Text style={s.participantAvatarText}>
-                            {(p.name.trim() || '?')[0]?.toUpperCase() ?? '?'}
-                          </Text>
-                        </View>
+                        <Text style={s.addParticipantsBtnText}>
+                          הוסף משתתפים
+                        </Text>
                       </Pressable>
-                    );
-                  })}
-                </ScrollView>
+                    ) : null}
+                  </View>
+                ) : (
+                  /* ── Participant list ── */
+                  <>
+                    <Text style={s.sheetSectionLabel}>
+                      {assignmentSectionLabel}
+                    </Text>
+                    <ScrollView
+                      style={[
+                        s.participantList,
+                        Platform.OS === 'android' && { flexShrink: 1 },
+                      ]}
+                      keyboardShouldPersistTaps="handled"
+                      showsVerticalScrollIndicator={false}
+                    >
+                      {participants.map((p) => {
+                        const selected = draftSelected.includes(p.id);
+                        return (
+                          <Pressable
+                            key={p.id}
+                            style={[
+                              s.participantRow,
+                              selected && s.participantRowSelected,
+                            ]}
+                            onPress={() => toggleParticipantDraft(p.id)}
+                            accessible={true}
+                            accessibilityRole="checkbox"
+                            accessibilityState={{ checked: selected }}
+                            accessibilityLabel={p.name}
+                          >
+                            {/* Selection indicator */}
+                            <View
+                              style={[
+                                s.participantCheck,
+                                selected && s.participantCheckSelected,
+                              ]}
+                            >
+                              {selected && (
+                                <MaterialIcons
+                                  name="check"
+                                  size={14}
+                                  color="#fff"
+                                />
+                              )}
+                            </View>
 
-                {/* Save */}
-                <Pressable
-                  style={s.saveBtn}
-                  onPress={saveAssignment}
-                  accessible={true}
-                  accessibilityRole="button"
-                  accessibilityLabel="שמור הקצאה"
-                >
-                  <Text style={s.saveBtnText}>שמור</Text>
-                </Pressable>
-              </>
-            )}
-          </Pressable>
-        </Pressable>
+                            {/* Name + secondary */}
+                            <View style={s.participantInfo}>
+                              <Text style={s.participantName}>{p.name}</Text>
+                              {(p.phone ?? p.email) != null && (
+                                <Text
+                                  style={s.participantSecondary}
+                                  numberOfLines={1}
+                                >
+                                  {p.phone ?? p.email}
+                                </Text>
+                              )}
+                            </View>
+
+                            {/* Avatar */}
+                            <View
+                              style={[
+                                s.participantAvatar,
+                                { backgroundColor: p.color },
+                              ]}
+                            >
+                              <Text style={s.participantAvatarText}>
+                                {(p.name.trim() || '?')[0]?.toUpperCase() ??
+                                  '?'}
+                              </Text>
+                            </View>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+
+                    {/* Save */}
+                    <Pressable
+                      style={s.saveBtn}
+                      onPress={saveAssignment}
+                      accessible={true}
+                      accessibilityRole="button"
+                      accessibilityLabel="שמור הקצאה"
+                    >
+                      <Text style={s.saveBtnText}>שמור</Text>
+                    </Pressable>
+                  </>
+                )}
+              </AssignmentSheet>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </AssignmentModalRoot>
       </Modal>
     </View>
   );
@@ -656,6 +781,8 @@ const s = StyleSheet.create({
   },
 
   // ── "הקצה" button ─────────────────────────────────────────────────────────
+  assignmentLabel: { fontSize: 12, color: '#64748b', textAlign: rtl.textAlign },
+  clearAssignment: { minHeight: 44, justifyContent: 'center', marginBottom: 8 },
   assignBtn: {
     paddingHorizontal: 6,
     paddingVertical: 3,

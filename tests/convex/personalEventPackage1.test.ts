@@ -1,7 +1,9 @@
 import { expect, it } from 'bun:test';
 import type { Id } from '../../convex/_generated/dataModel';
+import * as rsvps from '../../convex/eventRsvps';
 import * as events from '../../convex/events';
 import * as tasks from '../../convex/eventTasks';
+import { filterHomeVisibleEventTasks } from '../../lib/homeEventTaskVisibility';
 import {
   personalAssignmentChoices,
   personalTaskEdits,
@@ -40,6 +42,9 @@ class Query {
   }
   filter(build: (e: typeof expressions) => Predicate) {
     this.predicates.push(build(expressions));
+    return this;
+  }
+  order(_direction: string) {
     return this;
   }
   async collect() {
@@ -470,7 +475,7 @@ it('display-only contacts, email and manual/pet profiles never become assignment
   ];
   expect(
     personalAssignmentChoices(creator, participants).map((p) => p.name)
-  ).toEqual(['אני']);
+  ).toEqual(['?']);
   participants.push({
     id: 'profile',
     name: 'Verified',
@@ -541,9 +546,12 @@ for (const visible of [false, true]) {
       const rows = (await invoke(tasks.listEventTasksForHome, viewer.ctx, {
         eventIds: ['event'],
       })) as { tasks: Row[] }[];
-      expect(rows[0].tasks.map((t) => t._id)).toEqual(
-        visible && invited ? ['task', 'manual'] : ['task']
-      );
+      expect(
+        filterHomeVisibleEventTasks(
+          rows[0].tasks as (Row & { isAssignedToCurrentUser: boolean })[],
+          true
+        ).map((t) => t._id)
+      ).toEqual(visible && invited ? ['task', 'manual'] : ['task']);
     });
   }
 }
@@ -1030,3 +1038,927 @@ for (const status of ['active', 'left', 'pending', 'removed']) {
     });
   }
 }
+
+// These tests exercise the current production editor, not a reconstructed save
+// payload. The reported device regression has NOT reproduced in this harness.
+for (const count of [1, 3]) {
+  for (const [from, to, label] of [
+    ['owner', 'viewer', 'B'],
+    ['viewer', 'owner', 'A'],
+  ]) {
+    it(`real personal editor saves ${from} → ${to}, ${count} tasks, and reopens`, async () => {
+      const { personalEventEditorHarness } = await import(
+        './helpers/personalEventEditorHarness'
+      );
+      const f = ownerFixture();
+      f.tables.eventTasks = Array.from({ length: count }, (_, index) => ({
+        _id: index === 0 ? 'task' : `task${index}`,
+        eventId: 'event',
+        title: index === 0 ? 'Keep' : `Keep ${index}`,
+        completed: false,
+        assignedToUserId: from,
+        order: index,
+      }));
+      const before = structuredClone(f.tables.eventTasks);
+      const open = () =>
+        personalEventEditorHarness({
+          event: structuredClone(f.tables.events[0]),
+          tasks: structuredClone(f.tables.eventTasks),
+          save: (args) => transaction(f, events.update, args),
+        });
+      const h = open();
+      try {
+        await h.press('שנה הקצאה: Keep');
+        await h.press(label);
+        await h.press('שמור הקצאה');
+        expect(h.taskState()[0].assignedParticipantIds).toEqual([to]);
+        await h.press('שמור אירוע');
+        expect(h.alerts).toEqual([]);
+        expect(h.payloads[0].personalTaskChanges).toEqual([
+          { id: 'task', assignee: to },
+        ]);
+        expect(f.tables.eventTasks[0].assignedToUserId).toBe(to);
+        expect(f.tables.eventTasks.slice(1)).toEqual(before.slice(1));
+        expect(h.navigations).toHaveLength(1);
+      } finally {
+        h.dispose();
+      }
+      const reopened = open();
+      try {
+        expect(reopened.taskState()[0].assignedParticipantIds).toEqual([to]);
+        expect(
+          reopened.root
+            .findAllByType('View')
+            .some(
+              (node) =>
+                node.props.accessibilityLabel === (to === 'owner' ? 'A' : 'B')
+            )
+        ).toBe(true);
+      } finally {
+        reopened.dispose();
+      }
+
+      // Same persisted record is consumed by details, Home and My Tasks.
+      const recipient = fixture(to);
+      Object.assign(recipient.tables, f.tables);
+      const detailRows = (await invoke(tasks.listByEvent, recipient.ctx, {
+        eventId: 'event',
+      })) as Row[];
+      expect(
+        detailRows.find((row) => row._id === 'task')?.assignedToUserId
+      ).toBe(to);
+      for (const context of [f.ctx, recipient.ctx]) {
+        const homeRows = (await invoke(tasks.listEventTasksForHome, context, {
+          eventIds: ['event'],
+        })) as { tasks: Row[] }[];
+        expect(
+          homeRows[0].tasks.find((row) => row._id === 'task')?.assignedToUserId
+        ).toBe(to);
+      }
+      const ownRows = (await invoke(
+        tasks.listMyAssignedEventTasks,
+        recipient.ctx,
+        { from: 0, to: 500 }
+      )) as Row[];
+      expect(ownRows.some((row) => row._id === 'task')).toBe(true);
+      await invoke(tasks.toggleCompleted, recipient.ctx, { id: 'task' });
+      expect(f.tables.eventTasks[0].completed).toBe(true);
+      await invoke(tasks.update, f.ctx, {
+        id: 'task',
+        title: 'Creator can manage',
+      });
+      expect(f.tables.eventTasks[0].title).toBe('Creator can manage');
+    });
+  }
+}
+
+it('real personal editor retains the draft after failure and retries the atomic save', async () => {
+  const { personalEventEditorHarness } = await import(
+    './helpers/personalEventEditorHarness'
+  );
+  const f = ownerFixture();
+  f.tables.eventTasks[0].assignedToUserId = 'owner';
+  const before = structuredClone(f.tables);
+  let fail = true;
+  const h = personalEventEditorHarness({
+    event: structuredClone(f.tables.events[0]),
+    tasks: structuredClone(f.tables.eventTasks),
+    save: async (args) => {
+      if (fail) throw new Error('Synthetic transport failure');
+      return transaction(f, events.update, args);
+    },
+  });
+  try {
+    h.changeTitle('Edited');
+    await h.press('שנה הקצאה: Keep');
+    await h.press('B');
+    await h.press('שמור הקצאה');
+    await h.press('שמור אירוע');
+    expect(h.alerts).toEqual([['שגיאה', 'לא ניתן לשמור. אפשר לנסות שוב.']]);
+    expect(h.navigations).toEqual([]);
+    expect(f.tables).toEqual(before);
+    expect(h.taskState()[0].assignedParticipantIds).toEqual(['viewer']);
+    fail = false;
+    await h.press('שמור אירוע');
+    expect(h.payloads[1]).toEqual(h.payloads[0]);
+    expect(f.tables.events[0].title).toBe('Edited');
+    expect(f.tables.eventTasks[0].assignedToUserId).toBe('viewer');
+    expect(h.navigations).toHaveLength(1);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('real personal editor title-only save preserves a concurrent details reassignment', async () => {
+  const { personalEventEditorHarness } = await import(
+    './helpers/personalEventEditorHarness'
+  );
+  const f = ownerFixture();
+  f.tables.eventTasks[0].assignedToUserId = 'owner';
+  const h = personalEventEditorHarness({
+    event: structuredClone(f.tables.events[0]),
+    tasks: structuredClone(f.tables.eventTasks),
+    save: (args) => transaction(f, events.update, args),
+  });
+  try {
+    await invoke(tasks.setAssignee, f.ctx, {
+      id: 'task',
+      assignee: { type: 'user', userId: 'viewer' },
+    });
+    h.changeTitle('Title only');
+    await h.press('שמור אירוע');
+    expect(h.payloads[0].personalTaskChanges).toEqual([]);
+    expect(f.tables.eventTasks[0].assignedToUserId).toBe('viewer');
+    expect(h.alerts).toEqual([]);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('real personal editor rejects an assignee whose invitation was removed before save', async () => {
+  const { personalEventEditorHarness } = await import(
+    './helpers/personalEventEditorHarness'
+  );
+  const f = ownerFixture();
+  f.tables.eventTasks[0].assignedToUserId = 'owner';
+  const h = personalEventEditorHarness({
+    event: structuredClone(f.tables.events[0]),
+    tasks: structuredClone(f.tables.eventTasks),
+    save: (args) => transaction(f, events.update, args),
+  });
+  try {
+    await h.press('שנה הקצאה: Keep');
+    await h.press('B');
+    await h.press('שמור הקצאה');
+    f.tables.events[0].sharedWithUserIds = [];
+    const before = structuredClone(f.tables);
+    h.changeTitle('Must not partially save');
+    await h.press('שמור אירוע');
+    expect(h.alerts).toHaveLength(1);
+    expect(h.navigations).toEqual([]);
+    expect(f.tables).toEqual(before);
+    expect(h.taskState()[0].assignedParticipantIds).toEqual(['viewer']);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('Home creator keeps every authorized task through presentation after assignee completion and reassignment', async () => {
+  const f = ownerFixture();
+  f.tables.users[0].fullName = 'שני';
+  f.tables.users[1].fullName = 'דנה';
+  f.tables.eventTasks[0].completed = false;
+  const viewer = fixture('viewer');
+  Object.assign(viewer.tables, f.tables);
+  const readHome = async () => {
+    const rows = (await invoke(tasks.listEventTasksForHome, f.ctx, {
+      eventIds: ['event'],
+    })) as {
+      canManageTasks: boolean;
+      tasks: (Row & { isAssignedToCurrentUser: boolean })[];
+    }[];
+    expect(rows[0].canManageTasks).toBe(true);
+    return filterHomeVisibleEventTasks(rows[0].tasks, true);
+  };
+  expect((await readHome()).map((row) => row._id)).toEqual(['task', 'manual']);
+  expect((await readHome())[0].assigneeDisplay).toBe('שני');
+  await invoke(tasks.toggleCompleted, viewer.ctx, { id: 'task' });
+  expect((await readHome()).filter((row) => row.completed)).toHaveLength(1);
+  await invoke(tasks.setAssignee, f.ctx, {
+    id: 'task',
+    assignee: { type: 'user', userId: 'owner' },
+  });
+  expect((await readHome())[0].assigneeDisplay).toBe('דנה');
+  expect((await readHome())[0].completed).toBe(true);
+});
+
+it('unrelated user cannot obtain Home tasks or mutate guessed IDs', async () => {
+  const f = ownerFixture();
+  const stranger = fixture('stranger');
+  Object.assign(stranger.tables, f.tables);
+  expect(
+    await invoke(tasks.listEventTasksForHome, stranger.ctx, {
+      eventIds: ['event'],
+    })
+  ).toEqual([]);
+  expect(
+    await invoke(tasks.listByEvent, stranger.ctx, { eventId: 'event' })
+  ).toEqual([]);
+  const before = structuredClone(f.tables);
+  for (const [handler, args] of [
+    [tasks.toggleCompleted, { id: 'task' }],
+    [tasks.update, { id: 'task', title: 'Denied' }],
+    [tasks.remove, { id: 'task' }],
+    [tasks.setAssignee, { id: 'task', assignee: null }],
+  ] as const)
+    await expect(invoke(handler, stranger.ctx, args)).rejects.toThrow();
+  expect(f.tables).toEqual(before);
+});
+
+it('real editor resolves creator color by linked account even when another profile comes first', async () => {
+  const { personalEventEditorHarness } = await import(
+    './helpers/personalEventEditorHarness'
+  );
+  const f = ownerFixture();
+  f.tables.eventTasks[0].assignedToUserId = 'owner';
+  const h = personalEventEditorHarness({
+    event: structuredClone(f.tables.events[0]),
+    tasks: structuredClone(f.tables.eventTasks),
+    familyContacts: [
+      {
+        _id: 'other-profile',
+        linkedUserId: 'viewer',
+        displayName: 'A',
+        color: '#123456',
+      },
+      {
+        _id: 'own-profile',
+        linkedUserId: 'owner',
+        displayName: 'Outdated name',
+        color: '#654321',
+      },
+    ],
+    save: (args) => transaction(f, events.update, args),
+  });
+  try {
+    const avatar = h.root
+      .findAllByType('View')
+      .find((node) => node.props.accessibilityLabel === 'A');
+    expect(avatar).toBeDefined();
+    expect(avatar?.props.style).toContainEqual({
+      backgroundColor: '#654321',
+      borderColor: '#654321',
+    });
+  } finally {
+    h.dispose();
+  }
+});
+
+for (const allFamily of [undefined, false]) {
+  it(`new personal event is explicit-only with allFamily=${allFamily}`, async () => {
+    const f = ownerFixture();
+    const id = await transaction(f, events.create, {
+      title: 'Explicit',
+      startTime: 100,
+      endTime: 200,
+      spaceId: 'space',
+      ...(allFamily === undefined ? {} : { allFamily }),
+      participantDetails: [
+        { id: 'manual', name: 'Manual', color: '#fff', source: 'family' },
+      ],
+    });
+    expect(f.tables.events.find((event) => event._id === id)).toMatchObject({
+      allFamily: false,
+      createdBy: 'owner',
+    });
+    const family = fixture('viewer');
+    Object.assign(family.tables, f.tables);
+    expect(
+      await invoke(events.getById, family.ctx, { eventId: id })
+    ).toBeNull();
+    expect(await invoke(events.getById, f.ctx, { eventId: id })).not.toBeNull();
+    expect(
+      (
+        (await invoke(events.listByDateRange, family.ctx, {
+          from: 0,
+          to: 500,
+        })) as Row[]
+      ).some((event) => event._id === id)
+    ).toBe(false);
+  });
+}
+it('rejects old-client broad sharing on new personal events before writing', async () => {
+  const f = ownerFixture();
+  const before = structuredClone(f.tables);
+  await expect(
+    transaction(f, events.create, {
+      title: 'New',
+      startTime: 100,
+      endTime: 200,
+      allFamily: true,
+    })
+  ).rejects.toThrow('באירוע אישי חדש יש לבחור משתתפים במפורש');
+  expect(f.tables).toEqual(before);
+});
+
+it('new selected linked participant gets access and deliberate removal revokes it without changing ownership', async () => {
+  const f = ownerFixture();
+  const selected = selectFamilyParticipants(
+    { ...base, allFamily: false },
+    ['entity'],
+    [{ _id: 'entity', displayName: 'Viewer', linkedUserId: linked }]
+  );
+  const id = await transaction(f, events.create, {
+    title: 'Selected',
+    startTime: 100,
+    endTime: 200,
+    spaceId: 'space',
+    participantDetails: selected.participants,
+    sharedWithUserIds: selected.sharedWithUserIds,
+    sharedWithFamilyMemberIds: selected.sharedWithFamilyMemberIds,
+  });
+  const viewer = fixture('viewer');
+  Object.assign(viewer.tables, f.tables);
+  expect(
+    await invoke(events.getById, viewer.ctx, { eventId: id })
+  ).not.toBeNull();
+  expect(
+    (
+      (await invoke(events.listByDateRange, viewer.ctx, {
+        from: 0,
+        to: 500,
+      })) as Row[]
+    ).some((event) => event._id === id)
+  ).toBe(true);
+  await transaction(f, events.update, {
+    id,
+    sharedWithUserIds: [],
+    sharedWithFamilyMemberIds: [],
+    participantDetails: [],
+  });
+  expect(await invoke(events.getById, viewer.ctx, { eventId: id })).toBeNull();
+  expect(f.tables.events.find((event) => event._id === id)?.createdBy).toBe(
+    'owner'
+  );
+});
+
+for (const visible of [false, true]) {
+  for (const viewerId of [
+    'owner',
+    'viewer',
+    'external',
+    'unselected',
+    'phone',
+    'stranger',
+  ]) {
+    it(`personal sharing/task query matrix ${viewerId}, visible=${visible}`, async () => {
+      const f = ownerFixture();
+      Object.assign(f.tables.events[0], {
+        allFamily: false,
+        tasksVisibleToParticipants: visible,
+        sharedWithUserIds: ['viewer', 'external'],
+      });
+      f.tables.users.push(
+        ...['external', 'unselected', 'phone', 'stranger'].map((_id) => ({
+          _id,
+          fullName: _id,
+        }))
+      );
+      f.tables.members.push(
+        { ...access, _id: 'unselected-access', userId: 'unselected' },
+        {
+          _id: 'phone-profile',
+          spaceId: 'space',
+          kind: 'entity',
+          matchedUserId: 'phone',
+          inviteStatus: 'pending',
+          displayName: 'Phone',
+        }
+      );
+      f.tables.eventTasks = [
+        {
+          _id: 'other-first',
+          eventId: 'event',
+          title: 'Other',
+          assignedToUserId: 'owner',
+          completed: false,
+          order: 0,
+          _creationTime: 1,
+        },
+        {
+          _id: 'unassigned',
+          eventId: 'event',
+          title: 'Unassigned',
+          completed: false,
+          order: 1,
+          _creationTime: 2,
+        },
+        {
+          _id: 'own',
+          eventId: 'event',
+          title: 'Own',
+          assignedToUserId: 'viewer',
+          completed: false,
+          order: 2,
+          _creationTime: 3,
+        },
+        {
+          _id: 'other-last',
+          eventId: 'event',
+          title: 'Other last',
+          assignedToManual: 'Legacy',
+          completed: true,
+          order: 3,
+          _creationTime: 4,
+        },
+      ];
+      const viewer = fixture(viewerId);
+      Object.assign(viewer.tables, f.tables);
+      const invited = ['owner', 'viewer', 'external'].includes(viewerId);
+      const detail = await invoke(events.getById, viewer.ctx, {
+        eventId: 'event',
+      });
+      expect(detail !== null).toBe(invited);
+      if (invited)
+        await invoke(rsvps.upsertRsvp, viewer.ctx, {
+          eventId: 'event',
+          status: 'yes',
+        });
+      else
+        await expect(
+          invoke(rsvps.upsertRsvp, viewer.ctx, {
+            eventId: 'event',
+            status: 'yes',
+          })
+        ).rejects.toThrow();
+      const calendar = (await invoke(events.listByDateRange, viewer.ctx, {
+        from: 0,
+        to: 500,
+      })) as Row[];
+      expect(calendar.some((event) => event._id === 'event')).toBe(invited);
+      const expected =
+        viewerId === 'owner' || (visible && viewerId === 'external')
+          ? ['other-first', 'unassigned', 'own', 'other-last']
+          : viewerId === 'viewer'
+            ? visible
+              ? ['own', 'other-first', 'unassigned', 'other-last']
+              : ['own']
+            : [];
+      const taskRows = (await invoke(tasks.listByEvent, viewer.ctx, {
+        eventId: 'event',
+      })) as Row[];
+      const home = (await invoke(tasks.listEventTasksForHome, viewer.ctx, {
+        eventIds: ['event'],
+      })) as { tasks: Row[] }[];
+      expect(taskRows.map((task) => task._id)).toEqual(expected);
+      expect(
+        home.flatMap((group) => group.tasks.map((task) => task._id))
+      ).toEqual(expected);
+      expect(new Set(taskRows.map((task) => task._id)).size).toBe(
+        taskRows.length
+      );
+      if (viewerId !== 'owner') {
+        await expect(
+          invoke(tasks.toggleCompleted, viewer.ctx, { id: 'other-first' })
+        ).rejects.toThrow();
+        await expect(
+          invoke(tasks.setAssignee, viewer.ctx, {
+            id: 'other-first',
+            assignee: { type: 'user', userId: viewerId },
+          })
+        ).rejects.toThrow();
+      }
+      if (viewerId === 'viewer') {
+        await invoke(tasks.toggleCompleted, viewer.ctx, { id: 'own' });
+        const updated = (await invoke(tasks.listByEvent, viewer.ctx, {
+          eventId: 'event',
+        })) as Row[];
+        expect(updated.find((task) => task._id === 'own')?.completed).toBe(
+          true
+        );
+        await transaction(f, events.update, {
+          id: 'event',
+          personalTaskChanges: [{ id: 'own', assignee: 'external' }],
+        });
+        const nextHome = (await invoke(
+          tasks.listEventTasksForHome,
+          viewer.ctx,
+          { eventIds: ['event'] }
+        )) as { tasks: Row[] }[];
+        const reassigned = nextHome
+          .flatMap((group) => group.tasks)
+          .find((task) => task._id === 'own');
+        if (visible) expect(reassigned?.assigneeDisplay).toBe('external');
+        else expect(reassigned).toBeUndefined();
+      }
+    });
+  }
+}
+
+it('legacy allFamily editor save omits sharing flag and retains family access', async () => {
+  const { personalEventEditorHarness } = await import(
+    './helpers/personalEventEditorHarness'
+  );
+  const f = ownerFixture();
+  Object.assign(f.tables.events[0], { allFamily: true, sharedWithUserIds: [] });
+  f.tables.eventTasks = [];
+  const h = personalEventEditorHarness({
+    event: structuredClone(f.tables.events[0]),
+    tasks: [],
+    save: (args) => transaction(f, events.update, args),
+  });
+  try {
+    h.changeTitle('Legacy title');
+    await h.press('שמור אירוע');
+    expect(h.alerts).toEqual([]);
+    expect(h.payloads[0]).not.toHaveProperty('allFamily');
+    expect(f.tables.events[0].allFamily).toBe(true);
+    const viewer = fixture('viewer');
+    Object.assign(viewer.tables, f.tables);
+    expect(
+      await invoke(events.getById, viewer.ctx, { eventId: 'event' })
+    ).not.toBeNull();
+    expect(
+      await invoke(tasks.listByEvent, viewer.ctx, { eventId: 'event' })
+    ).toEqual([]);
+  } finally {
+    h.dispose();
+  }
+});
+
+for (const state of ['cancelled', 'deleted']) {
+  it(`invited personal account cannot RSVP after event is ${state}`, async () => {
+    const f = ownerFixture();
+    if (state === 'cancelled') f.tables.events[0].status = state;
+    else f.tables.events[0].deletedAt = 1;
+    const viewer = fixture('viewer');
+    Object.assign(viewer.tables, f.tables);
+    const before = structuredClone(f.tables);
+    await expect(
+      invoke(rsvps.upsertRsvp, viewer.ctx, { eventId: 'event', status: 'yes' })
+    ).rejects.toThrow();
+    expect(f.tables).toEqual(before);
+  });
+}
+
+it('actual personal editor renders approved toggle copy in both states and persists the change', async () => {
+  const { personalEventEditorHarness } = await import(
+    './helpers/personalEventEditorHarness'
+  );
+  const { act } = await import('react-test-renderer');
+  const f = ownerFixture();
+  const h = personalEventEditorHarness({
+    event: structuredClone(f.tables.events[0]),
+    tasks: structuredClone(f.tables.eventTasks),
+    save: (args) => transaction(f, events.update, args),
+  });
+  try {
+    for (const enabled of [false, true]) {
+      const toggle = h.root
+        .findAllByType('Switch')
+        .find(
+          (node) => node.props.accessibilityLabel === 'משימות גלויות למשתתפים'
+        );
+      expect(toggle).toBeDefined();
+      act(() => toggle?.props.onValueChange(enabled));
+      expect(
+        h.root
+          .findAllByType('Text')
+          .some(
+            (node) =>
+              node.props.children ===
+              'כשמופעל, המשתתפים רואים גם את המשימות של כולם'
+          )
+      ).toBe(true);
+    }
+    await h.press('שמור אירוע');
+    expect(h.alerts).toEqual([]);
+    expect(f.tables.events[0].tasksVisibleToParticipants).toBe(true);
+  } finally {
+    h.dispose();
+  }
+});
+
+it('community task ordering remains source order in details and mine/unassigned/others in Home', async () => {
+  const f = fixture('viewer');
+  Object.assign(f.tables.events[0], {
+    communityId: 'community',
+    tasksVisibleToParticipants: true,
+  });
+  f.tables.communityMembers = [
+    {
+      _id: 'membership',
+      communityId: 'community',
+      userId: 'viewer',
+      role: 'member',
+      status: 'active',
+    },
+  ];
+  f.tables.eventTasks = [
+    {
+      _id: 'other',
+      eventId: 'event',
+      assignedToUserId: 'owner',
+      order: 0,
+      _creationTime: 1,
+    },
+    { _id: 'open', eventId: 'event', order: 1, _creationTime: 2 },
+    {
+      _id: 'mine',
+      eventId: 'event',
+      assignedToUserId: 'viewer',
+      order: 2,
+      _creationTime: 3,
+    },
+  ];
+  const detail = (await invoke(tasks.listByEvent, f.ctx, {
+    eventId: 'event',
+  })) as Row[];
+  const home = (await invoke(tasks.listEventTasksForHome, f.ctx, {
+    eventIds: ['event'],
+  })) as { tasks: Row[] }[];
+  expect(detail.map((row) => row._id)).toEqual(['other', 'open', 'mine']);
+  expect(home[0].tasks.map((row) => row._id)).toEqual([
+    'mine',
+    'open',
+    'other',
+  ]);
+});
+
+for (const assignee of ['owner', 'viewer']) {
+  for (const completed of [false, true]) {
+    for (const visible of [false, true]) {
+      it(`creator clears ${assignee}, completed=${completed}, visible=${visible}; task and completion survive`, async () => {
+        const f = ownerFixture();
+        f.tables.events[0].tasksVisibleToParticipants = visible;
+        Object.assign(f.tables.eventTasks[0], {
+          assignedToUserId: assignee,
+          assignedByUserId: 'owner',
+          assignedAt: 10,
+          completed,
+          completedAt: completed ? 20 : undefined,
+        });
+        const before = structuredClone(f.tables.eventTasks[0]);
+        const viewer = fixture('viewer');
+        Object.assign(viewer.tables, f.tables);
+        await invoke(tasks.setAssignee, f.ctx, { id: 'task', assignee: null });
+        expect(f.tables.eventTasks[0]).toEqual({
+          ...before,
+          assignedToUserId: undefined,
+          assignedToManual: undefined,
+          assignedByUserId: undefined,
+          assignedAt: undefined,
+        });
+        expect(f.tables.eventTasks).toHaveLength(2);
+        for (const [context, creator] of [
+          [f.ctx, true],
+          [viewer.ctx, false],
+        ] as const) {
+          const details = (await invoke(tasks.listByEvent, context, {
+            eventId: 'event',
+          })) as Row[];
+          const home = (await invoke(tasks.listEventTasksForHome, context, {
+            eventIds: ['event'],
+          })) as { tasks: Row[] }[];
+          expect(details.some((row) => row._id === 'task')).toBe(
+            creator || visible
+          );
+          expect(
+            home
+              .flatMap((group) => group.tasks)
+              .some((row) => row._id === 'task')
+          ).toBe(creator || visible);
+        }
+        expect(
+          await invoke(tasks.listMyAssignedEventTasks, viewer.ctx, {
+            from: 0,
+            to: 500,
+          })
+        ).toEqual([]);
+        await expect(
+          invoke(tasks.setAssignee, viewer.ctx, { id: 'task', assignee: null })
+        ).rejects.toThrow();
+        await expect(
+          invoke(tasks.setAssignee, viewer.ctx, {
+            id: 'task',
+            assignee: { type: 'user', userId: 'viewer' },
+          })
+        ).rejects.toThrow();
+        await expect(
+          invoke(tasks.claimEventTask, viewer.ctx, { id: 'task' })
+        ).rejects.toThrow();
+        await invoke(tasks.setAssignee, f.ctx, {
+          id: 'task',
+          assignee: { type: 'user', userId: 'owner' },
+        });
+        expect(f.tables.eventTasks[0].assignedToUserId).toBe('owner');
+        expect(f.tables.eventTasks[0].completed).toBe(completed);
+        expect(f.tables.eventTasks[0].completedAt).toBe(before.completedAt);
+        expect(f.tables.eventTasks[0]._id).toBe(before._id);
+      });
+    }
+  }
+}
+
+it('personal assignee cannot clear their own assignment through direct or RSVP mutations', async () => {
+  const f = ownerFixture();
+  const viewer = fixture('viewer');
+  Object.assign(viewer.tables, f.tables);
+  const before = structuredClone(f.tables);
+  for (const [handler, args] of [
+    [tasks.setAssignee, { id: 'task', assignee: null }],
+    [tasks.unclaimEventTask, { id: 'task' }],
+    [rsvps.setRsvpNoAndUnclaimMyEventTasks, { eventId: 'event' }],
+  ] as const)
+    await expect(invoke(handler, viewer.ctx, args)).rejects.toThrow();
+  expect(f.tables).toEqual(before);
+  await invoke(tasks.toggleCompleted, viewer.ctx, { id: 'task' });
+  expect(f.tables.eventTasks[0].completed).toBe(false);
+});
+
+for (const status of ['none', 'yes', 'no'] as const) {
+  it(`Home resolves an account-only invite on both accounts independently of RSVP ${status}`, async () => {
+    const { personalHomeCircles } = await import(
+      '../../lib/personalHomeParticipants'
+    );
+    const f = ownerFixture();
+    Object.assign(f.tables.users[0], {
+      fullName: 'שני',
+      profileColor: '#123456',
+    });
+    Object.assign(f.tables.users[1], {
+      fullName: 'דנה',
+      profileColor: '#654321',
+    });
+    Object.assign(f.tables.events[0], {
+      sharedWithUserIds: ['viewer', 'owner', 'viewer'],
+      sharedWithFamilyMemberIds: [],
+      participants: ['שני'],
+      participantDetails: [
+        {
+          id: 'b',
+          userId: 'viewer',
+          name: 'Old name',
+          color: '#000',
+          source: 'user',
+        },
+        {
+          id: 'a',
+          userId: 'owner',
+          name: 'Creator duplicate',
+          color: '#000',
+          source: 'user',
+        },
+      ],
+    });
+    f.tables.eventTasks = [];
+    const viewer = fixture('viewer');
+    Object.assign(viewer.tables, f.tables);
+    await invoke(rsvps.upsertRsvp, viewer.ctx, { eventId: 'event', status });
+    const creatorEvents = (await invoke(events.listByDateRange, f.ctx, {
+      from: 0,
+      to: 500,
+    })) as (Row & {
+      personalHomeParticipants: import('../../lib/personalHomeParticipants').PersonalHomeParticipants;
+    })[];
+    const recipientEvents = (await invoke(events.listByDateRange, viewer.ctx, {
+      from: 0,
+      to: 500,
+    })) as typeof creatorEvents;
+    const creatorCircles = personalHomeCircles(
+      creatorEvents[0].personalHomeParticipants,
+      'owner'
+    );
+    const recipientCircles = personalHomeCircles(
+      recipientEvents[0].personalHomeParticipants,
+      'viewer'
+    );
+    expect(creatorCircles).toEqual({
+      profiles: [
+        { id: 'user:viewer', userId: 'viewer', name: 'שני', color: '#123456' },
+      ],
+      extraCount: 0,
+    });
+    expect(recipientCircles).toEqual({
+      profiles: [
+        { id: 'user:owner', userId: 'owner', name: 'דנה', color: '#654321' },
+      ],
+      extraCount: 0,
+    });
+    const detailInvitees = (await invoke(rsvps.getInviteesWithRsvp, f.ctx, {
+      eventId: 'event',
+    })) as Row[];
+    expect(detailInvitees.find((row) => row.userId === 'viewer')).toMatchObject(
+      {
+        fullName: creatorCircles.profiles[0].name,
+        profileColor: creatorCircles.profiles[0].color,
+        status,
+      }
+    );
+    const stranger = fixture('stranger');
+    Object.assign(stranger.tables, f.tables);
+    expect(
+      await invoke(events.listByDateRange, stranger.ctx, { from: 0, to: 500 })
+    ).toEqual([]);
+  });
+}
+
+it('Home merges linked account/profile identities without name matching and tolerates legacy display data', async () => {
+  const { personalHomeCircles } = await import(
+    '../../lib/personalHomeParticipants'
+  );
+  const f = ownerFixture();
+  f.tables.users[0].fullName = 'Same';
+  f.tables.users.push({
+    _id: 'external',
+    fullName: 'Same',
+    profileColor: '#456789',
+  });
+  Object.assign(f.tables.events[0], {
+    sharedWithUserIds: ['viewer', 'external'],
+    sharedWithFamilyMemberIds: ['entity'],
+    participants: ['Same', 'Same', 'Legacy', 'Unknown'],
+    participantDetails: [
+      {
+        id: 'entity',
+        userId: 'viewer',
+        name: 'Same',
+        color: '#abc',
+        source: 'family',
+      },
+      { id: 'legacy', name: 'Legacy', color: '#999', source: 'legacy' },
+    ],
+  });
+  const result = (await invoke(events.listByDateRange, f.ctx, {
+    from: 0,
+    to: 500,
+  })) as (Row & {
+    personalHomeParticipants: import('../../lib/personalHomeParticipants').PersonalHomeParticipants;
+  })[];
+  const circles = personalHomeCircles(
+    result[0].personalHomeParticipants,
+    'owner'
+  );
+  expect(circles.profiles.map((profile) => profile.id)).toEqual([
+    'user:viewer',
+    'user:external',
+    'profile:legacy',
+  ]);
+  expect(
+    circles.profiles.filter((profile) => profile.name === 'Same')
+  ).toHaveLength(2);
+  expect(circles.extraCount).toBe(1);
+  f.tables.events[0].participantDetails = undefined;
+  f.tables.events[0].sharedWithFamilyMemberIds = [];
+  f.tables.events[0].sharedWithUserIds = [];
+  expect(
+    await invoke(events.listByDateRange, f.ctx, { from: 0, to: 500 })
+  ).toHaveLength(1);
+});
+
+it('personal assignment choices return account names and colors without substituting creator identity', async () => {
+  const f = ownerFixture();
+  for (const user of f.tables.users) {
+    user.fullName = 'שם זהה';
+    user.profileColor = user._id === 'owner' ? '#123456' : '#654321';
+  }
+  const rows = (await invoke(tasks.listPersonalAssignees, f.ctx, {
+    eventId: 'event',
+  })) as Row[];
+  expect(rows.find((row) => row.userId === 'owner')).toMatchObject({
+    fullName: 'שם זהה',
+    color: '#123456',
+  });
+  expect(rows.find((row) => row.userId === 'viewer')).toMatchObject({
+    fullName: 'שם זהה',
+    color: '#654321',
+  });
+  const viewer = fixture('viewer');
+  Object.assign(viewer.tables, f.tables);
+  expect(
+    await invoke(tasks.listPersonalAssignees, viewer.ctx, { eventId: 'event' })
+  ).toEqual([]);
+});
+
+it('closing a real editor after local assignment removal does not persist or delete the task', async () => {
+  const { personalEventEditorHarness } = await import(
+    './helpers/personalEventEditorHarness'
+  );
+  const f = ownerFixture();
+  const before = structuredClone(f.tables);
+  const h = personalEventEditorHarness({
+    event: structuredClone(f.tables.events[0]),
+    tasks: structuredClone(f.tables.eventTasks),
+    save: (args) => transaction(f, events.update, args),
+  });
+  try {
+    await h.press('שנה הקצאה: Keep');
+    await h.press('בטל הקצאה');
+    expect(h.taskState()[0].assignedParticipantIds).toEqual([]);
+    expect(h.taskState()[0].id).toBe('task');
+    expect(h.payloads).toEqual([]);
+  } finally {
+    h.dispose();
+  }
+  expect(f.tables).toEqual(before);
+});

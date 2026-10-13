@@ -438,10 +438,9 @@ export default function EditEventScreen(): React.JSX.Element {
                   }
                 : {}),
             }),
-        // Preserve family sharing fields — previously these were omitted and
-        // therefore silently cleared on every edit, which broke visibility for
-        // shared family members.
-        allFamily: data.allFamily,
+        // Personal sharing has no allFamily control. Omit this field so an
+        // unrelated edit cannot overwrite legacy access from a stale form.
+        ...(isCommunityEvent ? { allFamily: data.allFamily } : {}),
         attachments: resolvedAttachments,
         reminders: data.remindersEnabled
           ? data.reminders.map((r) => r.offsetMinutes)

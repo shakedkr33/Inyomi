@@ -3,6 +3,7 @@ import {
   setRsvpNoAndUnclaimMyEventTasks,
   upsertRsvp,
 } from '../../convex/eventRsvps';
+import { setAssignee } from '../../convex/eventTasks';
 import { importGoogleCalendar } from '../../convex/googleImport';
 import { copyLinkedEvent } from '../../convex/linkedEvents';
 import { finishOnboarding } from '../../convex/onboarding';
@@ -266,7 +267,7 @@ for (const [name, handler, args] of [
     }
   });
 }
-it('preserves acceptance, maybe, clear, assigned-task guard and atomic cancellation path', async () => {
+it('preserves RSVP responses while requiring the creator to release personal assignments', async () => {
   const { ctx, tables } = fixture();
   tables.events[0].sharedWithUserIds = ['viewer'];
   for (const status of ['yes', 'maybe', 'none', 'no']) {
@@ -286,9 +287,19 @@ it('preserves acceptance, maybe, clear, assigned-task guard and atomic cancellat
   await expect(
     invoke(upsertRsvp, ctx, { eventId: 'event', status: 'no' })
   ).rejects.toThrow();
+  const before = structuredClone(tables);
+  await expect(
+    invoke(setRsvpNoAndUnclaimMyEventTasks, ctx, { eventId: 'event' })
+  ).rejects.toThrow();
+  expect(tables).toEqual(before);
+  const creatorCtx = {
+    ...ctx,
+    auth: { getUserIdentity: async () => ({ subject: 'owner|session' }) },
+  };
+  await invoke(setAssignee, creatorCtx, { id: 'my-task', assignee: null });
   expect(
     await invoke(setRsvpNoAndUnclaimMyEventTasks, ctx, { eventId: 'event' })
-  ).toEqual({ unclaimedTasks: 1, rsvpStatus: 'no' });
+  ).toEqual({ unclaimedTasks: 0, rsvpStatus: 'no' });
   expect(tables.eventTasks[1]).toMatchObject({
     _id: 'my-task',
     title: 'Keep',

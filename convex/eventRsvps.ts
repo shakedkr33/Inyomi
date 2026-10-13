@@ -151,6 +151,14 @@ export const setRsvpNoAndUnclaimMyEventTasks = mutation({
       (task) => task.assignedToUserId === userId
     );
 
+    // Declining attendance must not bypass creator-only personal assignment management.
+    if (
+      !event.communityId &&
+      event.createdBy !== userId &&
+      myAssignedTasks.length > 0
+    )
+      throw new Error('לביטול ההקצאה יש לפנות ליוצרי האירוע');
+
     for (const task of myAssignedTasks) {
       await ctx.db.patch(task._id, {
         assignedToUserId: undefined,

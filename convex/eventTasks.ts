@@ -1,5 +1,6 @@
 import { getAuthUserId } from '@convex-dev/auth/server';
 import { ConvexError, v } from 'convex/values';
+import { prioritizePersonalAssignments } from '../lib/personalEventTaskPresentation';
 import { internal } from './_generated/api';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -342,25 +343,30 @@ export const listEventTasksForHome = query({
           })
         );
 
-        // Sort: members with full visibility → mine first, then unassigned, then others.
-        // Managers and members with only their own tasks → source order.
+        // Personal invitees: mine first, then the remaining source order.
+        // Community members retain mine/unassigned/others; managers keep source order.
         const sorted =
-          !canManage && tasksVisibleToParticipants
-            ? enriched.sort((a, b) => {
-                const rankA = a.isAssignedToCurrentUser
-                  ? 0
-                  : !a.assignedToUserId && !a.assignedToManual
-                    ? 1
-                    : 2;
-                const rankB = b.isAssignedToCurrentUser
-                  ? 0
-                  : !b.assignedToUserId && !b.assignedToManual
-                    ? 1
-                    : 2;
-                if (rankA !== rankB) return rankA - rankB;
-                return (a.order ?? 0) - (b.order ?? 0);
-              })
-            : enriched.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+          !event.communityId && !canManage && tasksVisibleToParticipants
+            ? prioritizePersonalAssignments(
+                enriched.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+                userId
+              )
+            : !canManage && tasksVisibleToParticipants
+              ? enriched.sort((a, b) => {
+                  const rankA = a.isAssignedToCurrentUser
+                    ? 0
+                    : !a.assignedToUserId && !a.assignedToManual
+                      ? 1
+                      : 2;
+                  const rankB = b.isAssignedToCurrentUser
+                    ? 0
+                    : !b.assignedToUserId && !b.assignedToManual
+                      ? 1
+                      : 2;
+                  if (rankA !== rankB) return rankA - rankB;
+                  return (a.order ?? 0) - (b.order ?? 0);
+                })
+              : enriched.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
         return {
           eventId,
@@ -442,12 +448,15 @@ export const listByEvent = query({
       })
     );
 
-    return enriched.sort((a, b) => {
+    const sorted = enriched.sort((a, b) => {
       const oa = a.order ?? 0;
       const ob = b.order ?? 0;
       if (oa !== ob) return oa - ob;
       return a._creationTime - b._creationTime;
     });
+    return !event.communityId && !canManageTasks && canViewParticipantTasks
+      ? prioritizePersonalAssignments(sorted, userId)
+      : sorted;
   },
 });
 
@@ -732,13 +741,8 @@ export const setAssignee = mutation({
         membership.role === 'admin';
     }
 
-    // Personal assignments are creator-managed. Keep the existing right to
-    // release one's own task, but never allow claiming a known unassigned ID.
-    if (
-      !event.communityId &&
-      !canManageAssignments &&
-      !(assignee === null && isAssignedUser)
-    ) {
+    // Personal assignment management, including clearing, is creator-only.
+    if (!event.communityId && !canManageAssignments) {
       throw new Error('אין הרשאה לשנות הקצאת משימה זו');
     }
 
@@ -1340,8 +1344,8 @@ export const listPersonalAssignees = query({
         return user
           ? {
               userId: id,
-              fullName:
-                id === userId ? 'אני' : user.fullName?.trim() || 'משתתף/ת',
+              fullName: user.fullName?.trim() || 'משתתף/ת',
+              color: user.profileColor ?? '#94a3b8',
             }
           : null;
       })

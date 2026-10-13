@@ -584,7 +584,7 @@ export default function NewEventScreen(): React.JSX.Element {
                 .map((participant) => participant.name.trim())
                 .filter((name) => name.length > 0)
             : undefined,
-        allFamily: data.allFamily || undefined,
+        allFamily: false,
         sharedWithFamilyMemberIds:
           data.sharedWithFamilyMemberIds &&
           data.sharedWithFamilyMemberIds.length > 0

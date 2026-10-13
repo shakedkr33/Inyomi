@@ -36,12 +36,14 @@ export type AuthorizedHomeEventTask = {
 };
 
 export type EventTaskAccordionData = {
+  isPersonalEvent?: boolean;
   tasks: AuthorizedHomeEventTask[];
   canManageTasks: boolean;
   tasksVisibleToParticipants: boolean;
 };
 
 interface EventTasksAccordionProps {
+  isPersonalEvent?: boolean;
   tasks: AuthorizedHomeEventTask[];
   canManageTasks: boolean;
   tasksVisibleToParticipants: boolean;
@@ -99,6 +101,7 @@ interface EventTasksAccordionProps {
 }
 
 export function EventTasksAccordion({
+  isPersonalEvent = false,
   tasks,
   canManageTasks,
   tasksVisibleToParticipants,
@@ -173,7 +176,9 @@ export function EventTasksAccordion({
                 </Text>
                 <Text style={styles.visibilityDesc}>
                   {tasksVisibleToParticipants
-                    ? 'כל חברי הקהילה יכולים לראות את המשימות וההקצאות.'
+                    ? isPersonalEvent
+                      ? 'המשתתפים שהוזמנו יכולים לראות את המשימות וההקצאות.'
+                      : 'כל חברי הקהילה יכולים לראות את המשימות וההקצאות.'
                     : 'כל משתתף רואה רק משימות שהוקצו אליו.'}
                 </Text>
               </View>
@@ -203,13 +208,16 @@ export function EventTasksAccordion({
               onUnclaimTask !== undefined;
 
             // Informational label used when no action is shown.
-            const assignmentLabel = task.isAssignedToCurrentUser
-              ? '✓ הוקצה אליי'
-              : task.assigneeDisplay
-                ? task.assigneeDisplay
-                : isAssigned
-                  ? 'הוקצה'
-                  : 'לא הוקצה';
+            const assignmentLabel =
+              isPersonalEvent && task.assigneeDisplay
+                ? `הוקצה ל־${task.assigneeDisplay}`
+                : task.isAssignedToCurrentUser
+                  ? '✓ הוקצה אליי'
+                  : task.assigneeDisplay
+                    ? task.assigneeDisplay
+                    : isAssigned
+                      ? 'הוקצה'
+                      : 'לא הוקצה';
 
             // Managers may complete any task; regular members only their own
             // assigned task — but never when this surface disables

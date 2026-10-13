@@ -54,6 +54,7 @@ import {
 import { RelatedTasksSection } from '@/lib/components/event/RelatedTasksSection';
 import { RemindersCard } from '@/lib/components/event/RemindersCard';
 import { isDuplicateSaveBlockedByUnconfirmedDate } from '@/lib/eventDuplication';
+import { PERSONAL_TASK_VISIBILITY_DESCRIPTION } from '@/lib/personalEventTaskPresentation';
 import { APP_IS_RTL, needsExplicitRTL, rtl } from '@/lib/rtl';
 
 const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
@@ -239,7 +240,20 @@ export default function EventScreen({
   // selfEntityId is the signed-in user's own entity row — excluded from the chips
   // so the creator is never shown (they are always implicitly included).
   const currentUserId = useQuery(api.users.getMyId);
+  const currentUser = useQuery(api.users.getCurrentUser);
   const serverFamilyContacts = useQuery(api.members.listMyFamilyContacts);
+  const creatorProfile = serverFamilyContacts?.members.find(
+    (member) => member.linkedUserId === currentUserId
+  );
+  const assignmentChoices = personalAssignmentChoices(
+    currentUserId,
+    event.participants,
+    {
+      fullName:
+        currentUser?._id === currentUserId ? currentUser?.fullName : undefined,
+      color: creatorProfile?.color,
+    }
+  );
   const familyMembers: FamilyMemberChip[] = (
     serverFamilyContacts?.members ?? []
   )
@@ -950,19 +964,16 @@ export default function EventScreen({
           {/* Related Tasks */}
           <RelatedTasksSection
             tasks={event.tasks}
+            personalAssignment={!isCommunityEvent}
             participants={
               isCommunityEvent
                 ? (taskParticipants ?? event.participants)
-                : personalAssignmentChoices(currentUserId, event.participants)
+                : assignmentChoices
             }
             defaultAssigneeId={
               isCommunityEvent ? undefined : (currentUserId ?? undefined)
             }
-            showAssignmentSelector={
-              isCommunityEvent ||
-              personalAssignmentChoices(currentUserId, event.participants)
-                .length > 1
-            }
+            showAssignmentSelector={true}
             completedCount={completedTasks}
             tasksVisibleToParticipants={event.tasksVisibleToParticipants}
             showToggle={true}
@@ -971,6 +982,11 @@ export default function EventScreen({
               updateEvent({ tasksVisibleToParticipants: val })
             }
             visibilityOffHelperText={taskVisibilityOffHelperText}
+            visibilityHelperText={
+              isCommunityEvent
+                ? undefined
+                : PERSONAL_TASK_VISIBILITY_DESCRIPTION
+            }
             onAddParticipants={() => {}}
             assignmentTitle={
               isCommunityEvent ? 'הקצאת משימה לחבר קהילה' : 'הקצאת משימה'

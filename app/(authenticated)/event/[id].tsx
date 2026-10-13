@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useMutation, useQuery } from 'convex/react';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import type { ComponentProps } from 'react';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -28,6 +28,7 @@ import { UpgradeModal } from '@/components/UpgradeModal';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { useEffectiveAccess } from '@/hooks/useEffectiveAccess';
+import { PersonalEventActions } from '@/lib/components/event/PersonalEventActions';
 import type { LocalAssignee } from '@/lib/components/event/TaskAssigneeSheet';
 import { TaskAssigneeSheet } from '@/lib/components/event/TaskAssigneeSheet';
 import { canManageEventReminderItem } from '@/lib/eventReminderPermissions';
@@ -46,6 +47,10 @@ import {
   isOpenCommunityCalendarActionVisible,
   isRsvpCalendarActionVisible,
 } from '@/lib/openCommunityCalendarUi';
+import {
+  PERSONAL_TASK_VISIBILITY_DESCRIPTION,
+  personalAssignmentPresentation,
+} from '@/lib/personalEventTaskPresentation';
 import { getConvexErrorCode } from '@/lib/utils/convexError';
 import { parseGeoUri } from '@/lib/utils/geoUri';
 import { getHebrewDateInfo } from '@/lib/utils/hebrewDate';
@@ -235,65 +240,6 @@ const RSVP_OPTIONS = [
   },
 ];
 
-// ─── Overflow Menu ────────────────────────────────────────────────────────────
-
-interface OverflowItem {
-  label: string;
-  iconName: ComponentProps<typeof Ionicons>['name'];
-  onPress: () => void;
-  danger?: boolean;
-}
-
-interface OverflowMenuProps {
-  visible: boolean;
-  position: { x: number; y: number };
-  items: OverflowItem[];
-  onClose: () => void;
-}
-
-function OverflowMenu({
-  visible,
-  position,
-  items,
-  onClose,
-}: OverflowMenuProps) {
-  if (!visible) return null;
-  return (
-    <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <Pressable style={styles.popoverBackdrop} onPress={onClose} />
-      <View style={[styles.popover, { top: position.y, left: position.x }]}>
-        {items.map((m, idx) => (
-          <Pressable
-            key={m.label}
-            style={[
-              styles.popoverItem,
-              idx < items.length - 1 && styles.popoverBorder,
-            ]}
-            onPress={() => {
-              onClose();
-              m.onPress();
-            }}
-            accessible
-            accessibilityRole="button"
-            accessibilityLabel={m.label}
-          >
-            <Text
-              style={[styles.popoverLabel, m.danger && styles.popoverDanger]}
-            >
-              {m.label}
-            </Text>
-            <Ionicons
-              name={m.iconName}
-              size={18}
-              color={m.danger ? '#ef4444' : '#374151'}
-            />
-          </Pressable>
-        ))}
-      </View>
-    </Modal>
-  );
-}
-
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 // FIXED: guard against non-Convex route params (e.g. mock item ids like "1", "2")
@@ -409,34 +355,29 @@ export default function EventDetailScreen() {
   const showRsvpNoBlockedDialog = useCallback(
     (count: number): void => {
       if (!eventId) return;
+      if (!(event?.communityId || event?.createdBy === currentUserId)) {
+        Alert.alert(
+          'לא ניתן לבטל הקצאה',
+          'לביטול ההקצאה יש לפנות ליוצרי האירוע'
+        );
+        return;
+      }
       setBlockedRsvpTaskCount(count);
     },
-    [eventId]
+    [eventId, event?.communityId, event?.createdBy, currentUserId]
   );
 
   const communityMembersData = useQuery(
     api.communities.getCommunityMembers,
     event?.communityId ? { communityId: event.communityId } : 'skip'
   );
-  /**
-   * Part D1 — computed here (rather than in the derived-state block below)
-   * so `overflowItems` (a hook, evaluated before the `event === null` early
-   * return) can safely reference it — reused below as the single source for
-   * both `canManageCommunityEvent` and "שכפל אירוע"'s gating.
-   */
+  // Existing community management and duplication authority.
   const isCommunityOwnerOrAdminEarly =
     communityMembersData?.members?.find((m) => m.userId === currentUserId)
       ?.role === 'owner' ||
     communityMembersData?.members?.find((m) => m.userId === currentUserId)
       ?.role === 'admin';
-  /**
-   * FIX C — Bottom Sheet parity, computed "early" for the same reason as
-   * `isCommunityOwnerOrAdminEarly` above (`overflowItems` is a hook
-   * evaluated before the `event === null` early return, so it cannot
-   * depend on the later derived-state block). This is the ONLY place this
-   * gate is computed — the overflow menu item and the confirmation dialog
-   * below both read this same value.
-   */
+  // Shared gate for community removal action and confirmation.
   const isCreatorEarly =
     currentUserId !== undefined && event?.createdBy === currentUserId;
   const canRemoveFromCommunityEarly = Boolean(
@@ -460,13 +401,37 @@ export default function EventDetailScreen() {
     null
   );
   const [manualAssigneeName, setManualAssigneeName] = useState('');
+  const personalAssignmentPending = useRef(false);
+  const [assignmentSaving, setAssignmentSaving] = useState(false);
+  const savePersonalAssignment = async (
+    assignee: { type: 'user'; userId: Id<'users'> } | null
+  ) => {
+    if (
+      !assigneeSheetTaskId ||
+      event?.communityId ||
+      event?.createdBy !== currentUserId ||
+      personalAssignmentPending.current
+    )
+      return;
+    personalAssignmentPending.current = true;
+    setAssignmentSaving(true);
+    try {
+      await setTaskAssignee({
+        id: assigneeSheetTaskId as Id<'eventTasks'>,
+        assignee,
+      });
+      setAssigneeSheetTaskId(null);
+    } catch {
+      Alert.alert('שגיאה', 'לא ניתן לשמור את ההקצאה. אפשר לנסות שוב');
+    } finally {
+      personalAssignmentPending.current = false;
+      setAssignmentSaving(false);
+    }
+  };
 
   const [navPickerLocation, setNavPickerLocation] = useState<string | null>(
     null
   );
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState({ x: 8, y: 80 });
-  const menuBtnRef = useRef<View>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [showCancelDialog, setShowCancelDialog] = useState(false);
   // FIX C — Bottom Sheet parity: confirmation state for the early
@@ -493,20 +458,6 @@ export default function EventDetailScreen() {
   >(null);
   const { isExpiredFree } = useEffectiveAccess();
   const [upgradeModalVisible, setUpgradeModalVisible] = useState(false);
-
-  const handleMenuPress = useCallback(() => {
-    if (!menuBtnRef.current) {
-      setMenuPos({ x: 8, y: 80 });
-      setMenuOpen(true);
-      return;
-    }
-    menuBtnRef.current.measureInWindow((x, y, _w, h) => {
-      // Popover anchored to left; ensure it doesn't overflow left edge (x >= 0)
-      const popoverX = Math.max(0, x);
-      setMenuPos({ x: popoverX, y: y + h + 4 });
-      setMenuOpen(true);
-    });
-  }, []);
 
   const handleRsvp = useCallback(
     (status: RsvpStatus) => {
@@ -849,7 +800,7 @@ export default function EventDetailScreen() {
       }
     };
 
-    // Delay so ⋯ menu modal has fully dismissed before system Share sheet opens
+    // Preserve existing system Share timing for both event contexts
     setTimeout(() => {
       doShare();
     }, 300);
@@ -884,9 +835,7 @@ export default function EventDetailScreen() {
     [isExpiredFree, event?.communityId]
   );
 
-  // FIX C.1 — extracted so the header's ⋯ overflow menu (Personal Events)
-  // and the inline Community action row below can both trigger the exact
-  // same "עריכה" navigation without duplicating the logic.
+  // Preserve the existing editor destination and subscription gate.
   const handleEditPress = useCallback(() => {
     handleGatedAction(() => {
       router.push({
@@ -901,11 +850,7 @@ export default function EventDetailScreen() {
     });
   }, [handleGatedAction, router, eventId, event?.communityId]);
 
-  // FIX C.1 — extracted so the header's ⋯ overflow menu (Personal Events)
-  // and the inline Community action row below can both trigger the exact
-  // same "שכפל" navigation without duplicating the logic. Gating
-  // (isCommunityOwnerOrAdminEarly) is left to each call site — same as
-  // before this extraction.
+  // Duplication is supported only for community owners/admins.
   const handleDuplicatePress = useCallback(() => {
     if (!event?.communityId) return;
     handleGatedAction(() => {
@@ -918,59 +863,6 @@ export default function EventDetailScreen() {
       });
     });
   }, [handleGatedAction, router, eventId, event?.communityId]);
-
-  const overflowItems = useMemo<OverflowItem[]>(() => {
-    const items: OverflowItem[] = [
-      {
-        label: 'עריכת אירוע',
-        iconName: 'create-outline',
-        onPress: handleEditPress,
-      },
-      {
-        label: 'שיתוף אירוע',
-        iconName: 'share-outline',
-        onPress: handleShare,
-      },
-    ];
-    // Part D1/D2B — owner/admin only, same permission source as
-    // canCreateCommunityContent (resolveActiveCommunityContext.ts).
-    if (event?.communityId && isCommunityOwnerOrAdminEarly) {
-      items.push({
-        label: 'שכפל אירוע',
-        iconName: 'copy-outline',
-        onPress: handleDuplicatePress,
-      });
-    }
-    if (event?.status !== 'cancelled') {
-      items.push({
-        label: 'בטל אירוע',
-        iconName: 'close-circle-outline',
-        danger: true,
-        onPress: () => setShowCancelDialog(true),
-      });
-    }
-    // FIX C — Bottom Sheet parity: "הסר מהקהילה" for a cancelled Community
-    // Event still inside the 24h visibility window, managed by the viewer,
-    // and not already removed. Never a hard delete — see
-    // handleRemoveFromCommunity / convex/events.ts.
-    if (canRemoveFromCommunityEarly) {
-      items.push({
-        label: 'הסר מהקהילה',
-        iconName: 'trash-outline',
-        danger: true,
-        onPress: () => setShowRemoveFromCommunityDialog(true),
-      });
-    }
-    return items;
-  }, [
-    handleEditPress,
-    handleDuplicatePress,
-    handleShare,
-    event?.communityId,
-    event?.status,
-    isCommunityOwnerOrAdminEarly,
-    canRemoveFromCommunityEarly,
-  ]);
 
   // ── Invalid route param (e.g. mock item ids like "1", "2")
   if (!eventId) {
@@ -1086,17 +978,6 @@ export default function EventDetailScreen() {
    * matching fix.
    */
   const skipCommunityRsvpPrompt = isCreator;
-  const canOpenEventOverflowMenu = event.communityId
-    ? canManageCommunityEvent
-    : isCreator;
-  // FIX C.1 — Community Events with management access now surface their
-  // actions inline (see communityActionRowItems below) instead of behind
-  // the header ⋯ overflow menu, which was hard to use on-device and could
-  // render partially off-screen. Personal Events are untouched: their ⋯
-  // menu keeps working exactly as before.
-  const showHeaderOverflowButton = event.communityId
-    ? false
-    : canOpenEventOverflowMenu;
   const canManageTasks = isCreator || isCommunityOwnerOrAdmin;
   const participantsCanSeeTasks = event.tasksVisibleToParticipants === true;
   const canRegularMemberSeeTasks = Boolean(
@@ -1238,14 +1119,7 @@ export default function EventDetailScreen() {
         ? { type: 'manual', name: _assigneeSheetTask.assignedToManual.trim() }
         : null;
 
-  /**
-   * FIX C.1 — inline Community-management action row, shown near the top
-   * of the screen instead of behind the header ⋯ overflow menu (which was
-   * hard to use on-device and could render partially off-screen). Built
-   * from the exact same permission sources and handlers already used by
-   * `overflowItems` above — no new permission logic, no new mutations.
-   * Personal Events never render this row; they keep the ⋯ menu as-is.
-   */
+  // Existing community actions retain their permissions and handlers.
   const communityActionRowItems: Array<{
     label: string;
     iconName: ComponentProps<typeof Ionicons>['name'];
@@ -1263,7 +1137,7 @@ export default function EventDetailScreen() {
       iconName: 'share-outline',
       onPress: handleShare,
     });
-    // Same owner/admin-only gating as the "שכפל אירוע" overflow item above.
+    // Existing owner/admin-only duplication gate.
     if (isCommunityOwnerOrAdminEarly) {
       communityActionRowItems.push({
         label: 'שכפול',
@@ -1279,7 +1153,7 @@ export default function EventDetailScreen() {
         onPress: () => setShowCancelDialog(true),
       });
     }
-    // FIX C parity: identical gate to the "הסר מהקהילה" overflow item —
+    // Existing community removal gate —
     // opens the same confirmation dialog and the same
     // removeCancelledCommunityEventMutation, never a new deletion path.
     if (canRemoveFromCommunityEarly) {
@@ -1298,7 +1172,7 @@ export default function EventDetailScreen() {
       edges={['top']}
       onLayout={handleEventDetailDestinationLayout}
     >
-      {/* ── Header (RTL): right=back, center=title, left=⋯ */}
+      {/* ── Header (RTL): back and centered title */}
       <View style={[styles.header, styles.headerRtl]}>
         {/* First child → right in RTL: back button */}
         <TouchableOpacity
@@ -1316,20 +1190,8 @@ export default function EventDetailScreen() {
           {event.title}
         </Text>
 
-        {/* Last child → left in RTL: ⋯ for creator */}
-        <View ref={menuBtnRef} style={styles.headerIconBtn}>
-          {showHeaderOverflowButton && (
-            <TouchableOpacity
-              onPress={handleMenuPress}
-              style={styles.headerIconBtn}
-              accessible
-              accessibilityRole="button"
-              accessibilityLabel="אפשרויות"
-            >
-              <Ionicons name="ellipsis-vertical" size={20} color="#374151" />
-            </TouchableOpacity>
-          )}
-        </View>
+        {/* Balance the back button while keeping the title centered. */}
+        <View style={styles.headerIconBtn} />
       </View>
 
       {/* ── Body */}
@@ -1468,6 +1330,14 @@ export default function EventDetailScreen() {
             </>
           ) : null}
         </View>
+
+        <PersonalEventActions
+          event={event}
+          currentUserId={currentUserId}
+          onEdit={handleEditPress}
+          onShare={handleShare}
+          onCancel={() => setShowCancelDialog(true)}
+        />
 
         {/* ── Scheduling */}
         <View style={styles.card}>
@@ -1723,16 +1593,19 @@ export default function EventDetailScreen() {
               ) : null}
             </View>
 
-            {canManageTasks ? (
+            {canManageTasks &&
+            (event.communityId || eventTasksForDisplay.length > 0) ? (
               <View style={styles.taskVisibilitySection}>
                 <View style={styles.taskVisibilityTextBlock}>
                   <Text style={styles.taskVisibilityTitle}>
                     משימות גלויות למשתתפים
                   </Text>
                   <Text style={styles.taskVisibilityHelper}>
-                    {participantsCanSeeTasks
-                      ? 'כל חברי הקהילה יראו את המשימות וההקצאות ויוכלו להשתבץ'
-                      : 'כל משתתף יראה רק משימות שהוקצו אליו. מנהלי האירוע ימשיכו לראות את כולן'}
+                    {!event.communityId
+                      ? PERSONAL_TASK_VISIBILITY_DESCRIPTION
+                      : participantsCanSeeTasks
+                        ? 'כל חברי הקהילה יראו את המשימות וההקצאות ויוכלו להשתבץ'
+                        : 'כל משתתף יראה רק משימות שהוקצו אליו. מנהלי האירוע ימשיכו לראות את כולן'}
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -1818,11 +1691,16 @@ export default function EventDetailScreen() {
                   );
                   const isAssignedToCurrentUser =
                     task.assignedToUserId === currentUserId;
-                  const assignmentLabel = isAssignedToCurrentUser
-                    ? 'הוקצה אליי'
-                    : assigneeDisplay
-                      ? `הוקצה ל־${assigneeDisplay}`
-                      : 'הוקצה';
+                  const assignmentLabel = !event.communityId
+                    ? personalAssignmentPresentation(
+                        isAssigned,
+                        assigneeDisplay ?? task.assignedToManual
+                      ).label
+                    : isAssignedToCurrentUser
+                      ? 'הוקצה אליי'
+                      : assigneeDisplay
+                        ? `הוקצה ל־${assigneeDisplay}`
+                        : 'הוקצה';
                   // FIX B — Community-Event-only task completion +
                   // self-claim/unclaim eligibility, ported to match
                   // components/EventDetailsBottomSheet.tsx exactly.
@@ -1961,37 +1839,7 @@ export default function EventDetailScreen() {
                                 {isAssigned ? 'שנה הקצאה' : 'הקצה'}
                               </Text>
                             </Pressable>
-                          ) : (
-                            // Personal Events — preserved exactly: icon-only
-                            // assignment control.
-                            <TouchableOpacity
-                              disabled={personalAssignees.length <= 1}
-                              style={
-                                personalAssignees.length <= 1
-                                  ? { display: 'none' }
-                                  : styles.taskActionBtn
-                              }
-                              onPress={() =>
-                                handleGatedAction(() => {
-                                  setAssigneeSheetTaskId(task._id);
-                                  setManualAssigneeName('');
-                                })
-                              }
-                              accessible
-                              accessibilityRole="button"
-                              accessibilityLabel={
-                                isAssigned ? 'שנה הקצאה' : 'הקצה משימה'
-                              }
-                            >
-                              <Ionicons
-                                name={
-                                  isAssigned ? 'person' : 'person-add-outline'
-                                }
-                                size={18}
-                                color={isAssigned ? PRIMARY : '#9ca3af'}
-                              />
-                            </TouchableOpacity>
-                          )}
+                          ) : null}
                           <TouchableOpacity
                             onPress={() =>
                               handleGatedAction(() => {
@@ -2126,93 +1974,22 @@ export default function EventDetailScreen() {
                               {assignmentLabel}
                             </Text>
                           ) : null
-                        ) : /* Personal Event — exact pre-FIX-B claim/unclaim
-                               behavior, including handleGatedAction gating
-                               for subscription/paywall purposes. */
-                        canManageTasks ? (
-                          isAssigned ? (
-                            <View style={styles.taskAssignmentStatusRow}>
-                              <Text
-                                style={
-                                  isAssignedToCurrentUser
-                                    ? styles.taskAssignedLabel
-                                    : styles.taskAssignedOtherLabel
-                                }
-                                numberOfLines={1}
-                              >
-                                {assignmentLabel}
-                              </Text>
-                              {isAssignedToCurrentUser ? (
-                                <TouchableOpacity
-                                  hitSlop={{
-                                    top: 8,
-                                    bottom: 8,
-                                    left: 8,
-                                    right: 8,
-                                  }}
-                                  onPress={() =>
-                                    handleGatedAction(() => {
-                                      unclaimEventTask({ id: task._id }).catch(
-                                        () =>
-                                          Alert.alert(
-                                            'שגיאה',
-                                            'לא ניתן להסיר הקצאה כרגע'
-                                          )
-                                      );
-                                    })
-                                  }
-                                  style={styles.taskUnassignBtn}
-                                  accessible
-                                  accessibilityRole="button"
-                                  accessibilityLabel="בטל הקצאה"
-                                >
-                                  <Text style={styles.taskUnassignBtnText}>
-                                    בטל הקצאה
-                                  </Text>
-                                </TouchableOpacity>
-                              ) : null}
-                            </View>
-                          ) : (
-                            <TouchableOpacity
-                              hitSlop={{
-                                top: 8,
-                                bottom: 8,
-                                left: 8,
-                                right: 8,
-                              }}
-                              style={styles.taskClaimBtn}
-                              onPress={() =>
-                                handleGatedAction(() => {
-                                  claimEventTask({ id: task._id }).catch(() =>
-                                    Alert.alert(
-                                      'שגיאה',
-                                      'לא ניתן להשתבץ למשימה כרגע'
-                                    )
-                                  );
-                                })
-                              }
-                              accessible
-                              accessibilityRole="button"
-                              accessibilityLabel="אני אקח"
-                            >
-                              <Text style={styles.taskClaimBtnText}>
-                                אני אקח
-                              </Text>
-                            </TouchableOpacity>
-                          )
-                        ) : isAssigned ? (
+                        ) : (
                           <View style={styles.taskAssignmentStatusRow}>
                             <Text
-                              style={
+                              style={[
                                 isAssignedToCurrentUser
                                   ? styles.taskAssignedLabel
-                                  : styles.taskAssignedOtherLabel
-                              }
+                                  : styles.taskAssignedOtherLabel,
+                                { flex: 1, minWidth: 0 },
+                              ]}
                               numberOfLines={1}
                             >
-                              {assignmentLabel}
+                              {isAssigned ? assignmentLabel : 'לא הוקצה'}
                             </Text>
-                            {isAssignedToCurrentUser ? (
+                            {canManageTasks &&
+                            event.status !== 'cancelled' &&
+                            event.deletedAt === undefined ? (
                               <TouchableOpacity
                                 hitSlop={{
                                   top: 8,
@@ -2221,47 +1998,31 @@ export default function EventDetailScreen() {
                                   right: 8,
                                 }}
                                 onPress={() =>
-                                  unclaimEventTask({ id: task._id }).catch(() =>
-                                    Alert.alert(
-                                      'שגיאה',
-                                      'לא ניתן להסיר הקצאה כרגע'
-                                    )
-                                  )
+                                  handleGatedAction(() => {
+                                    setAssigneeSheetTaskId(task._id);
+                                    setManualAssigneeName('');
+                                  })
                                 }
-                                style={styles.taskUnassignBtn}
+                                style={[
+                                  styles.taskClaimBtn,
+                                  { minHeight: 44, justifyContent: 'center' },
+                                ]}
                                 accessible
                                 accessibilityRole="button"
-                                accessibilityLabel="בטל הקצאה"
+                                accessibilityLabel={
+                                  personalAssignmentPresentation(isAssigned)
+                                    .action
+                                }
                               >
-                                <Text style={styles.taskUnassignBtnText}>
-                                  בטל הקצאה
+                                <Text style={styles.taskClaimBtnText}>
+                                  {
+                                    personalAssignmentPresentation(isAssigned)
+                                      .action
+                                  }
                                 </Text>
                               </TouchableOpacity>
                             ) : null}
                           </View>
-                        ) : (
-                          <TouchableOpacity
-                            hitSlop={{
-                              top: 8,
-                              bottom: 8,
-                              left: 8,
-                              right: 8,
-                            }}
-                            style={styles.taskClaimBtn}
-                            onPress={() =>
-                              claimEventTask({ id: task._id }).catch(() =>
-                                Alert.alert(
-                                  'שגיאה',
-                                  'לא ניתן להשתבץ למשימה כרגע'
-                                )
-                              )
-                            }
-                            accessible
-                            accessibilityRole="button"
-                            accessibilityLabel="אני אקח"
-                          >
-                            <Text style={styles.taskClaimBtnText}>אני אקח</Text>
-                          </TouchableOpacity>
                         )}
                       </View>
                     </View>
@@ -2365,17 +2126,13 @@ export default function EventDetailScreen() {
         </View>
       </ScrollView>
 
-      {/* ── Creator overflow menu */}
-      <OverflowMenu
-        visible={menuOpen}
-        position={menuPos}
-        items={overflowItems}
-        onClose={() => setMenuOpen(false)}
-      />
-
       {/* ── Assignee sheet */}
       <TaskAssigneeSheet
-        visible={!!assigneeSheetTaskId}
+        visible={
+          !!assigneeSheetTaskId && (!!event.communityId || canManageTasks)
+        }
+        personalAssignment={!event.communityId}
+        busy={!event.communityId && assignmentSaving}
         currentAssignee={currentAssigneeForSheet}
         members={event.communityId ? members : personalAssignees}
         currentUserId={currentUserId}
@@ -2390,6 +2147,10 @@ export default function EventDetailScreen() {
         manualName={manualAssigneeName}
         onManualNameChange={setManualAssigneeName}
         onSelectUser={(userId: Id<'users'>) => {
+          if (!event.communityId) {
+            void savePersonalAssignment({ type: 'user', userId });
+            return;
+          }
           if (!assigneeSheetTaskId) return;
           setTaskAssignee({
             id: assigneeSheetTaskId as Id<'eventTasks'>,
@@ -2407,6 +2168,10 @@ export default function EventDetailScreen() {
           setManualAssigneeName('');
         }}
         onUnassign={() => {
+          if (!event.communityId) {
+            void savePersonalAssignment(null);
+            return;
+          }
           if (!assigneeSheetTaskId) return;
           setTaskAssignee({
             id: assigneeSheetTaskId as Id<'eventTasks'>,
@@ -2415,6 +2180,7 @@ export default function EventDetailScreen() {
           setAssigneeSheetTaskId(null);
         }}
         onClose={() => {
+          if (!event.communityId && personalAssignmentPending.current) return;
           setAssigneeSheetTaskId(null);
           setManualAssigneeName('');
         }}
@@ -3949,44 +3715,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 15,
   },
-
-  // ── Overflow popover
-  popoverBackdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-  },
-  popover: {
-    position: 'absolute',
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    width: 215,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 8,
-    overflow: 'hidden',
-  },
-  popoverItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    gap: 10,
-  },
-  popoverBorder: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#f3f4f6',
-  },
-  popoverLabel: {
-    fontSize: 15,
-    color: '#374151',
-    textAlign: HEB_TEXT_ALIGN,
-    flex: 1,
-  },
-  popoverDanger: { color: '#ef4444' },
 });

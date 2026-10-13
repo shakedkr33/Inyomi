@@ -48,6 +48,7 @@ import {
   isOpenCommunityInformationalLabelVisible,
   isRsvpCalendarActionVisible,
 } from '@/lib/openCommunityCalendarUi';
+import { PERSONAL_TASK_VISIBILITY_DESCRIPTION } from '@/lib/personalEventTaskPresentation';
 import { getConvexErrorCode } from '@/lib/utils/convexError';
 import { parseGeoUri } from '@/lib/utils/geoUri';
 import { getHebrewDateInfo } from '@/lib/utils/hebrewDate';
@@ -413,9 +414,21 @@ export function EventDetailsBottomSheet({
   const showRsvpNoBlockedDialog = useCallback(
     (count: number): void => {
       if (!convexEventId) return;
+      if (
+        !(
+          (eventDoc ?? event)?.communityId ||
+          (currentUserId && eventDoc?.createdBy === currentUserId)
+        )
+      ) {
+        Alert.alert(
+          'לא ניתן לבטל הקצאה',
+          'לביטול ההקצאה יש לפנות ליוצרי האירוע'
+        );
+        return;
+      }
       setBlockedRsvpTaskCount(count);
     },
-    [convexEventId]
+    [convexEventId, eventDoc, event, currentUserId]
   );
   const handleRsvp = useCallback(
     (status: 'yes' | 'no' | 'maybe') => {
@@ -1747,9 +1760,11 @@ export function EventDetailsBottomSheet({
                             : 'גלוי לפי הקצאה'}
                         </Text>
                         <Text style={styles.managerVisibilityInfoDesc}>
-                          {participantsCanSeeTasks
-                            ? 'כל חברי הקהילה יראו את המשימות וההקצאות ויוכלו להשתבץ'
-                            : 'כל משתתף יראה רק משימות שהוקצו אליו. מנהלי האירוע ימשיכו לראות את כולן'}
+                          {!displayEvent.communityId
+                            ? PERSONAL_TASK_VISIBILITY_DESCRIPTION
+                            : participantsCanSeeTasks
+                              ? 'כל חברי הקהילה יראו את המשימות וההקצאות ויוכלו להשתבץ'
+                              : 'כל משתתף יראה רק משימות שהוקצו אליו. מנהלי האירוע ימשיכו לראות את כולן'}
                         </Text>
                       </View>
                     </View>
@@ -1769,13 +1784,16 @@ export function EventDetailsBottomSheet({
                             task.assignedToUserId ||
                             task.assignedToManual?.trim()
                         );
-                        const assignmentLabel = !hasAssignee
-                          ? 'לא הוקצה'
-                          : isAssignedToCurrentUser
-                            ? '✓ הוקצה אליי'
-                            : assigneeDisplay
-                              ? `הוקצה ל-${assigneeDisplay}`
-                              : 'הוקצה';
+                        const assignmentLabel =
+                          !displayEvent.communityId && assigneeDisplay
+                            ? `הוקצה ל־${assigneeDisplay}`
+                            : !hasAssignee
+                              ? 'לא הוקצה'
+                              : isAssignedToCurrentUser
+                                ? '✓ הוקצה אליי'
+                                : assigneeDisplay
+                                  ? `הוקצה ל-${assigneeDisplay}`
+                                  : 'הוקצה';
                         const showSelfClaimAction =
                           displayEvent.communityId &&
                           Boolean(myMembership) &&

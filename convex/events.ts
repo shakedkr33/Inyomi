@@ -2,6 +2,7 @@
 import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { CANCELLED_COMMUNITY_EVENT_VISIBILITY_WINDOW_MS } from '../lib/eventsTabDateHelpers';
+import type { PersonalHomeParticipants } from '../lib/personalHomeParticipants';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
@@ -42,6 +43,7 @@ import {
   preparePersonalTaskChanges,
   validatePersonalInvitations,
 } from './personalEventEditing';
+import { resolvePersonalHomeParticipants } from './personalHomeParticipants';
 import { requireSpaceWriteAccess } from './spaceWriteAccess';
 import {
   isStorageReferencedByOtherDocument,
@@ -1420,6 +1422,7 @@ export const listByDateRange = query({
       communityName?: string;
       isSavedToMyCalendar: boolean;
       sharedMemberProfiles?: SharedMemberProfile[];
+      personalHomeParticipants?: PersonalHomeParticipants;
     };
 
     const result: ResultEvent[] = [];
@@ -1536,6 +1539,12 @@ export const listByDateRange = query({
     for (let i = 0; i < result.length; i++) {
       const ev = result[i];
       if (ev.communityId) continue;
+      if (!ev.allFamily) {
+        ev.personalHomeParticipants = await resolvePersonalHomeParticipants(
+          ctx,
+          ev
+        );
+      }
       const mids = (ev.sharedWithFamilyMemberIds ?? []) as string[];
       if (mids.length === 0) continue;
       const profiles: SharedMemberProfile[] = [];
@@ -1601,6 +1610,9 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error('לא מחובר למערכת');
+    // New personal events use explicit invitations only. Legacy updates retain allFamily.
+    if (!args.communityId && args.allFamily === true)
+      throw new Error('באירוע אישי חדש יש לבחור משתתפים במפורש');
     const importantItems = sanitizeImportantItems(args.importantItems);
     const resolvedSpaceId =
       args.spaceId ??
@@ -1666,6 +1678,7 @@ export const create = mutation({
       throw new Error('פעולה זו זמינה רק באירוע אישי');
     const eventId = await ctx.db.insert('events', {
       ...eventFields,
+      allFamily: args.communityId ? args.allFamily : false,
       spaceId: resolvedSpaceId,
       attachments: stamped,
       importantItems,

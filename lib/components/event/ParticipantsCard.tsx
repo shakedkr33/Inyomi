@@ -1,7 +1,9 @@
 // FIXED: added dimmed backdrop, strengthened sheet elevation, clearer grabber
 import { Ionicons } from '@expo/vector-icons';
 import * as Contacts from 'expo-contacts';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import type { PropsWithChildren } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import type { ModalProps, StyleProp, ViewStyle } from 'react-native';
 import {
   Alert,
   FlatList,
@@ -15,9 +17,13 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import type { Id } from '@/convex/_generated/dataModel';
-import type { Participant } from '@/lib/types/event';
 import { rtl } from '@/lib/rtl';
+import type { Participant } from '@/lib/types/event';
 // SHARED: phone selection logic for contact import
 // FIXED: updated phone label filter to mobile-capable labels only
 // FIXED: event flow now requires explicit number selection for contacts with 2+ mobile numbers
@@ -82,6 +88,42 @@ interface ParticipantsCardProps {
   /** When family list is empty, show CTA to configure profile (personal events) */
   onConfigureFamilyProfile?: () => void;
 }
+
+// Each Android Modal has its own window; app/tab insets can already be consumed
+// there. Measure this window rather than adding the root navigation inset twice.
+function ParticipantModal({ children, ...props }: ModalProps) {
+  return (
+    <Modal {...props}>
+      {Platform.OS === 'android' ? (
+        <SafeAreaProvider>{children}</SafeAreaProvider>
+      ) : (
+        children
+      )}
+    </Modal>
+  );
+}
+
+function ParticipantSheet({
+  children,
+  style,
+}: PropsWithChildren<{ style: StyleProp<ViewStyle> }>) {
+  const insets = useSafeAreaInsets();
+  return (
+    <Pressable
+      style={[
+        style,
+        // Keep the existing content spacing inside the sheet background. No
+        // bottom offset: only the part overlapping this modal is added once.
+        Platform.OS === 'android' && { paddingBottom: 24 + insets.bottom },
+      ]}
+      onPress={() => undefined}
+    >
+      {children}
+    </Pressable>
+  );
+}
+
+const MainSheetContent = Platform.OS === 'android' ? ScrollView : Fragment;
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -404,7 +446,7 @@ export function ParticipantsCard({
       {/* ══════════════════════════════════════════════════════════════════════
           Add-participant sheet
          ══════════════════════════════════════════════════════════════════════ */}
-      <Modal
+      <ParticipantModal
         visible={sheetOpen}
         transparent
         animationType="slide"
@@ -438,14 +480,13 @@ export function ParticipantsCard({
             <View style={s.modalSheetWrapper}>
               {/* Pressable with onPress={() => undefined} absorbs all touches
                   inside the sheet, preventing them from reaching the backdrop. */}
-              <Pressable
+              <ParticipantSheet
                 style={[
                   s.sheet,
                   (sheetView === 'contacts' ||
                     sheetView === 'phone-disambig') &&
                     s.sheetContacts,
                 ]}
-                onPress={() => undefined}
               >
                 <View style={s.handle} />
 
@@ -755,7 +796,14 @@ export function ParticipantsCard({
 
                 {/* ── Main view ── */}
                 {sheetView === 'main' && (
-                  <>
+                  <MainSheetContent
+                    {...(Platform.OS === 'android'
+                      ? {
+                          style: { flexGrow: 0, flexShrink: 1 },
+                          keyboardShouldPersistTaps: 'handled' as const,
+                        }
+                      : {})}
+                  >
                     <Text style={s.sheetTitle}>הוסף משתתף</Text>
 
                     {/* ── Family sharing — chips when members exist; empty-state CTA otherwise ── */}
@@ -859,35 +907,35 @@ export function ParticipantsCard({
                     >
                       <Text style={s.saveBtnText}>שמור</Text>
                     </Pressable>
-                  </>
+                  </MainSheetContent>
                 )}
-              </Pressable>
+              </ParticipantSheet>
             </View>
           </View>
         </KeyboardAvoidingView>
-      </Modal>
+      </ParticipantModal>
 
       {/* ══════════════════════════════════════════════════════════════════════
           "הצג הכל" list modal — shows full participant list
          ══════════════════════════════════════════════════════════════════════ */}
-      <Modal
+      <ParticipantModal
         visible={listOpen}
         transparent
         animationType="slide"
         onRequestClose={() => setListOpen(false)}
       >
         <Pressable style={s.modalOverlay} onPress={() => setListOpen(false)}>
-          <Pressable
-            style={[s.sheet, { maxHeight: '70%' }]}
-            onPress={() => undefined}
-          >
+          <ParticipantSheet style={[s.sheet, { maxHeight: '70%' }]}>
             <View style={s.handle} />
             <Text style={s.sheetTitle}>משתתפים באירוע</Text>
 
             <FlatList
               data={participants}
               keyExtractor={(p) => p.id}
-              style={{ maxHeight: 360 }}
+              style={[
+                { maxHeight: 360 },
+                Platform.OS === 'android' && { flexShrink: 1 },
+              ]}
               renderItem={({ item }) => {
                 const cc = circleColors(item.color);
                 return (
@@ -938,9 +986,9 @@ export function ParticipantsCard({
                 <Text style={s.emptyContacts}>אין משתתפים</Text>
               }
             />
-          </Pressable>
+          </ParticipantSheet>
         </Pressable>
-      </Modal>
+      </ParticipantModal>
     </View>
   );
 }

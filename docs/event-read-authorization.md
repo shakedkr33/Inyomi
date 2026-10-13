@@ -62,9 +62,10 @@ at `eventTasks.listByEvent` and the mutation boundary:
   details, attachments, RSVP eligibility, or task-management rights. Manual names
   and discovery-only phone matches are never authenticated task identities.
 - Personal-task completion requires the creator or that task's assigned account.
-  Personal reassignment requires the creator. Existing removal of one's own
-  assignment is retained; unrelated users cannot claim an unassigned personal
-  task through `setAssignee`. Existing legacy/manual records are not converted.
+  Personal assignment, reassignment and removal require the creator, including
+  removal of the caller's own assignment. Participants cannot self-claim or
+  self-release. Clearing preserves task identity and completion; existing
+  legacy/manual records are not converted.
 - Cancelled (`status === 'cancelled'`) and soft-deleted (`deletedAt !== undefined`)
   tasks remain readable under those same permissions. Completion, assignment,
   claim and unclaim mutations reject these event states, including community
@@ -125,7 +126,10 @@ left and absent community membership deny writes. Explicit cross-space personal
 invitations remain independent of family membership; removing membership alone
 does not remove an explicit user/member-row invitation. A phone match or family
 membership alone is never an invitation. Existing assigned-task refusal and
-explicit cancellation/unclaim behavior are unchanged.
+community cancellation/unclaim behavior are unchanged. For personal events,
+only the creator may release assignments; the combined decline/unclaim mutation
+rejects a participant who still has assigned tasks before any writes. Once the
+creator clears those assignments, the participant can decline normally.
 
 Both RSVP write mutations additionally share `assertEventAcceptsRsvp`, called
 after invitation/membership authorization and before any writes. Cancellation

@@ -4,15 +4,16 @@ import type { EventData, EventTask, Participant } from './types/event';
 
 export function personalAssignmentChoices(
   creator: Id<'users'> | null | undefined,
-  participants: Participant[]
+  participants: Participant[],
+  creatorIdentity?: { fullName?: string; color?: string }
 ): Participant[] {
   if (!creator) return [];
   const choices: Participant[] = [
     {
       id: creator,
       userId: creator,
-      name: 'אני',
-      color: '#36a9e2',
+      name: creatorIdentity?.fullName?.trim() || '?',
+      color: creatorIdentity?.color ?? '#94a3b8',
       source: 'user',
     },
   ];

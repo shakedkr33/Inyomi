@@ -314,11 +314,11 @@ describe('personal task server authorization', () => {
     await invoke(tasks.create, f.ctx, { eventId: 'event', title: 'New' });
     expect(await ids(f)).toHaveLength(4);
   });
-  it('retains own-assignment removal on active personal events', async () => {
+  it('denies participant self-release while retaining own completion', async () => {
     const f = taskFixture();
-    await invoke(tasks.setAssignee, f.ctx, { id: 'mine', assignee: null });
-    expect(await ids(f)).toEqual([]);
-    await denied(f, tasks.toggleCompleted, { id: 'mine' });
+    await denied(f, tasks.setAssignee, { id: 'mine', assignee: null });
+    expect(await ids(f)).toEqual(['mine']);
+    await invoke(tasks.toggleCompleted, f.ctx, { id: 'mine' });
   });
 });
 
@@ -432,6 +432,15 @@ for (const [name, handler, args] of [
           });
           if (name === 'no') f.tables.eventTasks = [];
           const authorized = userId === 'owner' || userId === 'viewer';
+          if (
+            state === 'active' &&
+            !community &&
+            userId === 'viewer' &&
+            name === 'unclaim'
+          ) {
+            await denied(f, handler, args);
+            return;
+          }
           if (state === 'active' && authorized) {
             await invoke(handler, f.ctx, args);
             expect(

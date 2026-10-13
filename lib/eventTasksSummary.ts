@@ -55,6 +55,13 @@ export function buildEventTasksSummaryLabel(
   return minePart ?? unassignedPart ?? '';
 }
 
+/** Count the same server-authorized personal task rows rendered by Home. */
+export function buildPersonalEventTasksSummaryLabel(
+  tasks: readonly { completed: boolean }[]
+): string {
+  return `משימות האירוע · ${tasks.filter((task) => task.completed).length} מתוך ${tasks.length} הושלמו`;
+}
+
 /**
  * Community Main carousel-card task CTA copy (MainEventCard /
  * AdditionalEventCard, via `CommunityMainTaskCta` in

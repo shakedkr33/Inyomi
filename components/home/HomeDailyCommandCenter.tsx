@@ -30,6 +30,7 @@ import type { Id } from '@/convex/_generated/dataModel';
 import { getAvatarInitials } from '@/lib/avatarInitials';
 import { SubtaskImagePreviewModal } from '@/lib/components/task/SubtaskImagePreviewModal';
 import { SubtaskAttachmentPreview } from '@/lib/components/task/SubtasksSection';
+import { buildPersonalEventTasksSummaryLabel } from '@/lib/eventTasksSummary';
 import {
   hasNavigableEventLocation,
   isHomeCompactNavButtonVisible,
@@ -579,11 +580,12 @@ const UnifiedTimelineCard = ({
     item.type === 'event' && importantItems.length > 0;
   const hasEventTasks =
     item.type === 'event' && (eventTasksData?.tasks.length ?? 0) > 0;
-  // Home-only summary: mine/unassigned breakdown built from the already
-  // Home-filtered task list (see filterHomeVisibleEventTasks in
-  // app/(authenticated)/index.tsx) — replaces the generic "משימות האירוע · X".
+  // Personal progress counts every rendered authorized task; community Home
+  // retains its mine/unassigned summary.
   const eventTasksSummaryLabel = hasEventTasks
-    ? buildEventTasksSummaryLabel(eventTasksData?.tasks ?? [])
+    ? eventTasksData?.isPersonalEvent
+      ? buildPersonalEventTasksSummaryLabel(eventTasksData.tasks)
+      : buildEventTasksSummaryLabel(eventTasksData?.tasks ?? [])
     : undefined;
   const hasNavigation = hasNavigableEventLocation(
     item.location,
@@ -819,6 +821,7 @@ const UnifiedTimelineCard = ({
         {hasEventTasks && eventTasksData ? (
           <EventTasksAccordion
             tasks={eventTasksData.tasks}
+            isPersonalEvent={eventTasksData.isPersonalEvent}
             canManageTasks={eventTasksData.canManageTasks}
             tasksVisibleToParticipants={
               eventTasksData.tasksVisibleToParticipants
@@ -1109,6 +1112,7 @@ const UnifiedTimelineCard = ({
         {hasEventTasks && eventTasksData ? (
           <EventTasksAccordion
             tasks={eventTasksData.tasks}
+            isPersonalEvent={eventTasksData.isPersonalEvent}
             canManageTasks={eventTasksData.canManageTasks}
             tasksVisibleToParticipants={
               eventTasksData.tasksVisibleToParticipants
@@ -1198,6 +1202,7 @@ const UnifiedTimelineCard = ({
         {hasEventTasks && eventTasksData ? (
           <EventTasksAccordion
             tasks={eventTasksData.tasks}
+            isPersonalEvent={eventTasksData.isPersonalEvent}
             canManageTasks={eventTasksData.canManageTasks}
             tasksVisibleToParticipants={
               eventTasksData.tasksVisibleToParticipants
@@ -1384,6 +1389,7 @@ const UnifiedTimelineCard = ({
         {hasEventTasks && eventTasksData ? (
           <EventTasksAccordion
             tasks={eventTasksData.tasks}
+            isPersonalEvent={eventTasksData.isPersonalEvent}
             canManageTasks={eventTasksData.canManageTasks}
             tasksVisibleToParticipants={
               eventTasksData.tasksVisibleToParticipants

@@ -43,8 +43,13 @@ import { useBirthdaySheets } from '@/lib/components/birthday/BirthdaySheetsProvi
 import { NotificationsDrawer } from '@/lib/components/notifications/NotificationsDrawer';
 import { SubtaskImagePreviewModal } from '@/lib/components/task/SubtaskImagePreviewModal';
 import { SubtaskAttachmentPreview } from '@/lib/components/task/SubtasksSection';
+import { filterHomeVisibleEventTasks } from '@/lib/homeEventTaskVisibility';
 import { isEventEligibleForHomeImportantItemsPreview } from '@/lib/homeImportantItemsPreview';
 import { useStartupDestinationReady } from '@/lib/hooks/useStartupDestinationReady';
+import {
+  type PersonalHomeParticipants,
+  personalHomeCircles,
+} from '@/lib/personalHomeParticipants';
 import { APP_IS_RTL, getTextAlign, position, rtl, spacing } from '@/lib/rtl';
 import { startupTrace } from '@/lib/startupTrace';
 import { getHomeReminderMetadata } from '@/lib/taskClassification';
@@ -57,35 +62,6 @@ import { colors as tc } from '@/theme/colors';
 const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/**
- * PRODUCT RULE — Home Community Event accordion visibility.
- *
- * Home is a "what's still available to claim / what's already mine"
- * surface, never a task-management view: only unassigned tasks and tasks
- * already assigned to the current viewer are shown here — even for
- * community managers/admins. Tasks assigned to other members are never
- * shown on Home (they remain visible in full via Community Main / Event
- * Details, which intentionally keep manager/full visibility).
- *
- * Filtered here (upstream of `EventTasksAccordion`) rather than inside
- * that shared component, because the same component also renders the
- * Community Bottom Sheet, whose own (unrelated) visibility rules must
- * stay untouched.
- */
-function filterHomeVisibleEventTasks<
-  T extends {
-    isAssignedToCurrentUser: boolean;
-    assignedToUserId?: string;
-    assignedToManual?: string;
-  },
->(tasks: T[]): T[] {
-  return tasks.filter(
-    (t) =>
-      t.isAssignedToCurrentUser ||
-      (!t.assignedToUserId && !t.assignedToManual?.trim())
-  );
-}
 
 function getGreetingByHour(hour: number): string {
   if (hour >= 5 && hour < 12) return 'בוקר טוב';
@@ -815,8 +791,7 @@ export default function HomeScreen() {
   const personalEventData =
     useQuery(api.events.listByDateRange, { from, to }) ?? [];
 
-  // Batch query: authorized event tasks per community event (server-filtered per role/visibility).
-  // Skipped when there are no community events to avoid unnecessary subscriptions.
+  // Subscribe to server-authorized personal and community event tasks.
   const homeEventTaskResults =
     useQuery(api.eventTasks.listEventTasksForHome, {
       eventIds: [
@@ -847,10 +822,12 @@ export default function HomeScreen() {
             assigneeDisplay: t.assigneeDisplay,
             isAssignedToCurrentUser: t.isAssignedToCurrentUser,
           }));
+          const isPersonalEvent = personalEventData.some(
+            (event) => event._id === r.eventId && !event.communityId
+          );
           acc[String(r.eventId)] = {
-            // Home-only rule: unassigned + mine, never other members'
-            // assigned tasks — see filterHomeVisibleEventTasks doc.
-            tasks: filterHomeVisibleEventTasks(mappedTasks),
+            isPersonalEvent,
+            tasks: filterHomeVisibleEventTasks(mappedTasks, isPersonalEvent),
             canManageTasks: r.canManageTasks,
             tasksVisibleToParticipants: r.tasksVisibleToParticipants,
           };
@@ -858,7 +835,7 @@ export default function HomeScreen() {
         },
         {}
       ),
-    [homeEventTaskResults]
+    [homeEventTaskResults, personalEventData]
   );
 
   // For each community event, which family members (same space) also added it to their calendar
@@ -1364,6 +1341,7 @@ export default function HomeScreen() {
             sharedWithUserIds?: string[];
             sharedWithFamilyMemberIds?: string[];
             participants?: string[];
+            personalHomeParticipants?: PersonalHomeParticipants;
             sharedMemberProfiles?: Array<{
               id: string;
               displayName: string;
@@ -1406,8 +1384,15 @@ export default function HomeScreen() {
           // Total participant names (family + external) stored at save time.
           const totalParticipants = evShared.participants?.length ?? 0;
 
-          if (isCreator) {
-            // Creator's view: show the selected family recipients.
+          if (!evShared.allFamily && evShared.personalHomeParticipants) {
+            const circles = personalHomeCircles(
+              evShared.personalHomeParticipants,
+              currentUserId
+            );
+            profileCircles = circles.profiles;
+            profileCirclesExtraCount = circles.extraCount;
+          } else if (isCreator) {
+            // Legacy/server compatibility fallback. Creator's view: show the selected family recipients.
             // Uses server-resolved sharedMemberProfiles so the display is reliable
             // even if the local map has a key mismatch (e.g. admin row vs entity row).
             if (evShared.allFamily) {

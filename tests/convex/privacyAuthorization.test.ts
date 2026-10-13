@@ -123,6 +123,7 @@ function fixture(
         userId ? { subject: `${userId}|session` } : null,
     },
     db: {
+      normalizeId: (_table: string, id: string) => id,
       get: async (id: string) => {
         reads.push(`get:${id}`);
         return (

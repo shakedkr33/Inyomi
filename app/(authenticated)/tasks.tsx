@@ -591,7 +591,6 @@ export default function TasksScreen() {
     eventTaskRange
   );
   const privatePersonalAssignments = useQuery(api.eventTasks.listMyPrivatePersonalAssignments, {});
-  const setEventTaskAssignee = useMutation(api.eventTasks.setAssignee);
   // important-to-remember tasks (community event important items)
   const importantItemTaskRows = useQuery(
     api.tasks.listMyImportantItemTasks,
@@ -1070,8 +1069,8 @@ export default function TasksScreen() {
 
   const handleUnclaimEventTask = async (task: DisplayTask): Promise<void> => {
     try {
-      if (task.communityId) await unclaimEventTaskMutation({ id: task.id as Id<'eventTasks'> });
-      else await setEventTaskAssignee({ id: task.id as Id<'eventTasks'>, assignee: null });
+      if (!task.communityId) return;
+      await unclaimEventTaskMutation({ id: task.id as Id<'eventTasks'> });
     } catch (error) {
       Alert.alert(
         'שגיאה',
@@ -1501,7 +1500,7 @@ function TaskGroup({
               <MaterialIcons name="delete-outline" size={26} color="#ffffff" />
               <Text style={styles.swipeActionLabel}>מחק</Text>
             </Pressable>
-          ) : task.kind === 'eventTask' ? (
+          ) : task.kind === 'eventTask' && task.communityId ? (
             <Pressable
               style={styles.swipeUnclaimAction}
               onPress={() => onUnclaimEventTask(task)}

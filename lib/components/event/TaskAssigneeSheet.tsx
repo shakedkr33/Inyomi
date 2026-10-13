@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Fragment } from 'react';
 import {
   KeyboardAvoidingView,
   Modal,
@@ -11,7 +12,12 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import type { Id } from '@/convex/_generated/dataModel';
+import { personalAssignmentPresentation } from '@/lib/personalEventTaskPresentation';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,10 +30,13 @@ export type LocalAssignee =
 interface Member {
   userId: Id<'users'>;
   fullName: string;
+  color?: string;
 }
 
 interface TaskAssigneeSheetProps {
   visible: boolean;
+  personalAssignment?: boolean;
+  busy?: boolean;
   currentAssignee?: LocalAssignee | null;
   members: Member[];
   currentUserId?: string;
@@ -38,16 +47,7 @@ interface TaskAssigneeSheetProps {
   onSelectManual: () => void;
   onUnassign?: () => void;
   onClose: () => void;
-  /**
-   * Controls whether the manual/free-text assignee section ("הקלד שם",
-   * the TextInput, and the manual הקצה button) is rendered.
-   *
-   * Community Event tasks must be account-backed — pass `false` for them
-   * so managers can only assign active community members. Personal
-   * Events must keep manual assignment working exactly as before, so
-   * this defaults to `true` to preserve existing behavior unless a
-   * caller explicitly opts out.
-   */
+  /** Legacy free-text mode; current personal/community callers disable it. */
   allowManualAssignee?: boolean;
   /**
    * Optional contextual task title, shown directly below "הקצאת משימה"
@@ -61,8 +61,31 @@ interface TaskAssigneeSheetProps {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function TaskAssigneeSheet({
+const AssignmentModalRoot =
+  Platform.OS === 'android' ? SafeAreaProvider : Fragment;
+const SheetContent = Platform.OS === 'android' ? ScrollView : Fragment;
+
+export function TaskAssigneeSheet(props: TaskAssigneeSheetProps) {
+  if (!props.visible || (props.personalAssignment && !props.isCreator))
+    return null;
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="slide"
+      onRequestClose={props.onClose}
+    >
+      <AssignmentModalRoot>
+        <TaskAssigneeSheetContent {...props} />
+      </AssignmentModalRoot>
+    </Modal>
+  );
+}
+
+function TaskAssigneeSheetContent({
   visible,
+  personalAssignment = false,
+  busy = false,
   currentAssignee,
   members,
   currentUserId,
@@ -76,33 +99,53 @@ export function TaskAssigneeSheet({
   allowManualAssignee = true,
   taskTitle,
 }: TaskAssigneeSheetProps) {
-  if (!visible) return null;
+  const insets = useSafeAreaInsets();
+  if (!visible || (personalAssignment && !isCreator)) return null;
 
   const hasAssignee = !!currentAssignee;
   const canUnassign =
     hasAssignee &&
     !!onUnassign &&
     (isCreator ||
-      (currentAssignee?.type === 'user' &&
+      (!personalAssignment &&
+        currentAssignee?.type === 'user' &&
         currentAssignee.userId === currentUserId));
 
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <View style={s.container}>
-          <Pressable
-            style={s.backdrop}
-            onPress={onClose}
-            accessible
-            accessibilityRole="button"
-            accessibilityLabel="סגור"
-          />
-          <View style={s.sheet}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <View style={s.container}>
+        <Pressable
+          style={s.backdrop}
+          onPress={onClose}
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel="סגור"
+        />
+        <View
+          style={[
+            s.sheet,
+            Platform.OS === 'android' && {
+              paddingBottom: 36 + insets.bottom,
+            },
+          ]}
+        >
+          <SheetContent
+            {...(Platform.OS === 'android'
+              ? {
+                  style: { flexShrink: 1 },
+                  keyboardShouldPersistTaps: 'handled' as const,
+                }
+              : {})}
+          >
             <View style={s.handle} />
-            <Text style={s.title}>הקצאת משימה</Text>
+            <Text style={s.title}>
+              {personalAssignment
+                ? personalAssignmentPresentation(hasAssignee).title
+                : 'הקצאת משימה'}
+            </Text>
 
             {/* Contextual task title — informational only, not tappable.
                 Omitted (undefined) for Personal Events, preserving their
@@ -116,7 +159,9 @@ export function TaskAssigneeSheet({
             {canUnassign ? (
               <TouchableOpacity
                 onPress={onUnassign}
-                style={s.unassignBtn}
+                disabled={busy}
+                accessibilityState={{ disabled: busy }}
+                style={[s.unassignBtn, personalAssignment && { minHeight: 44 }]}
                 accessible
                 accessibilityRole="button"
                 accessibilityLabel="בטל הקצאה"
@@ -144,25 +189,39 @@ export function TaskAssigneeSheet({
               </Text>
             ) : null}
 
-            <Text style={s.sectionLabel}>חברי קהילה</Text>
+            {personalAssignment &&
+            currentAssignee?.type === 'user' &&
+            !members.some((m) => m.userId === currentAssignee.userId) ? (
+              <Text style={s.legacyManualInfo} numberOfLines={2}>
+                {
+                  personalAssignmentPresentation(true, currentAssignee.display)
+                    .label
+                }
+              </Text>
+            ) : null}
+            <Text style={s.sectionLabel}>
+              {personalAssignment ? 'משתתפים' : 'חברי קהילה'}
+            </Text>
             <ScrollView
-              style={s.membersScroll}
+              style={[
+                s.membersScroll,
+                Platform.OS === 'android' && { flexShrink: 1 },
+              ]}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
+              nestedScrollEnabled={Platform.OS === 'android'}
             >
               {members.map((m) => {
-                // Selected-row highlight is Community-Event-only —
-                // allowManualAssignee === false is the mode signal.
-                // Personal Events (allowManualAssignee === true) never
-                // highlight a row, unchanged from before this polish.
+                // Match authenticated identity, including when names are identical.
                 const isCurrentAssignee =
-                  !allowManualAssignee &&
+                  (personalAssignment || !allowManualAssignee) &&
                   currentAssignee?.type === 'user' &&
                   currentAssignee.userId === m.userId;
                 return (
                   <TouchableOpacity
                     key={m.userId}
                     onPress={() => onSelectUser(m.userId, m.fullName)}
+                    disabled={busy}
                     style={[
                       s.memberRow,
                       isCurrentAssignee && s.memberRowSelected,
@@ -170,9 +229,25 @@ export function TaskAssigneeSheet({
                     accessible
                     accessibilityRole="button"
                     accessibilityLabel={m.fullName}
-                    accessibilityState={{ selected: isCurrentAssignee }}
+                    accessibilityState={{
+                      selected: isCurrentAssignee,
+                      disabled: busy,
+                    }}
                   >
-                    <Ionicons name="person" size={20} color={PRIMARY} />
+                    {personalAssignment ? (
+                      <View
+                        style={[
+                          s.personalAvatar,
+                          { backgroundColor: m.color ?? '#94a3b8' },
+                        ]}
+                      >
+                        <Text style={{ color: '#fff' }}>
+                          {m.fullName.trim().slice(0, 2) || '?'}
+                        </Text>
+                      </View>
+                    ) : (
+                      <Ionicons name="person" size={20} color={PRIMARY} />
+                    )}
                     <Text style={s.memberName} numberOfLines={1}>
                       {m.fullName}
                       {currentUserId === m.userId ? ' (אני)' : ''}
@@ -223,16 +298,23 @@ export function TaskAssigneeSheet({
                 </View>
               </>
             ) : null}
-          </View>
+          </SheetContent>
         </View>
-      </KeyboardAvoidingView>
-    </Modal>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
+  personalAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   container: {
     flex: 1,
     justifyContent: 'flex-end',
