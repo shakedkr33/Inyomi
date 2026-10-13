@@ -6,7 +6,10 @@
  *
  * Safety contract:
  * - load never throws; malformed or missing data returns defaults.
- * - save never throws; storage failure is silently ignored.
+ * - save never throws; storage failure is reported via its boolean return
+ *   value (true = persisted, false = failed) so a caller that cares can
+ *   surface a non-blocking warning. Existing callers that ignore the
+ *   return value keep their current fire-and-forget behavior unchanged.
  * - Unknown category IDs in stored data are silently dropped.
  * - Duplicate category IDs are deduplicated on load.
  * - All returned objects are fresh copies; the default object is never mutated.
@@ -104,15 +107,20 @@ export async function loadHolidayOverlayPreferences(): Promise<HolidayOverlayPre
 
 /**
  * Persist holiday overlay preferences.
- * Never throws — storage write failures are silently ignored.
+ *
+ * Never throws — storage write failures resolve to `false` instead.
+ * Callers that don't need to know the outcome can ignore the return value
+ * exactly as before (fire-and-forget).
  */
 export async function saveHolidayOverlayPreferences(
   prefs: HolidayOverlayPreferences
-): Promise<void> {
+): Promise<boolean> {
   try {
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
+    return true;
   } catch {
     // Storage write failure must never crash the app.
+    return false;
   }
 }
 

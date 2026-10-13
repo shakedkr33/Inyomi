@@ -58,9 +58,9 @@ describe('getRangeSummaryText', () => {
     );
   });
 
-  it("'one_month' returns correct Hebrew summary", () => {
-    expect(getRangeSummaryText('one_month')).toBe(
-      'יועתקו אירועים מהחודש האחרון ועד שנה קדימה'
+  it("'one_year' returns correct Hebrew summary", () => {
+    expect(getRangeSummaryText('one_year')).toBe(
+      'יועתקו אירועים משנה אחורה ועד שנה קדימה'
     );
   });
 
@@ -71,7 +71,7 @@ describe('getRangeSummaryText', () => {
   });
 
   it('all three summaries mention "שנה קדימה" (one year forward)', () => {
-    for (const r of ['none', 'one_month', 'two_months'] as const) {
+    for (const r of ['none', 'two_months', 'one_year'] as const) {
       expect(getRangeSummaryText(r)).toContain('שנה קדימה');
     }
   });
@@ -114,11 +114,11 @@ describe('getDisplayDateRange', () => {
     expect(endDateStr).toContain('2027');
   });
 
-  it("'one_month' — start date is one month back (May 28)", () => {
-    const { startDateStr } = getDisplayDateRange('one_month', now);
+  it("'one_year' — start date is twelve months back (June 28, 2025)", () => {
+    const { startDateStr } = getDisplayDateRange('one_year', now);
     expect(startDateStr).toContain('28');
-    expect(startDateStr).toContain('מאי');
-    expect(startDateStr).toContain('2026');
+    expect(startDateStr).toContain('יוני');
+    expect(startDateStr).toContain('2025');
   });
 
   it("'two_months' — start date is two months back (April 28)", () => {
@@ -130,7 +130,7 @@ describe('getDisplayDateRange', () => {
 
   it('end date is always one year ahead regardless of pastRange', () => {
     const endNone = getDisplayDateRange('none', now).endDateStr;
-    const endOne = getDisplayDateRange('one_month', now).endDateStr;
+    const endOne = getDisplayDateRange('one_year', now).endDateStr;
     const endTwo = getDisplayDateRange('two_months', now).endDateStr;
     expect(endNone).toBe(endOne);
     expect(endOne).toBe(endTwo);
@@ -268,7 +268,9 @@ describe('getMonthKeyFromIso', () => {
 
   it('extracts month key from timed RFC3339 string', () => {
     // 2026-07-14T09:00:00+03:00 is July in Jerusalem.
-    expect(getMonthKeyFromIso('2026-07-14T09:00:00+03:00', false)).toBe('2026-07');
+    expect(getMonthKeyFromIso('2026-07-14T09:00:00+03:00', false)).toBe(
+      '2026-07'
+    );
   });
 
   it('handles year boundary correctly for all-day events', () => {
@@ -450,12 +452,12 @@ describe('six-month range mode and annual-toggle UI removed', () => {
    * The UI exposes exactly three back-range chips and no ForwardMode toggle.
    * We mirror the RANGE_CHIPS constant from the screen here to verify its shape.
    */
-  type PastRange = 'none' | 'one_month' | 'two_months';
+  type PastRange = 'none' | 'two_months' | 'one_year';
 
   const RANGE_CHIPS: ReadonlyArray<{ value: PastRange; label: string }> = [
     { value: 'none', label: 'מהיום' },
-    { value: 'one_month', label: 'חודש אחורה' },
     { value: 'two_months', label: 'חודשיים אחורה' },
+    { value: 'one_year', label: 'שנה אחורה' },
   ] as const;
 
   it('there are exactly three range chips', () => {
@@ -464,7 +466,6 @@ describe('six-month range mode and annual-toggle UI removed', () => {
 
   it('no chip represents a six-month forward mode', () => {
     for (const chip of RANGE_CHIPS) {
-      expect(chip.label).not.toContain('שנה');
       expect(chip.label).not.toContain('6 חודשים');
       expect(chip.label).not.toContain('six');
     }
@@ -479,19 +480,19 @@ describe('six-month range mode and annual-toggle UI removed', () => {
   it('the three chips cover the three PastRange values', () => {
     const values = RANGE_CHIPS.map((c) => c.value);
     expect(values).toContain('none');
-    expect(values).toContain('one_month');
     expect(values).toContain('two_months');
+    expect(values).toContain('one_year');
   });
 });
 
 // ── Section E.14: RTL logical ordering for chips ─────────────────────────────
 
 describe('RTL chip logical ordering', () => {
-  type PastRange = 'none' | 'one_month' | 'two_months';
+  type PastRange = 'none' | 'two_months' | 'one_year';
   const RANGE_CHIPS: ReadonlyArray<{ value: PastRange; label: string }> = [
     { value: 'none', label: 'מהיום' },
-    { value: 'one_month', label: 'חודש אחורה' },
     { value: 'two_months', label: 'חודשיים אחורה' },
+    { value: 'one_year', label: 'שנה אחורה' },
   ] as const;
 
   it('"מהיום" is the first JSX chip (will appear on the right in RTL layout)', () => {
@@ -499,9 +500,9 @@ describe('RTL chip logical ordering', () => {
     expect(RANGE_CHIPS[0].label).toBe('מהיום');
   });
 
-  it('"חודשיים אחורה" is the last JSX chip (will appear on the left in RTL layout)', () => {
-    expect(RANGE_CHIPS[2].value).toBe('two_months');
-    expect(RANGE_CHIPS[2].label).toBe('חודשיים אחורה');
+  it('"שנה אחורה" is the last JSX chip (will appear on the left in RTL layout)', () => {
+    expect(RANGE_CHIPS[2].value).toBe('one_year');
+    expect(RANGE_CHIPS[2].label).toBe('שנה אחורה');
   });
 });
 

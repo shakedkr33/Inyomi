@@ -1,11 +1,13 @@
 import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
+import { isCalendarImportPromptPending } from '../lib/calendarImportOnboarding';
 import type { Id } from './_generated/dataModel';
 import { mutation, query } from './_generated/server';
 import { runAccountDeletion } from './accountDeletion';
 // FIXED: updateMyProfile and listMyFamilyContacts now use identical spaceId resolution
 import {
-  isEntityClaimedByOtherUser,
+  assertProfileCanBeRemoved,
+  requireSpaceOwner,
   resolveKind,
   resolveMySpaceId,
 } from './members';
@@ -108,39 +110,23 @@ export const createOrUpdateUser = mutation({
 // 2026-09: verified zero callers across app/, convex/, tests/ and scripts.
 // The legitimate, authorized self-profile-update flow is updateMyProfile
 // below (uses getAuthUserId(ctx) as the target — never a client-supplied
-// id — and preserves claimed-name protection). Do not reintroduce a
+// id). Family profile writes additionally require ownership. Do not reintroduce a
 // client-supplied-userId profile mutation. See docs/audits/ security audit
 // Wave 1, finding H-02.
 
-// עדכון סוג המשתמש (חינמי/בתשלום)
-export const updateUserType = mutation({
-  args: {
-    userType: v.union(v.literal('free'), v.literal('paid')),
-  },
-  handler: async (ctx, { userType }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error('לא מחובר למערכת');
-    }
-
-    // חיפוש המשתמש לפי אימייל
-    const user = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', identity.email ?? ''))
-      .unique();
-
-    if (!user) {
-      throw new Error('משתמש לא נמצא');
-    }
-
-    await ctx.db.patch(user._id, {
-      userType,
-      updatedAt: Date.now(),
-    });
-
-    return user._id;
-  },
-});
+// SECURITY (Pass 2 / P2-L10, coupled to P2-H01): updateUserType was a
+// public mutation that accepted a client-supplied `userType: 'free' |
+// 'paid'` value and wrote it directly onto the caller's own user row. It
+// was already effectively dead (identity lookup was email-based in a
+// phone-auth system — verified zero callers across app/, convex/, tests/
+// and scripts), but a public mutation letting a user set their own paid
+// status is dangerous by construction: if any future server logic ever
+// started trusting `userType` for entitlement decisions, this endpoint
+// would let any authenticated user grant themselves paid access with zero
+// server-side verification. Removed 2026-09 rather than "secured" (e.g.
+// restricting it to self-only) — paid/free status must never be
+// client-writable at all, self or otherwise. See
+// docs/audits/ security audit Pass 2, finding P2-L10 / P2-H01.
 
 // SECURITY (Wave 1 / C-02): remove was a public mutation that accepted a
 // client-supplied userId and deleted that user record after only checking
@@ -286,6 +272,18 @@ export const updateMyProfile = mutation({
     const user = await ctx.db.get(userId);
     if (!user) throw new Error('משתמש לא נמצא');
 
+    // Self identity edits remain available to every authenticated member.
+    // Any family-structure payload requires ownership before the first write.
+    if (args.familyContacts !== undefined) {
+      const spaceId = await resolveMySpaceId(ctx, userId);
+      if (!spaceId) throw new Error('יש להשלים את הגדרת המרחב לפני ניהול המשפחה');
+      await requireSpaceOwner(ctx, spaceId);
+      if (!Array.isArray(args.familyContacts)) throw new Error('רשימת פרופילים לא תקינה');
+    }
+
+    const previousContacts = Array.isArray(user.familyContacts)
+      ? (user.familyContacts as FamilyContactEntry[])
+      : [];
     const now = Date.now();
     const patch: Record<string, unknown> = {
       updatedAt: now,
@@ -326,17 +324,18 @@ export const updateMyProfile = mutation({
       if (Array.isArray(args.familyContacts)) {
         const resolved = await Promise.all(
           (args.familyContacts as FamilyContactEntry[]).map(async (entry) => {
-            if (entry.matchedUserId) return entry; // already matched — do not overwrite
-            if (!entry.selectedPhoneNumber) return entry;
+            // Account links are resolved by the server, never by supplied IDs.
+            const { matchedUserId: _ignored, ...contact } = entry;
+            if (!entry.selectedPhoneNumber) return contact;
             const normalizedPhone = normalizeToE164(entry.selectedPhoneNumber);
-            if (!normalizedPhone) return entry;
+            if (!normalizedPhone) return contact;
             const matchedUser = await ctx.db
               .query('users')
               .withIndex('by_phone', (q) => q.eq('phone', normalizedPhone))
               .unique();
             if (matchedUser)
-              return { ...entry, matchedUserId: matchedUser._id };
-            return entry;
+              return { ...contact, matchedUserId: matchedUser._id };
+            return contact;
           })
         );
         patch.familyContacts = resolved;
@@ -438,11 +437,23 @@ export const updateMyProfile = mutation({
               ? ('pet' as const)
               : ('person' as const);
 
+          // Prefer the stable entity ID. Legacy UI IDs are resolved through
+          // the previous persisted contact, so renaming preserves references.
+          const byId = existingMembers.find((m) =>
+            resolveKind(m) === 'entity' && m._id === contact.id
+          );
+          const previous = previousContacts.find((entry) => entry.id === contact.id) ?? contact;
+          const previousPhone = previous.selectedPhoneNumber
+            ? normalizeToE164(previous.selectedPhoneNumber) : null;
+          const candidates = existingMembers.filter((m) =>
+            resolveKind(m) === 'entity' && (previousPhone
+              ? m.selectedPhoneNumber === previousPhone
+              : !m.selectedPhoneNumber && m.displayName === previous.name)
+          );
+          if (!byId && candidates.length > 1) throw new Error('לא ניתן לזהות את הפרופיל באופן חד־משמעי');
+          const existing = byId ?? candidates[0];
+
           if (isManual) {
-            // Manual member — no phone, dedup by displayName within this space.
-            const existing = existingMembers.find(
-              (m) => !m.selectedPhoneNumber && m.displayName === contact.name
-            );
             console.log(
               '[PROFILE SYNC] manual member existing row:',
               existing?._id ?? 'none',
@@ -450,20 +461,11 @@ export const updateMyProfile = mutation({
               contact.name
             );
             if (existing) {
-              // Phase 1: claimed-name protection — a real claimed user
-              // (joined by a different real user than the caller) owns
-              // their own canonical displayName; the family admin
-              // performing this sync must never overwrite it. Other
-              // fields for this contact are still applied normally.
-              const protectedDisplayName = isEntityClaimedByOtherUser(
-                existing,
-                userId
-              )
-                ? existing.displayName
-                : (contact.name ?? existing.displayName);
+              // Owners edit the family profile, not the linked personal account.
+              const displayName = contact.name ?? existing.displayName;
               await ctx.db.patch(existing._id, {
                 kind: 'entity', // stamp kind on pre-existing rows opportunistically
-                displayName: protectedDisplayName,
+                displayName,
                 color: contact.color ?? existing.color,
                 memberType,
               });
@@ -520,37 +522,16 @@ export const updateMyProfile = mutation({
           if (!normalizedPhone) continue;
           const matchedId = contact.matchedUserId as Id<'users'> | undefined;
 
-          const existingByPhone = existingMembers.find(
-            (m) => m.selectedPhoneNumber === normalizedPhone
-          );
-          // Fallback: find existing manual row with the same name (no phone yet)
-          const existingByName = !existingByPhone
-            ? existingMembers.find(
-                (m) =>
-                  (m.kind === 'entity' ||
-                    (m.kind === undefined && m.displayName)) &&
-                  !m.selectedPhoneNumber &&
-                  m.displayName === contact.name
-              )
-            : undefined;
-          const existing = existingByPhone ?? existingByName;
-
           if (existing) {
-            // Phase 1: claimed-name protection — see identical rule above
-            // for the manual-member branch.
-            const protectedDisplayName = isEntityClaimedByOtherUser(
-              existing,
-              userId
-            )
-              ? existing.displayName
-              : (contact.name ?? existing.displayName);
+            const displayName = contact.name ?? existing.displayName;
             await ctx.db.patch(existing._id, {
               kind: 'entity', // stamp kind on pre-existing rows opportunistically
               selectedPhoneNumber: normalizedPhone,
-              inviteStatus: contact.inviteStatus ?? existing.inviteStatus,
-              matchedUserId: matchedId ?? existing.matchedUserId,
-              userId: matchedId ?? existing.userId,
-              displayName: protectedDisplayName,
+              inviteStatus: existing.inviteStatus === 'joined'
+                ? 'joined' : contact.inviteStatus === 'invited' ? 'invited' : existing.inviteStatus,
+              matchedUserId: existing.userId ? existing.matchedUserId : matchedId,
+              userId: existing.userId,
+              displayName,
               color: contact.color ?? existing.color,
               memberType,
             });
@@ -576,9 +557,8 @@ export const updateMyProfile = mutation({
               displayName: contact.name,
               color: contact.color,
               selectedPhoneNumber: normalizedPhone,
-              inviteStatus: contact.inviteStatus ?? 'none',
+              inviteStatus: contact.inviteStatus === 'invited' ? 'invited' : 'none',
               matchedUserId: matchedId,
-              userId: matchedId,
               memberType,
             });
             touchedEntityIds.add(newId);
@@ -621,6 +601,7 @@ export const updateMyProfile = mutation({
               '| kind:',
               m.kind
             );
+            await assertProfileCanBeRemoved(ctx, m);
             await ctx.db.delete(m._id);
           }
         }
@@ -787,6 +768,10 @@ export const getCurrentUserStatus = query({
       hasProfile: v.boolean(),
       onboardingComplete: v.boolean(),
       phoneMatchResolvedAt: v.union(v.number(), v.null()),
+      // Calendar Import onboarding step (final step before first Home):
+      // true only for new-flow users who have not yet imported or skipped.
+      // Always false for users onboarded before this feature existed.
+      calendarImportPromptPending: v.boolean(),
     })
   ),
   handler: async (ctx) => {
@@ -804,6 +789,7 @@ export const getCurrentUserStatus = query({
       hasProfile: true,
       onboardingComplete: user.onboardingCompleted === true,
       phoneMatchResolvedAt: user.phoneMatchResolvedAt ?? null,
+      calendarImportPromptPending: isCalendarImportPromptPending(user),
     };
   },
 });

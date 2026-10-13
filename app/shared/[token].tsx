@@ -19,6 +19,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { useStartupDestinationReady } from '@/lib/hooks/useStartupDestinationReady';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const PRIMARY = '#36a9e2';
@@ -57,6 +58,15 @@ export default function SharedEventPreview(): React.JSX.Element {
 
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // This top-level route can be reached directly on a cold start (native
+  // deep link / universal link), bypassing both the (auth) and
+  // (authenticated) child InYomiSplashScreen layouts. The initial loading
+  // branch below is transient (still resolving auth/preview) so it must
+  // NOT report readiness — only the genuinely terminal branches
+  // (invalid link, saved, main preview) do, via handleTerminalLayout.
+  const { onLayout: handleTerminalLayout } =
+    useStartupDestinationReady('shared-event');
 
   const handleSave = useCallback(async () => {
     if (!token || !spaceId) return;
@@ -98,7 +108,11 @@ export default function SharedEventPreview(): React.JSX.Element {
   // ── Invalid / revoked link
   if (!preview || preview.status !== 'ok') {
     return (
-      <SafeAreaView style={s.safe} edges={['top']}>
+      <SafeAreaView
+        style={s.safe}
+        edges={['top']}
+        onLayout={handleTerminalLayout}
+      >
         <View style={s.headerBar}>
           <Pressable
             onPress={() =>
@@ -130,7 +144,11 @@ export default function SharedEventPreview(): React.JSX.Element {
   // ── Success state (already saved)
   if (saved) {
     return (
-      <SafeAreaView style={s.safe} edges={['top']}>
+      <SafeAreaView
+        style={s.safe}
+        edges={['top']}
+        onLayout={handleTerminalLayout}
+      >
         <View style={s.centered}>
           <Text style={s.successIcon}>✅</Text>
           <Text style={s.successTitle}>האירוע נוסף ליומן שלך</Text>
@@ -152,7 +170,11 @@ export default function SharedEventPreview(): React.JSX.Element {
   const isPastEvent = preview.endTime < Date.now();
 
   return (
-    <SafeAreaView style={s.safe} edges={['top']}>
+    <SafeAreaView
+      style={s.safe}
+      edges={['top']}
+      onLayout={handleTerminalLayout}
+    >
       {/* Header */}
       <View style={s.headerBar}>
         <Pressable

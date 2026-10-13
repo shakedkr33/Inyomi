@@ -37,16 +37,27 @@ import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { api } from '@/convex/_generated/api';
 import { useEffectiveAccess } from '@/hooks/useEffectiveAccess';
+import {
+  shouldExitCalendarImportToHome,
+  shouldRedirectToCalendarImport,
+} from '@/lib/calendarImportOnboarding';
+import {
+  isColdStartCaptureComplete,
+  onColdStartCaptureComplete,
+} from '@/lib/coldStartCaptureGate';
+import { importTrace } from '@/lib/importFlowTrace';
 import { resolvePostAuthOnboardingRoute } from '@/lib/onboardingRouting';
 import { clearOnboardingDraft } from '@/lib/onboardingState';
 import { PENDING_COMMUNITY_EVENT_ID_KEY } from '@/lib/pendingEventLink';
 import {
   consumePendingNavigationTarget,
+  peekPendingNavigationTarget,
   registerForPushNotifications,
   setupNotificationHandlers,
   subscribeToPendingNavigation,
 } from '@/lib/pushNotifications';
 import { rtl } from '@/lib/rtl';
+import { startupTrace, startupTraceGates } from '@/lib/startupTrace';
 
 // ─── Regular Tab Button (icon + label wrapped in selection pill) ──────────────
 
@@ -589,12 +600,81 @@ export default function AuthenticatedLayout() {
   const isUserStatusLoading = isAuthenticated && userStatus === undefined;
   const isFamilyBootstrapLoading =
     shouldCheckFamilyBootstrap && familyBootstrapStatus === undefined;
+
+  // ── Cold-start notification capture gate ──────────────────────────────────
+  // captureColdStartNotification() (app/_layout.tsx) is async — it must
+  // resolve before we can know whether this cold start was launched by a
+  // notification tap. shouldBlockForColdStartNav (below) is a PURELY VISUAL
+  // guard on top of the existing splash/Tabs branch: it does not change
+  // isReadyToRoute, any redirect decision, or notification-target
+  // semantics — it only prevents Tabs (and therefore Home) from rendering
+  // for one extra frame while a cold-start notification target might still
+  // be captured and consumed. See lib/coldStartCaptureGate.ts.
+  const [coldStartCheckDone, setColdStartCheckDone] = useState(
+    isColdStartCaptureComplete
+  );
+  useEffect(() => {
+    if (coldStartCheckDone) return;
+    return onColdStartCaptureComplete(() => setColdStartCheckDone(true));
+  }, [coldStartCheckDone]);
+
+  // Non-destructively peek (once, right after the capture check settles)
+  // whether a cold-start notification target was actually captured, so the
+  // guard below only blocks when there is something to consume.
+  const coldStartHadPendingNavRef = useRef<boolean | null>(null);
+  if (coldStartCheckDone && coldStartHadPendingNavRef.current === null) {
+    coldStartHadPendingNavRef.current = peekPendingNavigationTarget() !== null;
+  }
+  const [coldStartNavConsumed, setColdStartNavConsumed] = useState(false);
+
+  // Block until (a) the capture check has completed AND (b) if a target
+  // was found, it has been consumed (router.replace already dispatched).
+  const shouldBlockForColdStartNav =
+    !coldStartCheckDone ||
+    (coldStartHadPendingNavRef.current === true && !coldStartNavConsumed);
+
+  // TEMPORARY (Step A baseline instrumentation) — each fires once, the
+  // first time its corresponding "loading" flag settles to false.
+  const userStatusReadyTracedRef = useRef(false);
+  useEffect(() => {
+    if (!isUserStatusLoading && !userStatusReadyTracedRef.current) {
+      userStatusReadyTracedRef.current = true;
+      startupTrace('T4_USER_STATUS_READY');
+    }
+  }, [isUserStatusLoading]);
+
+  // TEMPORARY (Step B instrumentation fix) — isFamilyBootstrapLoading starts
+  // false by default (shouldCheckFamilyBootstrap is false until userStatus
+  // confirms onboardingComplete), so a naive "first time this settles to
+  // false" guard fired immediately on mount, before the query this trace is
+  // meant to time had even started. Now only trace the genuine
+  // true → false transition (it was actually blocking, then unblocked),
+  // i.e. the meaningful final unblock event — not the trivial initial
+  // default. GATES snapshots remain the source of truth for the underlying
+  // boolean; this only fixes when the ONE-TIME trace fires.
+  const wasFamilyBootstrapLoadingRef = useRef(false);
+  const familyBootstrapReadyTracedRef = useRef(false);
+  useEffect(() => {
+    if (isFamilyBootstrapLoading) {
+      wasFamilyBootstrapLoadingRef.current = true;
+      return;
+    }
+    if (
+      wasFamilyBootstrapLoadingRef.current &&
+      !familyBootstrapReadyTracedRef.current
+    ) {
+      familyBootstrapReadyTracedRef.current = true;
+      startupTrace('T5_FAMILY_BOOTSTRAP_READY');
+    }
+  }, [isFamilyBootstrapLoading]);
+
   const segmentStrings = segments as string[];
   const isFamilyBootstrapRoute = segmentStrings.includes('family-bootstrap');
   const isProfileSetupRoute = segmentStrings.includes('family-profile-setup');
   const isPhoneMatchConfirmationRoute = segmentStrings.includes(
     'phone-match-confirmation'
   );
+  const isImportCalendarRoute = segmentStrings.includes('import-calendar');
 
   // Part 7: tracks whether family-profile-setup was ever visited while
   // onboarding was still incomplete (the MANDATORY case) during this
@@ -626,6 +706,52 @@ export default function AuthenticatedLayout() {
   const isOnboardingDecisionPending =
     isAuthenticated && onboardingRouteDecision === 'wait';
 
+  // ── Calendar Import onboarding step (final step before first Home) ───────
+  // onboardingCompleted is NOT redefined by this step. A separate server
+  // flag (userStatus.calendarImportPromptPending — required-and-unresolved,
+  // false for every pre-existing user) gates the first arrival at Home: once
+  // the existing decision tree says 'normal', a still-pending user is sent
+  // to the import screen instead of Home. Evaluated here (server state, not
+  // local storage) so cold start respects it too, and resolved by an
+  // explicit import-or-skip on that screen (resolveCalendarImportPrompt).
+  const calendarImportPromptPending = userStatus?.calendarImportPromptPending;
+  const needsCalendarImportRedirect =
+    isAuthenticated &&
+    shouldRedirectToCalendarImport({
+      onboardingDecision: onboardingRouteDecision,
+      calendarImportPromptPending,
+      isOnImportCalendarRoute: isImportCalendarRoute,
+    });
+
+  // The key is OMITTED when not pending so the navigator's own tabBarStyle
+  // (height, direction) is preserved for the Settings/Home import entries.
+  const importCalendarOnboardingTabBarOptions =
+    calendarImportPromptPending === true
+      ? { tabBarStyle: { display: 'none' as const } }
+      : {};
+
+  // Tracks whether the import screen was entered while the step was still
+  // pending, so the exit redirect below never fires for the normal
+  // Settings/Home entry points (where the step is never pending).
+  const wasCalendarOnboardingRef = useRef(false);
+  useEffect(() => {
+    if (isImportCalendarRoute && calendarImportPromptPending === true) {
+      wasCalendarOnboardingRef.current = true;
+    }
+  }, [isImportCalendarRoute, calendarImportPromptPending]);
+
+  // Same architecture as needsMandatorySetupExitRedirect: this layout is the
+  // ONLY place that leaves the import screen after the step resolves, driven
+  // by rendered server state — never router.back() and never an imperative
+  // navigate racing the mutation's own .then().
+  const needsCalendarImportExitRedirect =
+    isAuthenticated &&
+    shouldExitCalendarImportToHome({
+      isOnImportCalendarRoute: isImportCalendarRoute,
+      calendarImportPromptPending,
+      wasCalendarOnboardingActive: wasCalendarOnboardingRef.current,
+    });
+
   // Family-bootstrap's optional "haven't configured family yet" nudge —
   // unchanged for already-completed users (see shouldCheckFamilyBootstrap
   // above, which now only queries this for onboardingComplete === true).
@@ -634,6 +760,7 @@ export default function AuthenticatedLayout() {
     !isFamilyBootstrapRoute &&
     !isProfileSetupRoute &&
     userStatus?.onboardingComplete === true &&
+    calendarImportPromptPending !== true &&
     familyBootstrapStatus !== undefined &&
     familyBootstrapStatus !== null &&
     !familyBootstrapStatus.hasConfiguredFamily &&
@@ -675,6 +802,27 @@ export default function AuthenticatedLayout() {
     !onboardingData.onboardingCompleted &&
     myProfile !== null;
 
+  // TEMPORARY (Step B instrumentation fix) — needsHydration also starts
+  // false by default (isAuthenticated is false before auth resolves), so
+  // the previous "first time this settles to false" guard fired
+  // immediately on mount for every user, before hydration could possibly
+  // have been needed or run. Now only trace the genuine true → false
+  // transition — the meaningful final unblock event (hydrateFromServer
+  // actually ran and cleared the gate), not the trivial initial default.
+  // Gate logic (needsHydration itself) is unchanged.
+  const wasNeedsHydrationRef = useRef(false);
+  const profileHydratedTracedRef = useRef(false);
+  useEffect(() => {
+    if (needsHydration) {
+      wasNeedsHydrationRef.current = true;
+      return;
+    }
+    if (wasNeedsHydrationRef.current && !profileHydratedTracedRef.current) {
+      profileHydratedTracedRef.current = true;
+      startupTrace('T6_PROFILE_HYDRATED');
+    }
+  }, [needsHydration]);
+
   const isReadyToRoute =
     !!navigationState?.key &&
     !isLoading &&
@@ -683,6 +831,103 @@ export default function AuthenticatedLayout() {
     !isUserStatusLoading &&
     !isFamilyBootstrapLoading &&
     !needsHydration;
+
+  // TEMPORARY (Step A baseline instrumentation) — fires once, the first
+  // time this layout's own routing gate becomes ready.
+  const readyToRouteTracedRef = useRef(false);
+  useEffect(() => {
+    if (isReadyToRoute && !readyToRouteTracedRef.current) {
+      readyToRouteTracedRef.current = true;
+      startupTrace('T7_READY_TO_ROUTE');
+    }
+  }, [isReadyToRoute]);
+
+  // TEMPORARY diagnostics (lib/importFlowTrace.ts) for the Calendar Import
+  // onboarding bug — boolean/enum-only. Shows whether this layout swaps
+  // <Tabs> for the splash (which would unmount the import screen and drop its
+  // in-memory Google auth state) and which gate caused it. Remove with the fix.
+  const importTraceIsSplash =
+    !isReadyToRoute ||
+    !isAuthenticated ||
+    needsOnboardingRedirect ||
+    needsPhoneMatchConfirmationRedirect ||
+    needsMandatoryProfileSetupRedirect ||
+    needsCalendarImportRedirect ||
+    needsFamilyBootstrapRedirect ||
+    isOnboardingDecisionPending ||
+    shouldBlockForColdStartNav;
+  useEffect(() => {
+    importTrace('layout_gates', {
+      isSplash: importTraceIsSplash,
+      isReadyToRoute,
+      isAuthLoading: isLoading,
+      isAuthenticated,
+      isRevenueCatLoading,
+      isUserStatusLoading,
+      isFamilyBootstrapLoading,
+      needsHydration,
+      isImportCalendarRoute,
+      calendarImportPromptPending,
+      needsCalendarImportRedirect,
+      needsCalendarImportExitRedirect,
+      needsFamilyBootstrapRedirect,
+      shouldBlockForColdStartNav,
+    });
+  }, [
+    importTraceIsSplash,
+    isReadyToRoute,
+    isLoading,
+    isAuthenticated,
+    isRevenueCatLoading,
+    isUserStatusLoading,
+    isFamilyBootstrapLoading,
+    needsHydration,
+    isImportCalendarRoute,
+    calendarImportPromptPending,
+    needsCalendarImportRedirect,
+    needsCalendarImportExitRedirect,
+    needsFamilyBootstrapRedirect,
+    shouldBlockForColdStartNav,
+  ]);
+
+  // TEMPORARY (Step A baseline instrumentation) — boolean-only snapshot of
+  // every gate feeding isReadyToRoute plus the redirect-decision booleans,
+  // re-emitted whenever any of them changes.
+  useEffect(() => {
+    startupTraceGates({
+      isAuthLoading: isLoading,
+      isRevenueCatLoading,
+      isDraftHydrated,
+      isUserStatusLoading,
+      isFamilyBootstrapLoading,
+      needsHydration,
+      isReadyToRoute,
+      isAuthenticated,
+      needsOnboardingRedirect,
+      needsPhoneMatchConfirmationRedirect,
+      needsMandatoryProfileSetupRedirect,
+      needsFamilyBootstrapRedirect,
+      isOnboardingDecisionPending,
+      coldStartCheckDone,
+      shouldBlockForColdStartNav,
+    });
+  }, [
+    isLoading,
+    isRevenueCatLoading,
+    isDraftHydrated,
+    isUserStatusLoading,
+    isFamilyBootstrapLoading,
+    needsHydration,
+    isReadyToRoute,
+    isAuthenticated,
+    needsOnboardingRedirect,
+    needsPhoneMatchConfirmationRedirect,
+    needsMandatoryProfileSetupRedirect,
+    needsFamilyBootstrapRedirect,
+    isOnboardingDecisionPending,
+    coldStartCheckDone,
+    shouldBlockForColdStartNav,
+  ]);
 
   // ─── Push notification navigation ──────────────────────────────────────────
   // Keep a ref that always mirrors the current readiness so the subscription
@@ -715,14 +960,26 @@ export default function AuthenticatedLayout() {
 
   // When routing becomes ready, check whether a pending target was stored
   // before readiness arrived (the subscription callback would have returned
-  // early because isReadyToRouteRef was still false at that moment).
+  // early because isReadyToRouteRef was still false at that moment). Also
+  // gated on coldStartCheckDone so this never fires before the cold-start
+  // notification capture has actually resolved (see the cold-start gate
+  // above) — otherwise this could run, find nothing yet, and unblock
+  // shouldBlockForColdStartNav's peek before the real target exists.
   useEffect(() => {
-    if (!isReadyToRoute) return;
+    if (!isReadyToRoute || !coldStartCheckDone) return;
     const target = consumePendingNavigationTarget();
     if (target) {
       router.replace(target as Parameters<typeof router.replace>[0]);
     }
-  }, [isReadyToRoute, router]);
+    // Unblock the cold-start guard exactly once. If the subscription
+    // handler above already consumed the target first, `target` here is
+    // null — that is fine, router.replace already happened there; this
+    // still needs to flip coldStartNavConsumed so shouldBlockForColdStartNav
+    // stops blocking.
+    if (coldStartHadPendingNavRef.current && !coldStartNavConsumed) {
+      setColdStartNavConsumed(true);
+    }
+  }, [isReadyToRoute, coldStartCheckDone, coldStartNavConsumed, router]);
 
   useEffect(() => {
     if (!isReadyToRoute) return;
@@ -733,7 +990,9 @@ export default function AuthenticatedLayout() {
     }
 
     if (needsOnboardingRedirect) {
-      router.replace('/onboarding-hero');
+      // Straight to Q1 — the single Welcome screen is the pre-auth
+      // app/(auth)/index.tsx; a signed-in user must never see a second one.
+      router.replace('/onboarding-step1');
       return;
     }
 
@@ -747,8 +1006,23 @@ export default function AuthenticatedLayout() {
       return;
     }
 
+    if (needsCalendarImportRedirect) {
+      // The mandatory-setup exit (below) must not fire later for the
+      // optional post-auth nudge — this redirect supersedes it.
+      wasMandatorySetupRef.current = false;
+      importTrace('layout_redirect_to_import_calendar');
+      router.replace('/(authenticated)/import-calendar');
+      return;
+    }
+
     if (needsFamilyBootstrapRedirect) {
       router.replace('/(authenticated)/family-bootstrap');
+      return;
+    }
+
+    if (needsCalendarImportExitRedirect) {
+      wasCalendarOnboardingRef.current = false;
+      router.navigate('/(authenticated)');
       return;
     }
 
@@ -770,6 +1044,8 @@ export default function AuthenticatedLayout() {
     needsPhoneMatchConfirmationRedirect,
     needsMandatoryProfileSetupRedirect,
     needsFamilyBootstrapRedirect,
+    needsCalendarImportRedirect,
+    needsCalendarImportExitRedirect,
     needsMandatorySetupExitRedirect,
     router,
   ]);
@@ -777,16 +1053,25 @@ export default function AuthenticatedLayout() {
   // HOME MUST NEVER BE REACHED WHILE onboardingCompleted === false — every
   // incomplete-onboarding decision from resolvePostAuthOnboardingRoute
   // ('wait' or an active redirect) keeps the splash showing here.
+  // shouldBlockForColdStartNav is a purely visual addition (see above) —
+  // it never changes any of the other conditions or redirect targets.
   if (
     !isReadyToRoute ||
     !isAuthenticated ||
     needsOnboardingRedirect ||
     needsPhoneMatchConfirmationRedirect ||
     needsMandatoryProfileSetupRedirect ||
+    needsCalendarImportRedirect ||
     needsFamilyBootstrapRedirect ||
-    isOnboardingDecisionPending
+    isOnboardingDecisionPending ||
+    shouldBlockForColdStartNav
   ) {
-    return <InYomiSplashScreen />;
+    // This is an intermediate routing/loading surface, NOT a finite
+    // startup destination — it must NOT report readiness. The root bridge
+    // stays up underneath it until the actual focused destination screen
+    // (Home, or whichever redirect target Tabs ends up focusing) reports
+    // readiness via useStartupDestinationReady. See lib/bridgeReadiness.ts.
+    return <InYomiSplashScreen source="authenticated" />;
   }
 
   return (
@@ -885,7 +1170,13 @@ export default function AuthenticatedLayout() {
           <Tabs.Screen name="event/[id]" options={{ href: null }} />
           <Tabs.Screen name="task/new" options={{ href: null }} />
           <Tabs.Screen name="task/[id]" options={{ href: null }} />
-          <Tabs.Screen name="import-calendar" options={{ href: null }} />
+          {/* While the Calendar Import onboarding step is pending the bottom
+              tab bar is hidden (see importCalendarOnboardingTabBarOptions),
+              so the step cannot be sidestepped. */}
+          <Tabs.Screen
+            name="import-calendar"
+            options={{ href: null, ...importCalendarOnboardingTabBarOptions }}
+          />
           <Tabs.Screen name="import-holidays" options={{ href: null }} />
           <Tabs.Screen name="family-profile" options={{ href: null }} />
           {/* Part 8: family-profile-setup is ONLY ever reached as part of

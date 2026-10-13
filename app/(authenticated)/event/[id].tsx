@@ -37,8 +37,9 @@ import {
   rsvpRowDisplayName,
   unansweredMemberDisplayName,
 } from '@/lib/eventRsvpUnanswered';
-import { canShowCommunityEventSelfClaimAction } from '@/lib/eventTaskClaimVisibility';
 import { isCancelledEventWithinCommunityVisibilityWindow } from '@/lib/eventsTabDateHelpers';
+import { canShowCommunityEventSelfClaimAction } from '@/lib/eventTaskClaimVisibility';
+import { useStartupDestinationReady } from '@/lib/hooks/useStartupDestinationReady';
 import {
   getOpenCommunityCalendarActionLabel,
   getRsvpCalendarActionLabel,
@@ -319,6 +320,14 @@ function isReturnToOrigin(value: string | undefined): value is ReturnToOrigin {
 }
 
 export default function EventDetailScreen() {
+  // Finite startup destination — reachable directly on cold start via a
+  // notification target (e.g. "/(authenticated)/event/123"). A loading
+  // indicator here is an acceptable destination surface (see
+  // lib/hooks/useStartupDestinationReady.ts) — unlike the top-level
+  // deep-link routes, there is no further redirect pending once this
+  // route itself is reached/focused.
+  const { onLayout: handleEventDetailDestinationLayout } =
+    useStartupDestinationReady('event-detail');
   const { id, returnTo: returnToParam } = useLocalSearchParams<{
     id: string;
     returnTo?: string;
@@ -351,6 +360,16 @@ export default function EventDetailScreen() {
     eventId ? { eventId } : 'skip'
   );
   const currentUserId = useQuery(api.users.getMyId) ?? undefined;
+  const personalAssignees =
+    useQuery(
+      api.eventTasks.listPersonalAssignees,
+      event &&
+        !event.communityId &&
+        event.createdBy === currentUserId &&
+        eventId
+        ? { eventId }
+        : 'skip'
+    ) ?? [];
 
   const upsertRsvp = useMutation(api.eventRsvps.upsertRsvp);
   const setRsvpNoAndUnclaimMyEventTasks = useMutation(
@@ -956,7 +975,11 @@ export default function EventDetailScreen() {
   // ── Invalid route param (e.g. mock item ids like "1", "2")
   if (!eventId) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView
+        style={styles.container}
+        edges={['top']}
+        onLayout={handleEventDetailDestinationLayout}
+      >
         <View style={styles.centered}>
           <Ionicons name="alert-circle-outline" size={48} color="#d1d5db" />
           <Text style={styles.notFoundText}>אירוע לא נמצא</Text>
@@ -981,7 +1004,11 @@ export default function EventDetailScreen() {
   // ── Loading
   if (event === undefined) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView
+        style={styles.container}
+        edges={['top']}
+        onLayout={handleEventDetailDestinationLayout}
+      >
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={PRIMARY} />
         </View>
@@ -992,7 +1019,11 @@ export default function EventDetailScreen() {
   // ── Not found
   if (event === null) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView
+        style={styles.container}
+        edges={['top']}
+        onLayout={handleEventDetailDestinationLayout}
+      >
         <View style={styles.centered}>
           <Ionicons name="alert-circle-outline" size={48} color="#d1d5db" />
           <Text style={styles.notFoundText}>אירוע לא נמצא</Text>
@@ -1077,7 +1108,7 @@ export default function EventDetailScreen() {
     ? canManageTasks ||
       canRegularMemberSeeTasks ||
       (eventTasks !== undefined && eventTasks.length > 0)
-    : isCreator;
+    : isCreator || (eventTasks?.length ?? 0) > 0;
   const eventTasksForDisplay = uniqueById(
     eventTasks ?? [],
     (task) => task._id as string
@@ -1262,7 +1293,11 @@ export default function EventDetailScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView
+      style={styles.container}
+      edges={['top']}
+      onLayout={handleEventDetailDestinationLayout}
+    >
       {/* ── Header (RTL): right=back, center=title, left=⋯ */}
       <View style={[styles.header, styles.headerRtl]}>
         {/* First child → right in RTL: back button */}
@@ -1826,10 +1861,8 @@ export default function EventDetailScreen() {
                     !isCompleted;
                   return (
                     <View key={task._id} style={styles.taskRow}>
-                      {/* FIX B — completion checkbox, Community Events only.
-                          Personal Events never render this checkbox. */}
-                      {isCommunityEvent &&
-                        (canCompleteTask ? (
+                      {/* Completion follows creator/assignee permissions in both contexts. */}
+                      {(canCompleteTask && event.status !== 'cancelled' && event.deletedAt === undefined ? (
                           <Pressable
                             accessible
                             accessibilityRole="checkbox"
@@ -1932,13 +1965,18 @@ export default function EventDetailScreen() {
                             // Personal Events — preserved exactly: icon-only
                             // assignment control.
                             <TouchableOpacity
+                              disabled={personalAssignees.length <= 1}
+                              style={
+                                personalAssignees.length <= 1
+                                  ? { display: 'none' }
+                                  : styles.taskActionBtn
+                              }
                               onPress={() =>
                                 handleGatedAction(() => {
                                   setAssigneeSheetTaskId(task._id);
                                   setManualAssigneeName('');
                                 })
                               }
-                              style={styles.taskActionBtn}
                               accessible
                               accessibilityRole="button"
                               accessibilityLabel={
@@ -2339,16 +2377,11 @@ export default function EventDetailScreen() {
       <TaskAssigneeSheet
         visible={!!assigneeSheetTaskId}
         currentAssignee={currentAssigneeForSheet}
-        members={members}
+        members={event.communityId ? members : personalAssignees}
         currentUserId={currentUserId}
         isCreator={canManageTasks}
-        // FIX B follow-up — Community Event tasks must be account-backed:
-        // only active community members may be assigned, never a manual
-        // free-text name. Personal Events keep manual assignment exactly
-        // as before. Existing legacy Community manual assignments are
-        // untouched by this — they still display and remain unassignable
-        // via onUnassign below, they just can't be newly *created* here.
-        allowManualAssignee={!event.communityId}
+        // New assignments require authenticated, eligible accounts in both contexts.
+        allowManualAssignee={false}
         // FIX B final context polish — show which task is being managed,
         // Community Events only. Reuses the existing assignee-sheet task
         // lookup (_assigneeSheetTask) rather than adding a new query.

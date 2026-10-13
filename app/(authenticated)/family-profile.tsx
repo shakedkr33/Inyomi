@@ -49,6 +49,7 @@ import {
   useFamilyProfileEditor,
 } from '../../hooks/useFamilyProfileEditor';
 import { getSelfProfileAvatarInitials } from '../../lib/avatarInitials';
+import { useStartupDestinationReady } from '../../lib/hooks/useStartupDestinationReady';
 import {
   canManageFamilyProfile as canManageFamilyProfileHelper,
   isClaimedMandatorySetup as isClaimedMandatorySetupHelper,
@@ -86,6 +87,20 @@ export default function FamilyProfileScreen() {
   // Kept for readability at call sites below — same boolean, existing name.
   const isOptionalPostAuthSetup = isFamilyProfileSetupPath && !isMandatorySetup;
 
+  // This screen is shared between the regular Settings → "ניהול פרופיל"
+  // route (family-profile) and the mandatory/optional post-auth setup
+  // route (family-profile-setup, re-exported from this file). Only the
+  // latter is a finite startup destination — per the approved
+  // splash-startup-fix plan, this is also the actual final destination
+  // reached AFTER family-bootstrap navigates here (family-bootstrap itself
+  // never reports readiness — see its own file for why). Reports
+  // destination = 'profile-setup', enabled only on the setup path so a
+  // later, unrelated Settings visit never (harmlessly) re-signals.
+  const { onLayout: handleProfileSetupDestinationLayout } =
+    useStartupDestinationReady('profile-setup', {
+      enabled: isFamilyProfileSetupPath,
+    });
+
   const screenTitle = !isFamilyProfileSetupPath
     ? 'ניהול פרופיל'
     : isMandatorySetup
@@ -118,9 +133,9 @@ export default function FamilyProfileScreen() {
   const hasPendingMatchMemberId = useQuery(api.members.hasPendingMatchMemberId);
   // FIXED: admin badge shown only for admin user
   // Previously defaulted to `true` while loading, causing the badge to flash for members.
-  // mySpaceRole?.role === 'admin' is false for undefined (loading) and null (no space),
+  // isOwner is false for undefined (loading) and null (no space),
   // so there is no incorrect flash.
-  const isAdmin = mySpaceRole?.role === 'admin';
+  const isAdmin = mySpaceRole?.isOwner === true;
   const adminUserId = spaceAdminUserId ?? undefined;
   // FIXED: mandatory Profile Setup happens BEFORE any space exists for a
   // brand-new user, so mySpaceRole is always null at that point and isAdmin
@@ -607,7 +622,9 @@ export default function FamilyProfileScreen() {
   // ensuring the deletion propagates in real-time to all family members (e.g. Yaniv).
   const findEntityRowId = (member: FamilyMember): string | undefined => {
     const rows = serverFamilyContacts?.members ?? [];
-    const matched = rows.find((s) => {
+    const exact = rows.find((row) => row._id === member.id);
+    if (exact) return exact._id;
+    const matches = rows.filter((s) => {
       if (member.selectedPhoneNumber && s.selectedPhoneNumber) {
         return (
           normalizePhone(s.selectedPhoneNumber) ===
@@ -616,7 +633,7 @@ export default function FamilyProfileScreen() {
       }
       return s.displayName === member.name;
     });
-    return matched?._id;
+    return matches.length === 1 ? matches[0]._id : undefined;
   };
 
   // FIXED: removed redundant bottom "שמירה" button — each section has its own save action
@@ -680,6 +697,7 @@ export default function FamilyProfileScreen() {
           alignItems: 'center',
           justifyContent: 'center',
         }}
+        onLayout={handleProfileSetupDestinationLayout}
       >
         <ActivityIndicator color={colors.primary} size="large" />
       </SafeAreaView>
@@ -692,6 +710,7 @@ export default function FamilyProfileScreen() {
         { flex: 1, backgroundColor: '#f6f7f8' },
         ANDROID_MATCH_IOS_LAYOUT ? styles.safeAreaRtl : null,
       ]}
+      onLayout={handleProfileSetupDestinationLayout}
     >
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -1427,7 +1446,7 @@ export default function FamilyProfileScreen() {
                 marginBottom: 8,
               }}
             >
-              מחיקת בן משפחה
+              הסרת פרופיל משפחתי
             </Text>
             <Text
               style={{
@@ -1438,37 +1457,21 @@ export default function FamilyProfileScreen() {
                 marginBottom: 24,
               }}
             >
-              {`האם למחוק את ${deleteTarget?.name ?? ''} מהפרופיל המשפחתי?`}
+              {deleteTarget?.inviteStatus === 'joined'
+                ? 'זהו פרופיל עם חשבון מחובר. הסרת החשבון וביטול הגישה למשפחה עדיין אינם זמינים.'
+                : `האם להסיר את הפרופיל של ${deleteTarget?.name ?? ''}? הפעולה אינה מוחקת חשבון ואינה מבטלת גישה של חשבון מחובר.`}
             </Text>
             <View style={{ flexDirection: rtl.flexDirection, gap: 10 }}>
               <Pressable
-                onPress={() => {
-                  if (deleteTarget) {
-                    console.log(
-                      '[DELETE] deleteTarget:',
-                      deleteTarget?.name,
-                      deleteTarget?.id
-                    );
-                    console.log(
-                      '[DELETE] findEntityRowId result:',
-                      findEntityRowId(deleteTarget)
-                    );
-                    console.log(
-                      '[DELETE] serverFamilyContacts members:',
-                      JSON.stringify(
-                        serverFamilyContacts?.members?.map((m) => ({
-                          _id: m._id,
-                          displayName: m.displayName,
-                          selectedPhone: m.selectedPhoneNumber,
-                        }))
-                      )
-                    );
-                    removeMember(
-                      deleteTarget.id,
-                      findEntityRowId(deleteTarget)
-                    );
-                  }
-                  setDeleteTarget(null);
+                disabled={deleteTarget?.inviteStatus === 'joined'}
+                accessibilityState={{ disabled: deleteTarget?.inviteStatus === 'joined' }}
+                onPress={async () => {
+                  if (!deleteTarget) return;
+                  const removed = await removeMember(
+                    deleteTarget.id,
+                    findEntityRowId(deleteTarget)
+                  );
+                  if (removed) setDeleteTarget(null);
                 }}
                 accessible={true}
                 accessibilityRole="button"

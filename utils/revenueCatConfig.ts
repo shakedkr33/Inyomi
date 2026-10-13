@@ -88,6 +88,15 @@ export const PRODUCT_IDS = {
   lifetime: 'lifetime',
 } as const;
 
+// Billing-period derivation (annual/monthly) for the Settings paid state
+// lives in lib/billingPeriod.ts — kept OUT of this file specifically because
+// this file imports 'react-native' (Platform) at module scope, which makes
+// it unusable from plain `bun test` unit tests (no RN preset configured in
+// this project — see lib/spaceTypeDerivation.ts / lib/onboardingRouting.ts
+// for the same pattern: pure logic extracted to RN-free files for
+// testability). lib/billingPeriod.ts documents the product-id mirroring
+// requirement against PRODUCT_IDS above.
+
 // ============================================================================
 // API Key Management
 // ============================================================================

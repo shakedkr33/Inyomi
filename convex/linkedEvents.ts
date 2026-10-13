@@ -2,8 +2,10 @@
 //        snapshot used only for sourceStatus='deleted'; live data from source otherwise
 import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
+import { hasAccessRowForSpace } from '../lib/spaceAccess';
 import { mutation, query } from './_generated/server';
 import { stampEventOwnerScope } from './ownerScope';
+import { requireSpaceWriteAccess } from './spaceWriteAccess';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -73,6 +75,17 @@ export const saveLinkedEvent = mutation({
   handler: async (ctx, { shareToken, spaceId }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error('יש להתחבר כדי לשמור אירוע');
+
+    // A share token authorizes the source event, not the destination space.
+    const memberRows = await ctx.db
+      .query('members')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect();
+    if (!hasAccessRowForSpace(memberRows, spaceId)) {
+      throw new Error('אין הרשאה לשמור אירוע במרחב זה');
+    }
+    // Do not create an orphan link if a stale membership outlives its space.
+    if (!(await ctx.db.get(spaceId))) throw new Error('המרחב לא נמצא');
 
     // Validate the share link
     const link = await ctx.db
@@ -148,6 +161,8 @@ export const copyLinkedEvent = mutation({
     if (!linked) throw new Error('אירוע לא נמצא');
     if (linked.savedByUserId !== userId) throw new Error('אין הרשאה');
 
+    await requireSpaceWriteAccess(ctx, userId, linked.spaceId);
+
     // Resolve display data (live or snapshot)
     const resolved = await resolveLinkedEventData(ctx as never, linked);
 
@@ -190,6 +205,14 @@ export const getLinkedEventsForSpace = query({
   handler: async (ctx, { spaceId, from, to }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return [];
+
+    // Listing a space requires membership; a saved link or family entity alone
+    // only grants its own limited access, not access to the space's event list.
+    const memberRows = await ctx.db
+      .query('members')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect();
+    if (!hasAccessRowForSpace(memberRows, spaceId)) return [];
 
     const linkedRows = await ctx.db
       .query('linkedEvents')

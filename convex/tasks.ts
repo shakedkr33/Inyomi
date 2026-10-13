@@ -6,12 +6,14 @@ import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { insertCommunityActivity } from './communityActivities';
 import { isActiveCommunityMember } from './communityMemberUtils';
+import { canReadPersonalEvent } from './eventAccess';
 import { hasCreatorOrphanAuthority } from './members';
 import { stampTaskOwnerScope } from './ownerScope';
 import {
   cancelPendingJobsForTaskAndUserHelper,
   cancelPendingJobsForTaskHelper,
 } from './reminderScheduler';
+import { requireSpaceWriteAccess } from './spaceWriteAccess';
 import {
   buildImportantItemsBundleSubtasks,
   buildImportantItemsBundleTaskTitle,
@@ -496,23 +498,9 @@ function isPersonalTaskForUser(
   task: Doc<'tasks'>,
   userId: Doc<'users'>['_id']
 ): boolean {
-  if (task.createdBy === userId) {
-    return true;
-  }
-
-  if (task.assignedTo === userId) {
-    return true;
-  }
-
-  if ((task.assignedToUserIds ?? []).some((id) => id === userId)) {
-    return true;
-  }
-
-  return (
-    task.assignedTo === undefined &&
-    task.communityId === undefined &&
-    task.sourceType === undefined
-  );
+  // Space/ownership metadata and an empty assignment never grant access.
+  // "Everyone" is persisted as explicit user/member assignments, not a flag.
+  return isUserParticipantInTask(task, userId);
 }
 
 /**
@@ -845,6 +833,16 @@ export const listCommunityRemindersPaged = query({
     numItems: v.optional(v.number()),
   },
   handler: async (ctx, { communityId, cursor, numItems }) => {
+    const userId = await getAuthUserId(ctx);
+    if (
+      !userId ||
+      !isActiveCommunityMember(
+        await getCommunityMembership(ctx, communityId, userId)
+      )
+    ) {
+      return { page: [], isDone: true, continueCursor: '' };
+    }
+
     const result = await ctx.db
       .query('tasks')
       .withIndex('by_community', (q) => q.eq('communityId', communityId))
@@ -897,6 +895,16 @@ export const listCommunityRemindersPaged = query({
 export const listByCommunity = query({
   args: { communityId: v.id('communities') },
   handler: async (ctx, { communityId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (
+      !userId ||
+      !isActiveCommunityMember(
+        await getCommunityMembership(ctx, communityId, userId)
+      )
+    ) {
+      return [];
+    }
+
     const rows = await ctx.db
       .query('tasks')
       .withIndex('by_community', (q) => q.eq('communityId', communityId))
@@ -936,6 +944,7 @@ export const listEventImportantItems = query({
     const event = await ctx.db.get(eventId);
     if (!event) return [];
     if (!event.communityId) {
+      if (!(await canReadPersonalEvent(ctx, event, userId))) return [];
       return (event.importantItems ?? []).map((item) => ({
         id: item.id,
         title: item.title,
@@ -1513,6 +1522,10 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error('לא מחובר למערכת');
+
+    if (args.spaceId !== undefined) {
+      await requireSpaceWriteAccess(ctx, userId, args.spaceId);
+    }
 
     if (args.attachments && args.attachments.length > MAX_TASK_ATTACHMENTS) {
       throw new Error(

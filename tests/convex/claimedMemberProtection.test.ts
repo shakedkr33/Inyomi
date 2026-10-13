@@ -86,27 +86,9 @@ describe('updateMyProfile — args shape (Phase 1)', () => {
   });
 });
 
-describe("updateMyProfile — [TEST 24] family admin cannot rename another claimed user's entity", () => {
-  it('guards both the manual-member and phone-contact patch branches with isEntityClaimedByOtherUser', () => {
-    const occurrences =
-      updateMyProfileSrc.split('isEntityClaimedByOtherUser(').length - 1;
-    expect(occurrences).toBeGreaterThanOrEqual(2);
-  });
-
-  it('protected displayName falls back to the existing (unmodified) value, never the caller-supplied name', () => {
-    expect(updateMyProfileSrc).toContain('? existing.displayName');
-  });
-
-  it('server-side enforcement is not conditioned on any admin/role check — it always applies inside the sync loop', () => {
-    // The protection sits directly in the per-contact patch construction,
-    // not behind an isAdmin/role gate that a client could bypass.
-    const protectedBlock = updateMyProfileSrc.slice(
-      updateMyProfileSrc.indexOf('isEntityClaimedByOtherUser('),
-      updateMyProfileSrc.indexOf('isEntityClaimedByOtherUser(') + 400
-    );
-    expect(protectedBlock).not.toContain('isAdmin');
-  });
-});
+// The current owner-management decision supersedes the old claimed-label
+// restriction. Real handler coverage lives in privacyAuthorization.test.ts:
+// owners can edit family labels, while personal account identity is unchanged.
 
 describe("updateMyProfile — [TEST 26] self name edit syncs the caller's own claimed entity displayName", () => {
   it("after patching the user, re-queries the caller's own member rows and patches joined entities to the new canonical name", () => {
@@ -134,15 +116,6 @@ describe("updateMyProfile — [TEST 26] self name edit syncs the caller's own cl
     );
     expect(updateMyProfileSrc).toMatch(
       /args\.lastName !== undefined\s*\?\s*args\.lastName\.trim\(\)\s*:\s*\(?user\.lastName\s*\?\?\s*''\)?;/
-    );
-  });
-});
-
-describe('updateMyProfile — [TEST 27] unclaimed entities remain manager-editable (unchanged)', () => {
-  it('the protected-displayName ternary always falls through to contact.name for the non-claimed-by-other case', () => {
-    // Whitespace/paren-insensitive so Biome formatting doesn't break this.
-    expect(updateMyProfileSrc).toMatch(
-      /:\s*\(?contact\.name\s*\?\?\s*existing\.displayName\)?;/
     );
   });
 });

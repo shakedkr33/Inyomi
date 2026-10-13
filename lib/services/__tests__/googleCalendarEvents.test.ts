@@ -95,11 +95,11 @@ describe('buildDateRange', () => {
     expect(timeMax).toMatch(/^2026-12-29T00:00:00[+-]/);
   });
 
-  it("'one_month' starts one calendar month before today", () => {
+  it("'one_year' starts twelve calendar months before today", () => {
     const now = new Date('2026-06-28T06:00:00Z');
-    const { timeMin, timeMax } = buildDateRange('one_month', now);
+    const { timeMin, timeMax } = buildDateRange('one_year', now);
 
-    expect(timeMin).toMatch(/^2026-05-28T00:00:00[+-]/);
+    expect(timeMin).toMatch(/^2025-06-28T00:00:00[+-]/);
     expect(timeMax).toMatch(/^2026-12-29T00:00:00[+-]/);
   });
 
@@ -111,12 +111,12 @@ describe('buildDateRange', () => {
     expect(timeMax).toMatch(/^2026-12-29T00:00:00[+-]/);
   });
 
-  it('handles month-end overflow correctly (Jan 31 minus 1 month = Dec 31)', () => {
+  it('handles one-year-back across a year boundary (Jan 31, 2026 minus 12 months = Jan 31, 2025)', () => {
     // Jerusalem winter is UTC+2. Jan 31 09:00 Jerusalem = Jan 31 07:00 UTC.
     const now = new Date('2026-01-31T07:00:00Z');
-    const { timeMin } = buildDateRange('one_month', now);
-    // JS Date(2026, 0 - 1, 31) = Dec 31 2025
-    expect(timeMin).toMatch(/^2025-12-31T00:00:00[+-]/);
+    const { timeMin } = buildDateRange('one_year', now);
+    // JS Date(2026, 0 - 12, 31) = Jan 31 2025
+    expect(timeMin).toMatch(/^2025-01-31T00:00:00[+-]/);
   });
 
   it('produces valid RFC3339 strings with timezone offset', () => {
@@ -128,7 +128,7 @@ describe('buildDateRange', () => {
   });
 
   it('timeMin is before timeMax for all range options', () => {
-    for (const range of ['none', 'one_month', 'two_months'] as const) {
+    for (const range of ['none', 'two_months', 'one_year'] as const) {
       const { timeMin, timeMax } = buildDateRange(range);
       expect(timeMin < timeMax).toBe(true);
     }
@@ -190,10 +190,10 @@ describe('buildDateRange', () => {
     expect(timeMax).toMatch(/^2027-06-29T00:00:00[+-]/);
   });
 
-  it('one-month-back start boundary with 12-month forward', () => {
+  it('one-year-back start boundary with 12-month forward', () => {
     const now = new Date('2026-06-28T06:00:00Z');
-    const { timeMin, timeMax } = buildDateRange('one_month', now, 12);
-    expect(timeMin).toMatch(/^2026-05-28T00:00:00[+-]/);
+    const { timeMin, timeMax } = buildDateRange('one_year', now, 12);
+    expect(timeMin).toMatch(/^2025-06-28T00:00:00[+-]/);
     expect(timeMax).toMatch(/^2027-06-29T00:00:00[+-]/);
   });
 

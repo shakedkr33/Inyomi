@@ -104,6 +104,9 @@ export const finishOnboarding = mutation({
         isActive: true,
         onboardingCompleted: true,
         profileSetupCompletedAt: user.profileSetupCompletedAt ?? Date.now(),
+        // Calendar Import onboarding step is required for this new-flow user.
+        calendarImportPromptRequiredAt:
+          user.calendarImportPromptRequiredAt ?? Date.now(),
         updatedAt: Date.now(),
       });
 
@@ -119,16 +122,16 @@ export const finishOnboarding = mutation({
     if (args.familyContacts && Array.isArray(args.familyContacts)) {
       resolvedFamilyContacts = await Promise.all(
         (args.familyContacts as FamilyContactEntry[]).map(async (entry) => {
-          if (entry.matchedUserId) return entry;
-          if (!entry.selectedPhoneNumber) return entry;
+          const { matchedUserId: _ignored, ...contact } = entry;
+          if (!entry.selectedPhoneNumber) return contact;
           const normalizedPhone = normalizeToE164(entry.selectedPhoneNumber);
-          if (!normalizedPhone) return entry;
+          if (!normalizedPhone) return contact;
           const matchedUser = await ctx.db
             .query('users')
             .withIndex('by_phone', (q) => q.eq('phone', normalizedPhone))
             .unique();
-          if (matchedUser) return { ...entry, matchedUserId: matchedUser._id };
-          return entry;
+          if (matchedUser) return { ...contact, matchedUserId: matchedUser._id };
+          return contact;
         })
       );
     }
@@ -196,9 +199,8 @@ export const finishOnboarding = mutation({
           displayName: contact.name,
           color: contact.color,
           selectedPhoneNumber: normalizedPhone,
-          inviteStatus: contact.inviteStatus ?? 'none',
+          inviteStatus: contact.inviteStatus === 'invited' ? 'invited' : 'none',
           matchedUserId: matchedId,
-          userId: matchedId,
           memberType,
         });
       }
@@ -216,10 +218,50 @@ export const finishOnboarding = mutation({
       onboardingCompleted: true,
       defaultSpaceId: spaceId,
       profileSetupCompletedAt: user.profileSetupCompletedAt ?? Date.now(),
+      // Calendar Import onboarding step is required for this new-flow user.
+      calendarImportPromptRequiredAt:
+        user.calendarImportPromptRequiredAt ?? Date.now(),
       updatedAt: Date.now(),
     });
 
     return { spaceId };
+  },
+});
+
+// ── resolveCalendarImportPrompt ─────────────────────────────────────────────
+/**
+ * Marks the Calendar Import onboarding step as RESOLVED — called when the
+ * user either finished the Google Calendar import or explicitly skipped it
+ * (or when a previously completed import is detected on a later launch).
+ *
+ * This is deliberately independent of Google import state: it never reads or
+ * writes googleImportStatus, so a skip does NOT mark the import as completed
+ * (Settings/Home import entry points stay available), and a completed import
+ * is still tracked solely by googleImportStatus.
+ *
+ * Idempotent: a second call keeps the original timestamp. Only valid once
+ * onboardingCompleted === true — it never touches onboardingCompleted.
+ */
+export const resolveCalendarImportPrompt = mutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      throw new Error('חייבים להיות מחוברים כדי להמשיך');
+    }
+
+    const user = await ctx.db.get(userId);
+    if (!user) throw new Error('משתמש לא נמצא');
+
+    if (user.onboardingCompleted !== true) {
+      throw new Error('יש להשלים את ההגדרה הראשונית לפני שממשיכים');
+    }
+
+    if (user.calendarImportPromptResolvedAt !== undefined) return null;
+
+    await ctx.db.patch(userId, { calendarImportPromptResolvedAt: Date.now() });
+    return null;
   },
 });
 

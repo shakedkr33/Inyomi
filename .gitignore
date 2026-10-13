@@ -152,3 +152,6 @@ expo-env.d.ts
 # Firebase private service account keys
 *firebase-adminsdk*.json
 *service-account*.json
+
+# Android build outputs
+**/build/

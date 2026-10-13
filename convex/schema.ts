@@ -1,6 +1,7 @@
 import { authTables } from '@convex-dev/auth/server';
 import { defineSchema, defineTable } from 'convex/server';
 import { v } from 'convex/values';
+import { participantDetail } from './personalEventValidators';
 
 export default defineSchema({
   ...authTables,
@@ -84,6 +85,19 @@ export default defineSchema({
     // without granting access by undoClaimedFamilyMatch ("change your
     // mind" / Back).
     pendingMatchMemberId: v.optional(v.id('members')),
+    // ── Calendar Import onboarding step (final step before first Home) ──────
+    // `calendarImportPromptRequiredAt` is stamped ONLY by finishOnboarding
+    // (convex/onboarding.ts) — i.e. only for users who go through the new
+    // onboarding flow. Its absence means "this user must never be sent to the
+    // Calendar Import onboarding step" (every user onboarded before this
+    // feature, and the Apple Review account). This is the backward-
+    // compatibility discriminator: no backfill/migration is required.
+    calendarImportPromptRequiredAt: v.optional(v.number()),
+    // Set once the user has RESOLVED the step: either completed the Google
+    // Calendar import or explicitly skipped it. It does NOT mean "Google
+    // import completed" (that is googleImportStatus). Written exclusively by
+    // convex/onboarding.ts resolveCalendarImportPrompt.
+    calendarImportPromptResolvedAt: v.optional(v.number()),
   })
     .index('by_email', ['email'])
     .index('by_phone', ['phone'])
@@ -153,6 +167,7 @@ export default defineSchema({
     category: v.optional(v.string()),
     location: v.optional(v.string()),
     participants: v.optional(v.array(v.string())),
+    participantDetails: v.optional(v.array(participantDetail)),
     isRecurring: v.optional(v.boolean()),
     recurringPattern: v.optional(v.string()),
     isAiGenerated: v.boolean(),

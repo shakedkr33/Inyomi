@@ -128,8 +128,8 @@ describe('resolveCommunityTaskAssignmentDiff — Community Event save path', () 
 
 describe('resolvePersonalTaskAssignmentDiff — Personal Event save path', () => {
   const participants = [
-    { id: CURRENT_USER, name: 'אני' },
-    { id: DANA, name: 'דנה' },
+    { id: CURRENT_USER, userId: CURRENT_USER, name: 'אני' },
+    { id: DANA, userId: DANA, name: 'דנה' },
   ];
 
   it('removing an existing manual assignee produces changed=true with assignee=null', () => {
@@ -147,12 +147,12 @@ describe('resolvePersonalTaskAssignmentDiff — Personal Event save path', () =>
     expect(diff.changed).toBe(false);
   });
 
-  it('changing the assignee to a different participant produces changed=true with the new name', () => {
+  it('changing the assignee to a different participant produces changed=true with the verified account', () => {
     const task = { assigneeId: DANA, assignedParticipantIds: [CURRENT_USER] };
     const orig = { assignedToManual: 'דנה' };
     const diff = resolvePersonalTaskAssignmentDiff(task, orig, participants);
     expect(diff.changed).toBe(true);
-    expect(diff.assignee).toEqual({ type: 'manual', name: 'אני' });
+    expect(diff.assignee).toEqual({ type: 'user', userId: CURRENT_USER });
   });
 });
 

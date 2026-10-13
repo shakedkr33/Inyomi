@@ -7,6 +7,11 @@ import { mutation, query } from './_generated/server';
 import { insertCommunityActivity } from './communityActivities';
 import { saveCommunityEventToPersonalCalendar } from './communityEventCalendarHelpers';
 import { isActiveCommunityMember } from './communityMemberUtils';
+import { canReadPersonalEvent } from './eventAccess';
+import {
+  assertPersonalAssignee,
+  isVerifiedProfile,
+} from './personalEventEditing';
 import { createUserNotifications } from './userNotifications';
 
 // ─────────────────────────────────────────────────────────────
@@ -24,11 +29,12 @@ export function canManageEventTasksPure(
   userId: Id<'users'>,
   membershipInfo: { isActiveMember: boolean; role?: string }
 ): boolean {
-  if (event.createdBy === userId) return true;
-  if (!event.communityId) return false;
+  if (!event.communityId) return event.createdBy === userId;
   return (
     membershipInfo.isActiveMember &&
-    (membershipInfo.role === 'owner' || membershipInfo.role === 'admin')
+    (event.createdBy === userId ||
+      membershipInfo.role === 'owner' ||
+      membershipInfo.role === 'admin')
   );
 }
 
@@ -37,8 +43,7 @@ async function isEventTaskManager(
   event: { createdBy: Id<'users'>; communityId?: Id<'communities'> },
   userId: Id<'users'>
 ): Promise<boolean> {
-  if (event.createdBy === userId) return true;
-  if (!event.communityId) return false;
+  if (!event.communityId) return event.createdBy === userId;
   const membership = await getCommunityMembership(
     ctx,
     event.communityId,
@@ -275,19 +280,29 @@ export const listEventTasksForHome = query({
     const results = await Promise.all(
       eventIds.map(async (eventId) => {
         const event = await ctx.db.get(eventId);
-        if (!event || !event.communityId) return null;
-        if (event.status === 'cancelled') return null;
+        if (!event) return null;
+        if (event.status === 'cancelled' || event.deletedAt !== undefined)
+          return null;
 
-        const membership = await getCommunityMembership(
-          ctx,
-          event.communityId,
-          userId
-        );
-        if (!isActiveCommunityMember(membership)) return null;
+        if (event.communityId) {
+          const membership = await getCommunityMembership(
+            ctx,
+            event.communityId,
+            userId
+          );
+          if (!isActiveCommunityMember(membership)) return null;
+        } else if (!(await canReadPersonalEvent(ctx, event, userId)))
+          return null;
 
         const canManage = await isEventTaskManager(ctx, event, userId);
         const tasksVisibleToParticipants =
-          event.tasksVisibleToParticipants === true;
+          event.tasksVisibleToParticipants === true &&
+          (Boolean(event.communityId) ||
+            (await canReadPersonalEvent(
+              ctx,
+              { ...event, allFamily: false },
+              userId
+            )));
 
         const allTasks = await ctx.db
           .query('eventTasks')
@@ -373,6 +388,7 @@ export const listByEvent = query({
     if (!event) return [];
 
     let canManageTasks = false;
+    let canViewParticipantTasks = false;
 
     if (event.communityId) {
       const membership = await getCommunityMembership(
@@ -386,10 +402,18 @@ export const listByEvent = query({
         event.createdBy === userId ||
         membership.role === 'owner' ||
         membership.role === 'admin';
-    } else if (event.createdBy !== userId) {
-      return [];
+      canViewParticipantTasks = event.tasksVisibleToParticipants === true;
     } else {
-      canManageTasks = true;
+      canManageTasks = event.createdBy === userId;
+      // Assignment grants only task access. Family visibility alone is not
+      // an invitation to view other tasks, just as it is not an RSVP invitation.
+      canViewParticipantTasks =
+        event.tasksVisibleToParticipants === true &&
+        (await canReadPersonalEvent(
+          ctx,
+          { ...event, allFamily: false },
+          userId
+        ));
     }
 
     const tasks = await ctx.db
@@ -397,10 +421,10 @@ export const listByEvent = query({
       .withIndex('by_event', (q) => q.eq('eventId', eventId))
       .collect();
 
-    // When visibility is disabled and the user is not a manager, return only
-    // tasks assigned to the current user (never hide a member's own tasks).
+    // Without management or explicit participant visibility, return only
+    // assignments to the authenticated account, including across spaces.
     const filteredTasks =
-      !canManageTasks && event.tasksVisibleToParticipants !== true
+      !canManageTasks && !canViewParticipantTasks
         ? tasks.filter((t) => t.assignedToUserId === userId)
         : tasks;
 
@@ -444,9 +468,21 @@ export const create = mutation({
     if (!event) throw new Error('אירוע לא נמצא');
     if (!(await canManageEventTasks(ctx, event, userId)))
       throw new Error('אין הרשאה להוסיף משימות');
+    if (
+      !event.communityId &&
+      (event.status === 'cancelled' || event.deletedAt !== undefined)
+    )
+      throw new Error('לא ניתן להוסיף משימות באירוע זה');
 
     return await ctx.db.insert('eventTasks', {
       eventId,
+      ...(!event.communityId
+        ? {
+            assignedToUserId: event.createdBy,
+            assignedByUserId: userId,
+            assignedAt: Date.now(),
+          }
+        : {}),
       title: title.trim(),
       completed: false,
       order: order ?? 0,
@@ -470,6 +506,11 @@ export const createBatch = mutation({
     if (!event) throw new Error('אירוע לא נמצא');
     if (!(await canManageEventTasks(ctx, event, userId)))
       throw new Error('אין הרשאה להוסיף משימות');
+    if (
+      !event.communityId &&
+      (event.status === 'cancelled' || event.deletedAt !== undefined)
+    )
+      throw new Error('לא ניתן להוסיף משימות באירוע זה');
 
     const ids: string[] = [];
     for (let i = 0; i < tasks.length; i++) {
@@ -477,6 +518,13 @@ export const createBatch = mutation({
       if (!t.title?.trim()) continue;
       const id = await ctx.db.insert('eventTasks', {
         eventId,
+        ...(!event.communityId
+          ? {
+              assignedToUserId: event.createdBy,
+              assignedByUserId: userId,
+              assignedAt: Date.now(),
+            }
+          : {}),
         title: t.title.trim(),
         completed: false,
         order: i,
@@ -525,6 +573,7 @@ export const toggleCompleted = mutation({
     const event = await ctx.db.get(task.eventId);
     if (!event) throw new Error('אירוע לא נמצא');
     if (event.status === 'cancelled') throw new Error('האירוע בוטל');
+    if (event.deletedAt !== undefined) throw new Error('האירוע נמחק');
 
     if (event.communityId) {
       const communityId = event.communityId;
@@ -550,6 +599,8 @@ export const toggleCompleted = mutation({
       if (!isMgr && !isAssignedToMe) {
         throw new Error('אין הרשאה לשנות מצב משימה זו');
       }
+    } else if (event.createdBy !== userId && task.assignedToUserId !== userId) {
+      throw new Error('אין הרשאה לשנות מצב משימה זו');
     }
 
     const nowCompleted = !task.completed;
@@ -658,6 +709,7 @@ export const setAssignee = mutation({
     const event = await ctx.db.get(task.eventId);
     if (!event) throw new Error('אירוע לא נמצא');
     if (event.status === 'cancelled') throw new Error('האירוע בוטל');
+    if (event.deletedAt !== undefined) throw new Error('האירוע נמחק');
 
     const hasUserId = !!task.assignedToUserId;
     const hasManual = !!task.assignedToManual?.trim();
@@ -678,6 +730,28 @@ export const setAssignee = mutation({
         canManageAssignments ||
         membership.role === 'owner' ||
         membership.role === 'admin';
+    }
+
+    // Personal assignments are creator-managed. Keep the existing right to
+    // release one's own task, but never allow claiming a known unassigned ID.
+    if (
+      !event.communityId &&
+      !canManageAssignments &&
+      !(assignee === null && isAssignedUser)
+    ) {
+      throw new Error('אין הרשאה לשנות הקצאת משימה זו');
+    }
+
+    if (!event.communityId && assignee) {
+      if (assignee.type === 'manual') {
+        if (
+          !task.assignedToUserId &&
+          task.assignedToManual?.trim() === assignee.name.trim()
+        )
+          return;
+        throw new Error('הקצאות חדשות דורשות חשבון מקושר');
+      }
+      await assertPersonalAssignee(ctx, event, assignee.userId);
     }
 
     // Community Event integrity check: validates WHO may be the target
@@ -852,6 +926,7 @@ export const claimEventTask = mutation({
     if (!event || !event.communityId)
       throw new Error('פעולה זו זמינה רק באירוע קהילתי');
     if (event.status === 'cancelled') throw new Error('האירוע בוטל');
+    if (event.deletedAt !== undefined) throw new Error('האירוע נמחק');
     if (event.startTime <= Date.now()) {
       throw new ConvexError({
         code: 'EVENT_IS_PAST',
@@ -932,6 +1007,7 @@ export const unclaimEventTask = mutation({
     if (!event || !event.communityId)
       throw new Error('פעולה זו זמינה רק באירוע קהילתי');
     if (event.status === 'cancelled') throw new Error('האירוע בוטל');
+    if (event.deletedAt !== undefined) throw new Error('האירוע נמחק');
 
     const membership = await getCommunityMembership(
       ctx,
@@ -970,6 +1046,46 @@ export const unclaimEventTask = mutation({
 // ─────────────────────────────────────────────────────────────
 // משימות מוקצות — לדף הבית (תאריך ספציפי)
 // ─────────────────────────────────────────────────────────────
+async function personalAssignedTasks(
+  ctx: QueryCtx,
+  userId: Id<'users'>,
+  from: number,
+  to: number
+) {
+  const tasks = await ctx.db
+    .query('eventTasks')
+    .withIndex('by_assigned_user', (q) => q.eq('assignedToUserId', userId))
+    .collect();
+  const rows = await Promise.all(
+    tasks.map(async (task) => {
+      const event = await ctx.db.get(task.eventId);
+      if (
+        !event ||
+        event.communityId ||
+        event.status === 'cancelled' ||
+        event.deletedAt !== undefined ||
+        event.startTime < from ||
+        event.startTime > to
+      )
+        return null;
+      if (!(await canReadPersonalEvent(ctx, event, userId))) return null;
+      return {
+        _id: task._id,
+        title: task.title,
+        completed: task.completed ?? false,
+        eventId: event._id,
+        eventTitle: event.title,
+        eventStartTime: event.startTime,
+        eventEndTime: event.endTime,
+        eventAllDay: event.allDay ?? false,
+        communityId: undefined,
+        communityName: undefined,
+      };
+    })
+  );
+  return rows.filter((row): row is NonNullable<typeof row> => row !== null);
+}
+
 export const listMyAssignedEventTasksForDate = query({
   args: { from: v.number(), to: v.number() },
   handler: async (ctx, { from, to }) => {
@@ -1027,7 +1143,10 @@ export const listMyAssignedEventTasksForDate = query({
       })
     );
 
-    return results.flat();
+    return [
+      ...results.flat(),
+      ...(await personalAssignedTasks(ctx, userId, from, to)),
+    ];
   },
 });
 
@@ -1043,8 +1162,8 @@ export const listMyAssignedEventTasks = query({
       eventStartTime: v.number(),
       eventEndTime: v.number(),
       eventAllDay: v.boolean(),
-      communityId: v.id('communities'),
-      communityName: v.string(),
+      communityId: v.optional(v.id('communities')),
+      communityName: v.optional(v.string()),
     })
   ),
   handler: async (ctx, { from, to }) => {
@@ -1103,7 +1222,10 @@ export const listMyAssignedEventTasks = query({
       })
     );
 
-    return results.flat().sort((a, b) => a.eventStartTime - b.eventStartTime);
+    return [
+      ...results.flat(),
+      ...(await personalAssignedTasks(ctx, userId, from, to)),
+    ].sort((a, b) => a.eventStartTime - b.eventStartTime);
   },
 });
 
@@ -1194,5 +1316,72 @@ export const reorder = mutation({
       patches.map(({ id, order }) => ctx.db.patch(id, { order }))
     );
     return null;
+  },
+});
+
+// Creator-only account choices for the existing personal assignment sheet.
+export const listPersonalAssignees = query({
+  args: { eventId: v.id('events') },
+  handler: async (ctx, { eventId }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const event = await ctx.db.get(eventId);
+    if (!event || event.communityId || event.createdBy !== userId) return [];
+    const ids = new Set([event.createdBy, ...(event.sharedWithUserIds ?? [])]);
+    for (const id of event.sharedWithFamilyMemberIds ?? []) {
+      const memberId = ctx.db.normalizeId('members', id);
+      const row = memberId ? await ctx.db.get(memberId) : null;
+      if (row?.userId && (await isVerifiedProfile(ctx, row)))
+        ids.add(row.userId);
+    }
+    const rows = await Promise.all(
+      [...ids].map(async (id) => {
+        const user = await ctx.db.get(id);
+        return user
+          ? {
+              userId: id,
+              fullName:
+                id === userId ? 'אני' : user.fullName?.trim() || 'משתתף/ת',
+            }
+          : null;
+      })
+    );
+    return rows.filter((row): row is NonNullable<typeof row> => row !== null);
+  },
+});
+
+// Legacy assignment-only access: no source-event identifiers or metadata leave
+// this query. Existing My Tasks renders these rows as undated personal tasks.
+export const listMyPrivatePersonalAssignments = query({
+  args: {},
+  returns: v.array(
+    v.object({
+      _id: v.id('eventTasks'),
+      title: v.string(),
+      completed: v.boolean(),
+    })
+  ),
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const tasks = await ctx.db
+      .query('eventTasks')
+      .withIndex('by_assigned_user', (q) => q.eq('assignedToUserId', userId))
+      .collect();
+    const rows = await Promise.all(
+      tasks.map(async (task) => {
+        const event = await ctx.db.get(task.eventId);
+        if (
+          !event ||
+          event.communityId ||
+          event.status === 'cancelled' ||
+          event.deletedAt !== undefined ||
+          (await canReadPersonalEvent(ctx, event, userId))
+        )
+          return null;
+        return { _id: task._id, title: task.title, completed: task.completed };
+      })
+    );
+    return rows.filter((row): row is NonNullable<typeof row> => row !== null);
   },
 });

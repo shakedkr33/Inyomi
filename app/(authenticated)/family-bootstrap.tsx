@@ -18,6 +18,18 @@ const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
 /**
  * Post-OTP routing: Home if family exists / invite join / skipped setup;
  * otherwise optional family-profile-setup.
+ *
+ * IMPORTANT — this screen is NOT a finite startup destination and must
+ * NEVER call reportDestinationReady()/useStartupDestinationReady(). It
+ * only ever shows a transient "מכינים את החשבון…" spinner before
+ * immediately navigating away (to Home or family-profile-setup) — see the
+ * effect below. If this screen reported visual readiness, the root bridge
+ * would be removed to reveal that transient spinner instead of the actual
+ * final destination. The bridge must stay up across
+ * family-bootstrap → navigation → family-profile-setup/family-profile —
+ * the real destination (app/(authenticated)/family-profile.tsx, when
+ * reached via the family-profile-setup route) is what reports
+ * destination = 'profile-setup'. Do not add a readiness signal here.
  */
 export default function FamilyBootstrapScreen(): React.JSX.Element {
   const router = useRouter();
@@ -52,7 +64,7 @@ export default function FamilyBootstrapScreen(): React.JSX.Element {
 
     if (!hasCompletedOnboardingLocally && !userStatus.onboardingComplete) {
       redirectedRef.current = true;
-      router.replace('/onboarding-hero');
+      router.replace('/onboarding-step1');
       return;
     }
 

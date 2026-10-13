@@ -145,6 +145,10 @@ export const getMyShareLink = query({
     const userId = await getAuthUserId(ctx);
     if (!userId) return null;
 
+    // Same management permission as createShareLink and revokeShareLink.
+    const event = await ctx.db.get(eventId);
+    if (!event || event.createdBy !== userId) return null;
+
     const link = await ctx.db
       .query('shareLinks')
       .withIndex('by_event', (q) => q.eq('eventId', eventId))

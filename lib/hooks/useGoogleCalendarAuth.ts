@@ -54,6 +54,7 @@ import {
 } from 'expo-auth-session';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
+import { importTrace, nextImportTraceInstanceId } from '@/lib/importFlowTrace';
 import {
   deriveGoogleOAuthNativeScheme,
   resolvePlatformGoogleOAuthClientId,
@@ -134,10 +135,18 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
   const isMounted = useRef(true);
   // Guard: prevent triggering a second token exchange for the same auth code.
   const isExchanging = useRef(false);
+  // TEMPORARY diagnostics (lib/importFlowTrace.ts) — identifies this hook
+  // instance so a remount during the OAuth round-trip is visible in logs.
+  const traceIdRef = useRef<number>(0);
+  if (traceIdRef.current === 0) {
+    traceIdRef.current = nextImportTraceInstanceId();
+  }
 
   useEffect(() => {
     isMounted.current = true;
+    importTrace('auth_hook_mount', { hookId: traceIdRef.current });
     return () => {
+      importTrace('auth_hook_unmount', { hookId: traceIdRef.current });
       // Signal all in-flight async work to discard their results.
       isMounted.current = false;
       isExchanging.current = false;
@@ -196,6 +205,7 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
   );
 
   const clearAuthorization = useCallback((): void => {
+    importTrace('auth_clear', { hookId: traceIdRef.current });
     isExchanging.current = false;
     setStatus('idle');
     setAccessToken(null);
@@ -222,16 +232,37 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
 
     let result: GoogleCalendarAuthResult;
     try {
+      importTrace('auth_native_start', { hookId: traceIdRef.current });
       result = await authorizeGoogleCalendar();
-    } catch {
+    } catch (error) {
+      importTrace('auth_native_error', {
+        hookId: traceIdRef.current,
+        // Structured native code only (e.g. INTENT_RESULT_FAILED); never the
+        // error object or message, which could carry unexpected content.
+        errorCode:
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          typeof error.code === 'string'
+            ? error.code
+            : undefined,
+        stillMounted: isMounted.current,
+      });
       if (isMounted.current) {
         setStatus('error');
-        setErrorMessage('לא ניתן להשלים את ההרשאה. נסי שוב.');
+        setErrorMessage('לא ניתן להשלים את ההרשאה. אפשר לנסות שוב.');
         setAccessToken(null);
       }
       return;
     }
 
+    importTrace('auth_native_result', {
+      hookId: traceIdRef.current,
+      cancelled: result.cancelled,
+      hasAccessToken: !!result.accessToken,
+      grantedScopeCount: result.grantedScopes.length,
+      stillMounted: isMounted.current,
+    });
     if (!isMounted.current) return;
 
     // User cancellation is a clean outcome, not an error.
@@ -243,7 +274,7 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
 
     if (!result.accessToken) {
       setStatus('error');
-      setErrorMessage('לא ניתן להשלים את ההרשאה. נסי שוב.');
+      setErrorMessage('לא ניתן להשלים את ההרשאה. אפשר לנסות שוב.');
       setAccessToken(null);
       return;
     }
@@ -253,6 +284,10 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
   }, []);
 
   const startAuthorization = useCallback(async (): Promise<void> => {
+    importTrace('auth_start', {
+      hookId: traceIdRef.current,
+      platform: Platform.OS,
+    });
     // Android's ACTIVE path never touches clientId/redirectUri/useAuthRequest
     // below — see the Android platform note in the file-level comment.
     if (Platform.OS === 'android') {
@@ -266,7 +301,7 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
     if (!hasValidConfig || clientId === null || redirectUri === null) {
       if (isMounted.current) {
         setStatus('error');
-        setErrorMessage('לא ניתן להשלים את ההרשאה. נסי שוב.');
+        setErrorMessage('לא ניתן להשלים את ההרשאה. אפשר לנסות שוב.');
       }
       return;
     }
@@ -288,11 +323,18 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
     } catch {
       if (isMounted.current) {
         setStatus('error');
-        setErrorMessage('לא ניתן להשלים את ההרשאה. נסי שוב.');
+        setErrorMessage('לא ניתן להשלים את ההרשאה. אפשר לנסות שוב.');
       }
       return;
     }
 
+    importTrace('auth_prompt_result', {
+      hookId: traceIdRef.current,
+      type: result.type,
+      hasAuthCode:
+        result.type === 'success' ? !!result.params?.code : undefined,
+      stillMounted: isMounted.current,
+    });
     if (!isMounted.current) return;
 
     // Cancel / dismiss: return silently to idle without any error message.
@@ -310,7 +352,7 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
         setErrorMessage('לא ניתנה הרשאה לגישה ליומן. ניתן לנסות שוב.');
       } else {
         setStatus('error');
-        setErrorMessage('לא ניתן להשלים את ההרשאה. נסי שוב.');
+        setErrorMessage('לא ניתן להשלים את ההרשאה. אפשר לנסות שוב.');
       }
       setAccessToken(null);
       return;
@@ -325,7 +367,7 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
     const authCode = result.params?.code;
     if (!authCode) {
       setStatus('error');
-      setErrorMessage('לא ניתן להשלים את ההרשאה. נסי שוב.');
+      setErrorMessage('לא ניתן להשלים את ההרשאה. אפשר לנסות שוב.');
       setAccessToken(null);
       return;
     }
@@ -354,6 +396,10 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
         { tokenEndpoint: GOOGLE_DISCOVERY.tokenEndpoint }
       );
 
+      importTrace('auth_token_exchange_success', {
+        hookId: traceIdRef.current,
+        stillMounted: isMounted.current,
+      });
       if (!isMounted.current) return;
 
       // Retain only the access token. Discard the full TokenResponse object,
@@ -362,9 +408,13 @@ export function useGoogleCalendarAuth(): UseGoogleCalendarAuthResult {
       setAccessToken(token);
       setStatus('authorized');
     } catch {
+      importTrace('auth_token_exchange_failure', {
+        hookId: traceIdRef.current,
+        stillMounted: isMounted.current,
+      });
       if (!isMounted.current) return;
       setStatus('error');
-      setErrorMessage('לא ניתן להשלים את ההרשאה. נסי שוב.');
+      setErrorMessage('לא ניתן להשלים את ההרשאה. אפשר לנסות שוב.');
       setAccessToken(null);
     } finally {
       isExchanging.current = false;

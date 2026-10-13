@@ -20,6 +20,10 @@ import {
 } from '@/components/home/EventTasksAccordion';
 import { HomeImportantItemsPreview } from '@/components/home/HomeImportantItemsPreview';
 import type { ImportantItem } from '@/components/InlineImportantItemsSection';
+import {
+  type ProfileCircle,
+  ProfileCircles,
+} from '@/components/ProfileCircles';
 import { TaskCheckbox } from '@/components/TaskCheckbox';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
@@ -80,7 +84,9 @@ export type HomeDailyItem = {
   pendingPersonalInvite?: boolean;
   myPersonalRsvpStatus?: 'yes' | 'maybe' | 'no' | 'none';
   assigneeDisplays?: { initials: string; color: string }[];
-  profileCircles?: unknown[];
+  profileCircles?: ProfileCircle[];
+  profileCirclesExtraCount?: number;
+  profileCirclesContext?: 'sharedWith' | 'alsoAddedToCalendar';
   myAssignedTasks?: { id: string; title: string; completed: boolean }[];
   /** Read-only subtask preview items — populated only for task-type items. */
   subtasks?: HomeSubtaskPreviewItem[];
@@ -501,6 +507,36 @@ const DismissReminderButton = ({
   </Pressable>
 );
 
+// ─── Task assignee avatar circles (local helper) ─────────────────────────────
+
+/** Overlapping assignee initials circles for task cards — matches Calendar sizing. */
+function TaskAssigneeCircles({
+  assignees,
+}: {
+  assignees: { initials: string; color: string }[];
+}): React.JSX.Element | null {
+  if (assignees.length === 0) return null;
+  return (
+    <View style={styles.taskAssigneeRow}>
+      {assignees.slice(0, 3).map((d, i) => (
+        <View
+          key={`${d.initials}:${d.color}`}
+          style={[
+            styles.taskAssigneeCircle,
+            {
+              backgroundColor: d.color,
+              marginLeft: i === 0 ? 0 : -6,
+              zIndex: 3 - i,
+            },
+          ]}
+        >
+          <Text style={styles.taskAssigneeInitials}>{d.initials}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 // ─── UnifiedTimelineCard ─────────────────────────────────────────────────────
 
 const UnifiedTimelineCard = ({
@@ -724,6 +760,25 @@ const UnifiedTimelineCard = ({
             </View>
           ) : null}
 
+          {/* Participant / family profile circles — events */}
+          {item.type === 'event' &&
+          ((item.profileCircles?.length ?? 0) > 0 ||
+            (item.profileCirclesExtraCount ?? 0) > 0) ? (
+            <View style={styles.profileCirclesRow}>
+              <ProfileCircles
+                profiles={item.profileCircles ?? []}
+                extraCount={item.profileCirclesExtraCount ?? 0}
+                context={item.profileCirclesContext ?? 'sharedWith'}
+                size={22}
+              />
+            </View>
+          ) : null}
+
+          {/* Assignee avatars — tasks */}
+          {item.type === 'task' ? (
+            <TaskAssigneeCircles assignees={item.assigneeDisplays ?? []} />
+          ) : null}
+
           {contextText ? (
             <Text style={styles.contextText}>{contextText}</Text>
           ) : null}
@@ -772,8 +827,8 @@ const UnifiedTimelineCard = ({
             onToggle={onToggleEventTasks ?? (() => {})}
             onToggleCompleted={onToggleEventTaskCompleted ?? (() => {})}
             eventEndTime={item.endAt}
-            onClaimTask={onClaimEventTask}
-            onUnclaimTask={onUnclaimEventTask}
+            onClaimTask={item.communityId ? onClaimEventTask : undefined}
+            onUnclaimTask={item.communityId ? onUnclaimEventTask : undefined}
             summaryLabel={eventTasksSummaryLabel}
             emphasized
           />
@@ -889,6 +944,18 @@ const UnifiedTimelineCard = ({
           </View>
         ) : null}
 
+        {/* Participant / family profile circles */}
+        {(item.profileCircles?.length ?? 0) > 0 ||
+        (item.profileCirclesExtraCount ?? 0) > 0 ? (
+          <View style={styles.profileCirclesRow}>
+            <ProfileCircles
+              profiles={item.profileCircles ?? []}
+              extraCount={item.profileCirclesExtraCount ?? 0}
+              context={item.profileCirclesContext ?? 'sharedWith'}
+            />
+          </View>
+        ) : null}
+
         {/* Relative time context */}
         {contextText ? (
           <Text style={styles.compactContextText}>{contextText}</Text>
@@ -977,6 +1044,9 @@ const UnifiedTimelineCard = ({
           </Text>
         </View>
 
+        {/* Assignee avatars */}
+        <TaskAssigneeCircles assignees={item.assigneeDisplays ?? []} />
+
         {/* Context text */}
         {contextText ? (
           <Text style={styles.compactContextText}>{contextText}</Text>
@@ -1047,8 +1117,8 @@ const UnifiedTimelineCard = ({
             onToggle={onToggleEventTasks ?? (() => {})}
             onToggleCompleted={onToggleEventTaskCompleted ?? (() => {})}
             eventEndTime={item.endAt}
-            onClaimTask={onClaimEventTask}
-            onUnclaimTask={onUnclaimEventTask}
+            onClaimTask={item.communityId ? onClaimEventTask : undefined}
+            onUnclaimTask={item.communityId ? onUnclaimEventTask : undefined}
             summaryLabel={eventTasksSummaryLabel}
             emphasized
           />
@@ -1136,8 +1206,8 @@ const UnifiedTimelineCard = ({
             onToggle={onToggleEventTasks ?? (() => {})}
             onToggleCompleted={onToggleEventTaskCompleted ?? (() => {})}
             eventEndTime={item.endAt}
-            onClaimTask={onClaimEventTask}
-            onUnclaimTask={onUnclaimEventTask}
+            onClaimTask={item.communityId ? onClaimEventTask : undefined}
+            onUnclaimTask={item.communityId ? onUnclaimEventTask : undefined}
             summaryLabel={eventTasksSummaryLabel}
             emphasized
           />
@@ -1253,6 +1323,8 @@ const UnifiedTimelineCard = ({
             >
               {item.title}
             </Text>
+            {/* Assignee avatars */}
+            <TaskAssigneeCircles assignees={item.assigneeDisplays ?? []} />
             {contextText ? (
               <Text style={styles.compactContextText}>{contextText}</Text>
             ) : null}
@@ -1320,8 +1392,8 @@ const UnifiedTimelineCard = ({
             onToggle={onToggleEventTasks ?? (() => {})}
             onToggleCompleted={onToggleEventTaskCompleted ?? (() => {})}
             eventEndTime={item.endAt}
-            onClaimTask={onClaimEventTask}
-            onUnclaimTask={onUnclaimEventTask}
+            onClaimTask={item.communityId ? onClaimEventTask : undefined}
+            onUnclaimTask={item.communityId ? onUnclaimEventTask : undefined}
             summaryLabel={eventTasksSummaryLabel}
             emphasized
           />
@@ -1728,6 +1800,9 @@ export function HomeDailyCommandCenter({
                               )}
                             </Text>
                           ) : null}
+                          <TaskAssigneeCircles
+                            assignees={task.assigneeDisplays ?? []}
+                          />
                         </Pressable>
                       </View>
                       {(task.subtasks?.length ?? 0) > 0 ? (
@@ -2144,6 +2219,9 @@ export function HomeDailyCommandCenter({
                         >
                           {task.title}
                         </Text>
+                        <TaskAssigneeCircles
+                          assignees={task.assigneeDisplays ?? []}
+                        />
                       </View>
                       <MaterialIcons
                         color="#ADB3B5"
@@ -2292,6 +2370,9 @@ export function HomeDailyCommandCenter({
                           >
                             {task.title}
                           </Text>
+                          <TaskAssigneeCircles
+                            assignees={task.assigneeDisplays ?? []}
+                          />
                         </View>
                         <MaterialIcons
                           color="#ADB3B5"
@@ -3174,5 +3255,28 @@ const styles = StyleSheet.create({
     marginTop: 4,
     paddingHorizontal: 16,
     paddingBottom: 12,
+  },
+  profileCirclesRow: {
+    marginTop: 4,
+  },
+  taskAssigneeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  taskAssigneeCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  taskAssigneeInitials: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#fff',
+    includeFontPadding: false,
   },
 });

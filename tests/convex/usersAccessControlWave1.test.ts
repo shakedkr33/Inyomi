@@ -113,9 +113,10 @@ describe('Wave 1 — legitimate self-service replacements remain intact', () => 
     expect(argsBlock).not.toMatch(/userId/);
   });
 
-  it('updateMyProfile still preserves claimed-name protection (isEntityClaimedByOtherUser) for self-edits', () => {
+  it('updateMyProfile requires ownership for family edits and keeps self identity synchronization', () => {
     const block = extractExportBlock(USERS_SOURCE, 'updateMyProfile');
-    expect(block).toContain('isEntityClaimedByOtherUser');
+    expect(block).toContain('await requireSpaceOwner(ctx, spaceId)');
+    expect(block).toContain('displayName: canonicalFullNameForSync');
   });
 
   it('deleteMyAccount resolves its target only from getAuthUserId(ctx) (self only) — fixed by the account-deletion engine task; see tests/convex/accountDeletion.test.ts for full coverage of that fix', () => {

@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { useStartupDestinationReady } from '@/lib/hooks/useStartupDestinationReady';
 import { APP_IS_RTL, rtl } from '@/lib/rtl';
 import { colors as tc } from '@/theme/colors';
 
@@ -72,6 +73,14 @@ function MatchCardBody({
  * own separate profile instead.
  */
 export default function PhoneMatchConfirmationScreen(): React.JSX.Element {
+  // Finite startup destination — this screen is a genuine, focused
+  // redirect target (reached via router.replace from the authenticated
+  // layout). A loading indicator here is an acceptable destination
+  // surface (see lib/hooks/useStartupDestinationReady.ts) since, unlike
+  // the top-level deep-link routes, there is no further redirect pending
+  // once this route is reached.
+  const { onLayout: handlePhoneMatchDestinationLayout } =
+    useStartupDestinationReady('phone-match');
   const pendingMatches = useQuery(api.members.getPendingPhoneMatches, {});
   const acceptPendingPhoneMatch = useMutation(
     api.members.acceptPendingPhoneMatch
@@ -135,7 +144,10 @@ export default function PhoneMatchConfirmationScreen(): React.JSX.Element {
 
   if (pendingMatches === undefined) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
+      <SafeAreaView
+        style={styles.loadingContainer}
+        onLayout={handlePhoneMatchDestinationLayout}
+      >
         <ActivityIndicator color={tc.primary} size="large" />
       </SafeAreaView>
     );
@@ -144,6 +156,7 @@ export default function PhoneMatchConfirmationScreen(): React.JSX.Element {
   return (
     <SafeAreaView
       style={[styles.container, ANDROID_MATCH_IOS_LAYOUT && styles.rtlRoot]}
+      onLayout={handlePhoneMatchDestinationLayout}
     >
       <ScrollView
         contentContainerStyle={styles.scrollContent}

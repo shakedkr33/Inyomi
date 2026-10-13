@@ -15,6 +15,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import type { Id } from '@/convex/_generated/dataModel';
 import type { Participant } from '@/lib/types/event';
 import { rtl } from '@/lib/rtl';
 // SHARED: phone selection logic for contact import
@@ -37,8 +38,8 @@ export interface FamilyMemberChip {
   _id: string;
   displayName?: string;
   color?: string;
-  /** Convex user ID when this contact has matched/joined the app. Used for RSVP permissions. */
-  matchedUserId?: string;
+  /** Verified account from the server; a phone match alone is not an invitation. */
+  linkedUserId?: Id<'users'>;
 }
 
 const PRIMARY = '#36a9e2';
@@ -67,13 +68,6 @@ function contactKey(contact: Contacts.Contact): string {
 }
 
 // ─── Email parsing ────────────────────────────────────────────────────────────
-
-function parseEmails(raw: string): string[] {
-  return raw
-    .split(/[,;\n\r]+/)
-    .map((e) => e.trim())
-    .filter((e) => e.length > 0 && e.includes('@') && e.includes('.'));
-}
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -105,7 +99,6 @@ export function ParticipantsCard({
   const [sheetView, setSheetView] = useState<
     'main' | 'contacts' | 'phone-disambig'
   >('main');
-  const [emailText, setEmailText] = useState('');
   const [contacts, setContacts] = useState<Contacts.Contact[]>([]);
   const [contactSearch, setContactSearch] = useState('');
   const [loadingContacts, setLoadingContacts] = useState(false);
@@ -134,13 +127,11 @@ export function ParticipantsCard({
 
   const openSheet = useCallback((): void => {
     setSheetView('main');
-    setEmailText('');
     setSheetOpen(true);
   }, []);
 
   const closeSheet = useCallback((): void => {
     setSheetOpen(false);
-    setEmailText('');
     setContactSearch('');
     setContacts([]);
     setSheetView('main');
@@ -148,26 +139,6 @@ export function ParticipantsCard({
     setDisambigContacts([]);
     setDisambigSelections({});
   }, []);
-
-  // ── Add participants from email textarea ──────────────────────────────────
-  const confirmEmailInput = (): void => {
-    const emails = parseEmails(emailText);
-    if (emails.length === 0) {
-      closeSheet();
-      return;
-    }
-    const existing = new Set(participants.map((p) => p.email));
-    const newOnes: Participant[] = emails
-      .filter((email) => !existing.has(email))
-      .map((email, i) => ({
-        id: `email-${Date.now()}-${i}`,
-        name: email,
-        email,
-        color: CIRCLE_BG, // use turquoise tint for email participants
-      }));
-    onChange([...participants, ...newOnes]);
-    closeSheet();
-  };
 
   // ── Reopen sheet directly in contacts view (after permission + fetch) ────────
   const reopenSheetToContacts = useCallback((): void => {
@@ -242,34 +213,17 @@ export function ParticipantsCard({
     // EVENT FLOW: multi-select contact import with deferred phone disambiguation
     // FIXED: updated phone label filter to mobile-capable labels only
     // Disambiguation is only needed when a contact has > 1 mobile-capable number
-    // DEBUG: remove after confirming fix
-    for (const c of drafted) {
-      const mp = getMobilePhones(c);
-      console.log(
-        '[DEBUG event] contact:',
-        c.name,
-        '| all phones:',
-        JSON.stringify(
-          c.phoneNumbers?.map((p) => ({ label: p.label, number: p.number }))
-        ),
-        '| mobile phones:',
-        JSON.stringify(mp.map((p) => ({ label: p.label, number: p.number }))),
-        '| length:',
-        mp.length,
-        '| → needs disambig:',
-        mp.length > 1
-      );
-    }
     const needsDisambig = drafted.filter((c) => getMobilePhones(c).length > 1);
 
     if (needsDisambig.length === 0) {
       // All contacts have 0 or 1 phone number — add directly
-      const newOnes: Participant[] = drafted.map((c, i) => {
+      const newOnes: Participant[] = drafted.map((c) => {
         const phone = normalizePhone(getPrimaryPhone(c)) || undefined;
         const localDisplayName = c.name?.trim() || undefined;
         // TODO: for shared event view, resolve sharedDisplayName via user lookup by phone before rendering to non-creator participants
         return {
-          id: `contact-${Date.now()}-${i}`,
+          id: `contact:${contactKey(c)}`,
+          source: 'contact',
           name: localDisplayName ?? phone ?? '',
           phone,
           localDisplayName,
@@ -298,14 +252,15 @@ export function ParticipantsCard({
       .map((key) => contacts.find((c) => contactKey(c) === key))
       .filter((c): c is Contacts.Contact => c != null);
 
-    const newOnes: Participant[] = allDrafted.map((c, i) => {
+    const newOnes: Participant[] = allDrafted.map((c) => {
       const key = contactKey(c);
       // Use disambig selection if available, otherwise fall back to primary phone
       const rawPhone = disambigSelections[key] ?? getPrimaryPhone(c);
       const phone = normalizePhone(rawPhone) || undefined;
       const localDisplayName = c.name?.trim() || undefined;
       return {
-        id: `contact-${Date.now()}-${i}`,
+        id: `contact:${contactKey(c)}`,
+        source: 'contact',
         name: localDisplayName ?? phone ?? '',
         phone,
         localDisplayName,
@@ -333,6 +288,50 @@ export function ParticipantsCard({
   const initial = (p: Participant): string =>
     (p.name.trim() || '?')[0]?.toUpperCase() ?? '?';
 
+  const renderFamilyAvatars = () =>
+    familyMembers.map((member) => {
+      const selected = sharedWithFamilyMemberIds.includes(member._id);
+      return (
+        <Pressable
+          key={member._id}
+          style={s.memberChipWrap}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: selected }}
+          accessibilityLabel={member.displayName ?? 'פרופיל משפחתי'}
+          onPress={() =>
+            onFamilyChange?.(
+              allFamily,
+              selected
+                ? sharedWithFamilyMemberIds.filter((id) => id !== member._id)
+                : [...sharedWithFamilyMemberIds, member._id]
+            )
+          }
+        >
+          <View
+            style={[
+              s.memberCircle,
+              {
+                backgroundColor: member.color ?? PRIMARY,
+                opacity: selected ? 1 : 0.5,
+              },
+            ]}
+          >
+            <Text style={s.memberInitials}>
+              {(member.displayName?.trim() || '?')[0]}
+            </Text>
+            {selected ? (
+              <View style={s.selectionCheck}>
+                <Ionicons name="checkmark" size={14} color="#fff" />
+              </View>
+            ) : null}
+          </View>
+          <Text style={s.memberName} numberOfLines={2}>
+            {member.displayName}
+          </Text>
+        </Pressable>
+      );
+    });
+
   return (
     <View style={s.card}>
       {/* ── Header ── */}
@@ -341,43 +340,53 @@ export function ParticipantsCard({
           <Ionicons name="people-outline" size={20} color={PRIMARY} />
         </View>
         <Text style={s.label}>משתתפים</Text>
-        <Pressable
-          style={s.addBtn}
-          onPress={openSheet}
-          accessible={true}
-          accessibilityRole="button"
-          accessibilityLabel="הוסף משתתף"
-        >
-          <Ionicons name="add" size={18} color={PRIMARY} />
-        </Pressable>
       </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ direction: 'rtl' }}
+        contentContainerStyle={s.familyChipsRow}
+      >
+        {renderFamilyAvatars()}
+        <Pressable
+          style={s.memberCircle}
+          onPress={openSheet}
+          accessibilityRole="button"
+          accessibilityLabel="הוספת משתתפים"
+        >
+          <Ionicons name="add-circle-outline" size={40} color={PRIMARY} />
+        </Pressable>
+      </ScrollView>
 
       {/* ── Participant circles row ── */}
       {participants.length > 0 && (
         <View style={s.circlesRow}>
-          {participants.map((p) => {
-            const cc = circleColors(p.color);
-            return (
-              <Pressable
-                key={p.id}
-                style={[
-                  s.circle,
-                  {
-                    backgroundColor: cc.bg,
-                    borderColor: cc.bg === CIRCLE_BG ? CIRCLE_BORDER : cc.bg,
-                  },
-                ]}
-                onLongPress={() => removeParticipant(p.id)}
-                accessible={true}
-                accessibilityRole="button"
-                accessibilityLabel={`${p.name} — לחץ לחיצה ארוכה להסרה`}
-              >
-                <Text style={[s.circleText, { color: cc.text }]}>
-                  {initial(p)}
-                </Text>
-              </Pressable>
-            );
-          })}
+          {participants
+            .filter((p) => !familyMembers.some((m) => m._id === p.id))
+            .map((p) => {
+              const cc = circleColors(p.color);
+              return (
+                <Pressable
+                  key={p.id}
+                  style={[
+                    s.circle,
+                    {
+                      backgroundColor: cc.bg,
+                      borderColor: cc.bg === CIRCLE_BG ? CIRCLE_BORDER : cc.bg,
+                    },
+                  ]}
+                  onLongPress={() => removeParticipant(p.id)}
+                  accessible={true}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${p.name} — לחץ לחיצה ארוכה להסרה`}
+                >
+                  <Text style={[s.circleText, { color: cc.text }]}>
+                    {initial(p)}
+                  </Text>
+                </Pressable>
+              );
+            })}
 
           {/* "הצג הכל" — appears right next to circles */}
           <Pressable
@@ -763,102 +772,7 @@ export function ParticipantsCard({
                               contentContainerStyle={s.familyChipsRow}
                               style={{ direction: 'rtl' }}
                             >
-                              <Pressable
-                                style={[
-                                  s.allChip,
-                                  allFamily && s.allChipSelected,
-                                ]}
-                                onPress={() => {
-                                  if (allFamily) {
-                                    onFamilyChange(false, []);
-                                  } else {
-                                    onFamilyChange(
-                                      true,
-                                      familyMembers.map((m) => m._id)
-                                    );
-                                  }
-                                }}
-                                accessible={true}
-                                accessibilityRole="button"
-                                accessibilityLabel="כולם"
-                                accessibilityState={{ selected: allFamily }}
-                              >
-                                <Text
-                                  style={[
-                                    s.allChipText,
-                                    allFamily && s.allChipTextSelected,
-                                  ]}
-                                >
-                                  כולם
-                                </Text>
-                              </Pressable>
-
-                              {familyMembers.map((member) => {
-                                const isSelected =
-                                  allFamily ||
-                                  sharedWithFamilyMemberIds.includes(
-                                    member._id
-                                  );
-                                const initials = (member.displayName ?? '?')
-                                  .trim()
-                                  .substring(0, 2);
-                                const color = member.color ?? PRIMARY;
-                                return (
-                                  <Pressable
-                                    key={member._id}
-                                    style={s.memberChipWrap}
-                                    onPress={() => {
-                                      if (allFamily) {
-                                        const rest = familyMembers
-                                          .map((m) => m._id)
-                                          .filter((id) => id !== member._id);
-                                        onFamilyChange(false, rest);
-                                      } else {
-                                        const next = isSelected
-                                          ? sharedWithFamilyMemberIds.filter(
-                                              (id) => id !== member._id
-                                            )
-                                          : [
-                                              ...sharedWithFamilyMemberIds,
-                                              member._id,
-                                            ];
-                                        onFamilyChange(false, next);
-                                      }
-                                    }}
-                                    accessible={true}
-                                    accessibilityRole="button"
-                                    accessibilityLabel={
-                                      member.displayName ?? 'חבר משפחה'
-                                    }
-                                    accessibilityState={{
-                                      selected: isSelected,
-                                    }}
-                                  >
-                                    <View
-                                      style={[
-                                        s.memberCircle,
-                                        { backgroundColor: color },
-                                        isSelected && {
-                                          borderColor: color,
-                                          borderWidth: 3,
-                                          opacity: 1,
-                                        },
-                                        !isSelected && { opacity: 0.45 },
-                                      ]}
-                                    >
-                                      <Text style={s.memberInitials}>
-                                        {initials}
-                                      </Text>
-                                    </View>
-                                    <Text
-                                      style={s.memberName}
-                                      numberOfLines={1}
-                                    >
-                                      {member.displayName ?? ''}
-                                    </Text>
-                                  </Pressable>
-                                );
-                              })}
+                              {renderFamilyAvatars()}
                             </ScrollView>
                             <Text style={s.familyHelperText}>
                               האירוע תמיד נשמר גם אצלך
@@ -882,8 +796,8 @@ export function ParticipantsCard({
                                 עדיין לא הוגדר פרופיל משפחתי
                               </Text>
                               <Text style={s.familyEmptyBody}>
-                                אחרי שתגדירי את בני המשפחה, תוכלי לשתף איתם
-                                אירועים ולבחור משתתפים בקלות.
+                                לאחר הגדרת הפרופילים המשפחתיים ניתן לבחור אותם
+                                כמשתתפים באירועים.
                               </Text>
                               <Pressable
                                 style={s.familyEmptyCta}
@@ -936,34 +850,9 @@ export function ParticipantsCard({
                       </Text>
                     </Pressable>
 
-                    <View style={s.separatorRow}>
-                      <View style={s.separatorLine} />
-                      <Text style={s.separatorOr}>או הכנס ישירות</Text>
-                      <View style={s.separatorLine} />
-                    </View>
-
-                    <Text style={s.emailHint}>
-                      כתובות אימייל, מופרדות בפסיק, נקודה-פסיק או שורה חדשה
-                    </Text>
-                    <TextInput
-                      style={s.emailTextArea}
-                      value={emailText}
-                      onChangeText={setEmailText}
-                      placeholder={'user@example.com, another@example.com'}
-                      placeholderTextColor="#9ca3af"
-                      textAlign="right"
-                      multiline
-                      numberOfLines={3}
-                      keyboardType="email-address"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      accessible={true}
-                      accessibilityLabel="כתובות אימייל"
-                    />
-
                     <Pressable
                       style={s.saveBtn}
-                      onPress={confirmEmailInput}
+                      onPress={closeSheet}
                       accessible={true}
                       accessibilityRole="button"
                       accessibilityLabel="שמור"
@@ -1059,6 +948,14 @@ export function ParticipantsCard({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const s = StyleSheet.create({
+  selectionCheck: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    borderRadius: 10,
+    backgroundColor: PRIMARY,
+    padding: 2,
+  },
   card: {
     backgroundColor: '#fff',
     borderRadius: 14,

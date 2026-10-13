@@ -2659,11 +2659,8 @@ export default function CalendarScreen(): React.JSX.Element {
               return rawItems && rawItems.length > 0 ? rawItems : undefined;
             })()
           : undefined,
-        // FIX — Monthly/Timeline parity: only ever MY assigned Community
-        // Event tasks (server query already scopes to the viewer).
-        myAssignedTasks: isSavedCommunityInSpace
-          ? monthTasksByEventId[ev._id as string]
-          : undefined,
+        // The server scopes personal and community tasks to my account.
+        myAssignedTasks: monthTasksByEventId[ev._id as string],
       };
       if (!eventsByDay[day].some((e) => e.id === personalRow.id)) {
         eventsByDay[day].push(personalRow);

@@ -111,7 +111,7 @@ describe('family-bootstrap.tsx — no REPLACE to a sibling Tabs.Screen', () => {
       "router.replace('/(auth)/sign-in')"
     );
     expect(FAMILY_BOOTSTRAP_SOURCE).toContain(
-      "router.replace('/onboarding-hero')"
+      "router.replace('/onboarding-step1')"
     );
   });
 

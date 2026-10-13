@@ -28,11 +28,11 @@
 /**
  * How far into the past the event scan should reach.
  * 'none'        → start of today (Asia/Jerusalem)
- * 'one_month'   → one calendar month before today
  * 'two_months'  → two calendar months before today
+ * 'one_year'    → twelve calendar months (one year) before today
  * End is always forwardMonths forward from today (default: 6).
  */
-export type PastRange = 'none' | 'one_month' | 'two_months';
+export type PastRange = 'none' | 'two_months' | 'one_year';
 
 /** How far forward the scan should reach. */
 export type ForwardMode = 'six_months' | 'one_year';
@@ -282,13 +282,13 @@ export function buildDateRange(
   let startMonth0 = month0;
   let startDay = day;
 
-  if (pastRange === 'one_month') {
-    const d = new Date(year, month0 - 1, day);
+  if (pastRange === 'two_months') {
+    const d = new Date(year, month0 - 2, day);
     startYear = d.getFullYear();
     startMonth0 = d.getMonth();
     startDay = d.getDate();
-  } else if (pastRange === 'two_months') {
-    const d = new Date(year, month0 - 2, day);
+  } else if (pastRange === 'one_year') {
+    const d = new Date(year, month0 - 12, day);
     startYear = d.getFullYear();
     startMonth0 = d.getMonth();
     startDay = d.getDate();

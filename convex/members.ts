@@ -303,10 +303,9 @@ export async function executeFamilyJoin(
 // ── isEntityClaimedByOtherUser — Phase 1 claimed-name protection ────────────
 /**
  * Pure predicate: true when `entity` is a joined, claimed profile that
- * belongs to a real authenticated user OTHER than `callerUserId`. Used to
- * block a family admin/owner from overwriting a claimed user's canonical
- * displayName via updateMyProfile's familyContacts sync. Does not affect
- * unclaimed (manual) entities or the caller's own claimed entity.
+ * belongs to a real authenticated user OTHER than `callerUserId`.
+ * Retained for legacy consumers; owner profile management no longer uses
+ * this predicate to prohibit edits to the family display label.
  */
 export function isEntityClaimedByOtherUser(
   entity: { userId?: Id<'users'>; inviteStatus?: string },
@@ -918,6 +917,13 @@ export const listMyFamilyContacts = query({
     const spaceId = await resolveMySpaceId(ctx, userId);
 
     if (!spaceId) return { selfEntityId: null, members: [] };
+    const callerRows = await ctx.db
+      .query('members')
+      .withIndex('by_user', (q) => q.eq('userId', userId))
+      .collect();
+    if (!callerRows.some((row) => row.spaceId === spaceId && resolveKind(row) === 'access')) {
+      return { selfEntityId: null, members: [] };
+    }
 
     // Primary path: use by_kind index for rows that have kind stamped
     const indexedEntities = await ctx.db
@@ -954,12 +960,10 @@ export const listMyFamilyContacts = query({
     // The space admin has a kind='access' row, not a kind='entity' row, so they are
     // never returned by the entity query. For non-admin viewers we fetch the admin's
     // access row and their user record to build a synthetic member entry.
-    const adminAccessRow = await ctx.db
-      .query('members')
-      .withIndex('by_space', (q) => q.eq('spaceId', spaceId))
-      .filter((q) => q.eq(q.field('role'), 'admin'))
-      .filter((q) => q.eq(q.field('kind'), 'access'))
-      .first();
+    const space = await ctx.db.get(spaceId);
+    const adminAccessRow = allRows.find((row) =>
+      resolveKind(row) === 'access' && row.userId === space?.ownerId
+    );
 
     // FIXED: admin entry now includes phone from users record, shown as linked user not manual
     let adminEntry: {
@@ -969,6 +973,7 @@ export const listMyFamilyContacts = query({
       selectedPhoneNumber: string | undefined;
       maskedPhone: string | undefined;
       matchedUserId: Id<'users'> | undefined;
+      linkedUserId: Id<'users'> | undefined;
       inviteStatus: 'joined';
       memberType: 'person';
       isFullyJoined: true;
@@ -997,6 +1002,7 @@ export const listMyFamilyContacts = query({
           selectedPhoneNumber: adminPhone,
           maskedPhone: adminPhoneLocal ? maskPhone(adminPhoneLocal) : undefined,
           matchedUserId: adminAccessRow.userId,
+          linkedUserId: adminAccessRow.userId,
           inviteStatus: 'joined',
           memberType: 'person',
           isFullyJoined: true,
@@ -1044,6 +1050,7 @@ export const listMyFamilyContacts = query({
             selectedPhoneNumber: myPhone,
             maskedPhone: myPhoneLocal ? maskPhone(myPhoneLocal) : undefined,
             matchedUserId: userId,
+            linkedUserId: userId,
             inviteStatus: 'joined',
             memberType: 'person',
             isFullyJoined: true,
@@ -1080,6 +1087,7 @@ export const listMyFamilyContacts = query({
           selectedPhoneNumber: m.selectedPhoneNumber,
           maskedPhone: localPhone ? maskPhone(localPhone) : undefined,
           matchedUserId: m.matchedUserId,
+          linkedUserId: fullyJoined && m.memberType !== 'pet' ? m.userId : undefined,
           inviteStatus: m.inviteStatus,
           displayName,
           color: m.color,
@@ -1151,11 +1159,8 @@ export const getSpaceAdminId = query({
       .withIndex('by_space', (q) => q.eq('spaceId', spaceId))
       .collect();
 
-    const spaceAdminRow = spaceRows.find(
-      (r) => resolveKind(r) === 'access' && r.role === 'admin'
-    );
-
-    return spaceAdminRow?.userId ?? null;
+    if (!spaceRows.some((row) => row.userId === userId && resolveKind(row) === 'access')) return null;
+    return (await ctx.db.get(spaceId))?.ownerId ?? null;
   },
 });
 
@@ -1185,6 +1190,7 @@ export const getMySpaceRole = query({
     return {
       spaceId: spaceRow.spaceId,
       role: spaceRow.role,
+      isOwner: (await ctx.db.get(spaceRow.spaceId))?.ownerId === userId,
     };
   },
 });
@@ -1258,33 +1264,46 @@ export async function hasCreatorOrphanAuthority(
   });
 }
 
-// ── requireSpaceAdmin ─────────────────────────────────────────────────────────
-// FIXED: permission guard helper for admin-only mutations
-// Throws PERMISSION_DENIED if the caller is not an admin-kind access row for the space.
-async function requireSpaceAdmin(
+// Profile management belongs to the space owner, not an arbitrary admin row.
+export async function requireSpaceOwner(
   ctx: MutationCtx,
-  spaceId: string
+  spaceId: Id<'spaces'>
 ): Promise<void> {
   const userId = await getAuthUserId(ctx);
   if (!userId) throw new Error(PERMISSION_DENIED);
+  const space = await ctx.db.get(spaceId);
+  const rows = await ctx.db.query('members')
+    .withIndex('by_user', (q) => q.eq('userId', userId)).collect();
+  if (space?.ownerId !== userId || !rows.some(
+    (row) => row.spaceId === spaceId && resolveKind(row) === 'access'
+  )) throw new Error(PERMISSION_DENIED);
+}
 
-  const rows = await ctx.db
-    .query('members')
-    .withIndex('by_user', (q) => q.eq('userId', userId))
-    .collect();
-
-  const accessRow = rows.find(
-    (r) =>
-      r.spaceId === spaceId && resolveKind(r) === 'access' && r.role === 'admin'
-  );
-
-  if (!accessRow) throw new Error(PERMISSION_DENIED);
+/** Fail closed until a safe personal-data migration on removal is implemented.
+ * Matching identifiers are used only to BLOCK deletion, never to revoke access.
+ */
+export async function assertProfileCanBeRemoved(
+  ctx: MutationCtx,
+  row: Doc<'members'>
+): Promise<void> {
+  const space = await ctx.db.get(row.spaceId);
+  if (row.userId === space?.ownerId || row.matchedUserId === space?.ownerId) {
+    throw new Error('לא ניתן להסיר את פרופיל הבעלות על המרחב');
+  }
+  const rows = await ctx.db.query('members')
+    .withIndex('by_space', (q) => q.eq('spaceId', row.spaceId)).collect();
+  if (row.inviteStatus === 'joined' || rows.some((member) =>
+    resolveKind(member) === 'access' && member.userId !== undefined &&
+    (member.userId === row.userId || member.userId === row.matchedUserId)
+  )) {
+    throw new Error('הסרת חשבון מחובר וביטול הגישה למשפחה עדיין אינם זמינים');
+  }
 }
 
 // ── Admin-guarded mutations ───────────────────────────────────────────────────
 
 /**
- * FIXED: admin permission guard — only space admins can rename their space.
+ * FIXED: admin permission guard — only the space owner can rename their space.
  * Demonstrates the guard pattern; expand to other admin operations as needed.
  */
 export const renameSpace = mutation({
@@ -1293,13 +1312,13 @@ export const renameSpace = mutation({
     name: v.string(),
   },
   handler: async (ctx, { spaceId, name }) => {
-    await requireSpaceAdmin(ctx, spaceId);
+    await requireSpaceOwner(ctx, spaceId);
     await ctx.db.patch(spaceId, { name });
   },
 });
 
 /**
- * FIXED: admin permission guard — only space admins can remove entity rows.
+ * FIXED: admin permission guard — only the space owner can remove unconnected entity rows.
  * Client family-profile screen uses this when deleting a family member.
  */
 export const removeEntityMember = mutation({
@@ -1307,11 +1326,11 @@ export const removeEntityMember = mutation({
     memberId: v.id('members'),
   },
   handler: async (ctx, { memberId }) => {
-    console.log('[CONVEX DELETE] memberId received:', memberId);
     const row = await ctx.db.get(memberId);
     if (!row) throw new Error('פרופיל לא נמצא');
     if (resolveKind(row) !== 'entity') throw new Error(PERMISSION_DENIED);
-    await requireSpaceAdmin(ctx, row.spaceId);
+    await requireSpaceOwner(ctx, row.spaceId);
+    await assertProfileCanBeRemoved(ctx, row);
     await ctx.db.delete(memberId);
   },
 });

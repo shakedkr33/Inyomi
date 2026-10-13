@@ -5,6 +5,7 @@ import {
   getOnboardingDraft,
   type OnboardingDraft,
 } from '@/lib/onboardingState';
+import { startupTrace } from '@/lib/startupTrace';
 
 export interface FamilyMember {
   id: string;
@@ -137,7 +138,11 @@ export function OnboardingProvider({
         // No draft to hydrate — proceed as a fresh session.
       })
       .finally(() => {
-        if (!isCancelled) setIsDraftHydrated(true);
+        if (!isCancelled) {
+          setIsDraftHydrated(true);
+          // TEMPORARY (Step A baseline instrumentation).
+          startupTrace('T3_DRAFT_HYDRATED');
+        }
       });
     return () => {
       isCancelled = true;

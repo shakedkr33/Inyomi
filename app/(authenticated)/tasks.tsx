@@ -590,6 +590,8 @@ export default function TasksScreen() {
     api.eventTasks.listMyAssignedEventTasks,
     eventTaskRange
   );
+  const privatePersonalAssignments = useQuery(api.eventTasks.listMyPrivatePersonalAssignments, {});
+  const setEventTaskAssignee = useMutation(api.eventTasks.setAssignee);
   // important-to-remember tasks (community event important items)
   const importantItemTaskRows = useQuery(
     api.tasks.listMyImportantItemTasks,
@@ -715,10 +717,12 @@ export default function TasksScreen() {
         kind: 'eventTask',
         title: eventTask.title,
         completed: eventTask.completed,
-        category: 'קהילות',
+        category: eventTask.communityId ? 'קהילות' : 'אישי',
         eventId: String(eventTask.eventId),
         eventTitle: eventTask.eventTitle,
-        communityId: String(eventTask.communityId),
+        communityId: eventTask.communityId
+          ? String(eventTask.communityId)
+          : undefined,
         eventStartTime: eventTask.eventStartTime,
         eventAllDay: eventTask.eventAllDay,
         communityName: eventTask.communityName,
@@ -735,6 +739,19 @@ export default function TasksScreen() {
         secondaryText: '',
         searchText: '',
         sortTimestamp: eventTask.eventStartTime,
+      };
+      byId.set(task.uid, task);
+    }
+
+    for (const row of privatePersonalAssignments ?? []) {
+      const task: DisplayTask = {
+        uid: `eventTask:${row._id}`, id: row._id, kind: 'eventTask',
+        title: row.title, completed: row.completed, category: 'אישי',
+        assignedToUserIds: currentUserId ? [currentUserId] : [], assignedToMemberIds: [],
+        subtasks: [], hasAttachments: false, hasReminders: false, isEventTask: true,
+        placement: row.completed ? 'completed' : 'mine', responsibilityLabel: 'הוקצה אליי',
+        assigneeNames: ['אני'], assigneeDisplays: [], secondaryText: '', searchText: '',
+        sortTimestamp: Number.MAX_SAFE_INTEGER,
       };
       byId.set(task.uid, task);
     }
@@ -835,6 +852,7 @@ export default function TasksScreen() {
     });
   }, [
     assignedEventTaskRows,
+    privatePersonalAssignments,
     myTasks,
     currentUserId,
     importantItemTaskRows,
@@ -984,7 +1002,9 @@ export default function TasksScreen() {
     const isEventSource =
       task.isEventTask || task.sourceEventId || task.eventId;
     const eventName = task.eventTitle ?? task.title;
-    const message = isEventSource
+    const message = task.kind === 'eventTask' && !task.eventId
+      ? 'זו משימה שהוקצתה לך. פרטי האירוע אינם משותפים.'
+      : isEventSource
       ? task.category === 'אירועי יומן'
         ? `זוהי משימה מתוך אירוע יומן ${eventName}`
         : `זוהי משימה מתוך האירוע ${eventName}`
@@ -1050,7 +1070,8 @@ export default function TasksScreen() {
 
   const handleUnclaimEventTask = async (task: DisplayTask): Promise<void> => {
     try {
-      await unclaimEventTaskMutation({ id: task.id as Id<'eventTasks'> });
+      if (task.communityId) await unclaimEventTaskMutation({ id: task.id as Id<'eventTasks'> });
+      else await setEventTaskAssignee({ id: task.id as Id<'eventTasks'>, assignee: null });
     } catch (error) {
       Alert.alert(
         'שגיאה',

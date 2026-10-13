@@ -6,6 +6,7 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from '../constants/theme';
 import { useOnboarding } from '../contexts/OnboardingContext';
+import { useStartupDestinationReady } from '@/lib/hooks/useStartupDestinationReady';
 import { APP_IS_RTL, tw } from '@/lib/rtl';
 import { colors as tc } from '@/theme/colors';
 
@@ -14,6 +15,13 @@ const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
 export default function OnboardingStep1() {
   const router = useRouter();
   const { data, updateData } = useOnboarding();
+  // Finite startup destination — an authenticated user who still needs
+  // onboarding (and has no local answers yet) is routed straight here by
+  // app/(authenticated)/_layout.tsx / family-bootstrap.tsx, so on such a cold
+  // start this is the screen that releases the root splash bridge. It is a
+  // no-op for every other entry (the report is a global one-shot latch).
+  const { onLayout: handleOnboardingDestinationLayout } =
+    useStartupDestinationReady('onboarding');
   const initialSpaceType =
     data.spaceType === 'business' ? '' : data.spaceType || '';
   const [selected, setSelected] = useState<
@@ -29,7 +37,13 @@ export default function OnboardingStep1() {
   };
 
   return (
-    <SafeAreaView style={[{ flex: 1, backgroundColor: '#f6f7f8' }, ANDROID_MATCH_IOS_LAYOUT && styles.safeAreaRtl]}>
+    <SafeAreaView
+      style={[
+        { flex: 1, backgroundColor: '#f6f7f8' },
+        ANDROID_MATCH_IOS_LAYOUT && styles.safeAreaRtl,
+      ]}
+      onLayout={handleOnboardingDestinationLayout}
+    >
       {/* Header & Progress */}
       <View className="pt-4 px-4">
         {/* direction: 'ltr' pins this row's child order to physical

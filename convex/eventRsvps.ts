@@ -4,63 +4,13 @@ import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { isActiveCommunityMember } from './communityMemberUtils';
-import { resolveKind, resolveMySpaceId } from './members';
+import { canReadPersonalEvent } from './eventAccess';
 
-type PersonalEventDoc = Pick<
-  Doc<'events'>,
-  'createdBy' | 'sharedWithUserIds' | 'sharedWithFamilyMemberIds'
->;
-
-/** Mirrors listMyFamilyContacts selfEntityId — viewer's own entity row in their resolved space. */
-async function getViewerSelfFamilyMemberId(
-  ctx: QueryCtx | MutationCtx,
-  userId: Id<'users'>
-): Promise<Id<'members'> | null> {
-  const spaceId = await resolveMySpaceId(ctx, userId);
-  if (!spaceId) return null;
-
-  const indexedEntities = await ctx.db
-    .query('members')
-    .withIndex('by_kind', (q) => q.eq('spaceId', spaceId).eq('kind', 'entity'))
-    .collect();
-
-  const allRows = await ctx.db
-    .query('members')
-    .withIndex('by_space', (q) => q.eq('spaceId', spaceId))
-    .collect();
-
-  const unstampedEntities = allRows.filter(
-    (r) => r.kind === undefined && resolveKind(r) === 'entity'
-  );
-
-  const seen = new Set(indexedEntities.map((r) => r._id));
-  const entities = [
-    ...indexedEntities,
-    ...unstampedEntities.filter((r) => !seen.has(r._id)),
-  ];
-
-  const selfEntityRow = entities.find(
-    (r) => r.matchedUserId === userId || r.userId === userId
-  );
-
-  return selfEntityRow?._id ?? null;
-}
-
-function canAccessPersonalEventRsvp(
-  event: PersonalEventDoc,
-  userId: Id<'users'>,
-  viewerSelfEntityId: Id<'members'> | null
-): boolean {
-  if (event.createdBy === userId) return true;
-
-  const sharedWithUserIds = event.sharedWithUserIds ?? [];
-  if (sharedWithUserIds.some((id) => id === userId)) return true;
-
-  const sharedWithFamilyMemberIds = event.sharedWithFamilyMemberIds ?? [];
-  return (
-    viewerSelfEntityId !== null &&
-    sharedWithFamilyMemberIds.includes(viewerSelfEntityId)
-  );
+function assertEventAcceptsRsvp(
+  event: Pick<Doc<'events'>, 'status' | 'deletedAt'>
+): void {
+  if (event.status === 'cancelled') throw new Error('האירוע בוטל');
+  if (event.deletedAt !== undefined) throw new Error('האירוע נמחק');
 }
 
 async function getCommunityMembership(
@@ -106,11 +56,19 @@ export const upsertRsvp = mutation({
         throw new Error('אין הרשאה לעדכן אישור הגעה');
       }
     } else {
-      const viewerSelfEntityId = await getViewerSelfFamilyMemberId(ctx, userId);
-      if (!canAccessPersonalEventRsvp(event, userId, viewerSelfEntityId)) {
+      // Match RSVP reads: explicit invitation, not allFamily or a phone match.
+      if (
+        !(await canReadPersonalEvent(
+          ctx,
+          { ...event, allFamily: false },
+          userId
+        ))
+      ) {
         throw new Error('אין הרשאה לעדכן אישור הגעה');
       }
     }
+
+    assertEventAcceptsRsvp(event);
 
     if (status === 'no') {
       const assignedTasks = await ctx.db
@@ -171,11 +129,19 @@ export const setRsvpNoAndUnclaimMyEventTasks = mutation({
         throw new Error('אין הרשאה לעדכן אישור הגעה');
       }
     } else {
-      const viewerSelfEntityId = await getViewerSelfFamilyMemberId(ctx, userId);
-      if (!canAccessPersonalEventRsvp(event, userId, viewerSelfEntityId)) {
+      // Match RSVP reads: explicit invitation, not allFamily or a phone match.
+      if (
+        !(await canReadPersonalEvent(
+          ctx,
+          { ...event, allFamily: false },
+          userId
+        ))
+      ) {
         throw new Error('אין הרשאה לעדכן אישור הגעה');
       }
     }
+
+    assertEventAcceptsRsvp(event);
 
     const eventTasks = await ctx.db
       .query('eventTasks')
@@ -283,7 +249,33 @@ export const getRsvpForUser = query({
     userId: v.id('users'),
   },
   handler: async (ctx, { eventId, userId }) => {
-    // TODO: לחבר לאימות – לוודא שהמשתמש הנוכחי מורשה לראות RSVP זה
+    const viewerId = await getAuthUserId(ctx);
+    if (!viewerId) return null;
+    const event = await ctx.db.get(eventId);
+    if (!event) return null;
+
+    // Match listByEvent: active community members see event RSVPs;
+    // personal-event creators see all, while invitees see only their own.
+    if (event.communityId) {
+      const membership = await getCommunityMembership(
+        ctx,
+        event.communityId,
+        viewerId
+      );
+      if (!isActiveCommunityMember(membership)) return null;
+    } else if (event.createdBy !== viewerId) {
+      if (userId !== viewerId) return null;
+      // RSVP readers must be explicit invitees; allFamily alone is not an
+      // RSVP invitation. A pending phone match is not a sharing identity.
+      if (
+        !(await canReadPersonalEvent(
+          ctx,
+          { ...event, allFamily: false },
+          viewerId
+        ))
+      )
+        return null;
+    }
     return await ctx.db
       .query('eventRsvps')
       .withIndex('by_event_user', (q) =>
@@ -321,8 +313,13 @@ export const listByEvent = query({
         return [];
       }
     } else if (!isCreator) {
-      const viewerSelfEntityId = await getViewerSelfFamilyMemberId(ctx, userId);
-      if (!canAccessPersonalEventRsvp(event, userId, viewerSelfEntityId)) {
+      if (
+        !(await canReadPersonalEvent(
+          ctx,
+          { ...event, allFamily: false },
+          userId
+        ))
+      ) {
         return [];
       }
     }

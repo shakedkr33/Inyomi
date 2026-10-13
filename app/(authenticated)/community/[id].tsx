@@ -70,6 +70,7 @@ import {
   formatCommunityMainTaskCtaText,
   formatPendingRsvpAssignedTaskIndicator,
 } from '@/lib/eventTasksSummary';
+import { useStartupDestinationReady } from '@/lib/hooks/useStartupDestinationReady';
 import {
   getOpenCommunityCalendarActionLabel,
   isOpenCommunityCalendarActionVisible,
@@ -4706,6 +4707,11 @@ function TabActivity({ communityId, onOpenEventDetails }: TabActivityProps) {
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function CommunityDetailScreen() {
+  // Finite startup destination — reachable directly on cold start via a
+  // notification target. A loading indicator here is an acceptable
+  // destination surface (see lib/hooks/useStartupDestinationReady.ts).
+  const { onLayout: handleCommunityDestinationLayout } =
+    useStartupDestinationReady('community');
   const { id, tab } = useLocalSearchParams<{ id: string; tab?: string }>();
   const router = useRouter();
   const convex = useConvex();
@@ -5197,7 +5203,11 @@ export default function CommunityDetailScreen() {
   // ── Loading / not found
   if (community === undefined) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView
+        style={styles.container}
+        edges={['top']}
+        onLayout={handleCommunityDestinationLayout}
+      >
         <View style={styles.loadingCenter}>
           <ActivityIndicator size="large" color={PRIMARY} />
         </View>
@@ -5207,7 +5217,11 @@ export default function CommunityDetailScreen() {
 
   if (community === null) {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView
+        style={styles.container}
+        edges={['top']}
+        onLayout={handleCommunityDestinationLayout}
+      >
         <View style={styles.loadingCenter}>
           <Ionicons name="alert-circle-outline" size={48} color="#d1d5db" />
           <Text style={styles.emptyText}>אין לך גישה לקהילה הזו</Text>
@@ -5235,7 +5249,11 @@ export default function CommunityDetailScreen() {
 
   if (community.myMembershipStatus === 'pending') {
     return (
-      <SafeAreaView style={styles.container} edges={['top']}>
+      <SafeAreaView
+        style={styles.container}
+        edges={['top']}
+        onLayout={handleCommunityDestinationLayout}
+      >
         <View style={styles.pendingGateHeader}>
           <View style={{ width: 40 }} />
           <Text style={styles.pendingGateTitle} numberOfLines={1}>
@@ -5272,6 +5290,7 @@ export default function CommunityDetailScreen() {
         ANDROID_MATCH_IOS_LAYOUT ? styles.safeAreaRtl : null,
       ]}
       edges={['top']}
+      onLayout={handleCommunityDestinationLayout}
     >
       {/* ── Header */}
       <View style={styles.header}>

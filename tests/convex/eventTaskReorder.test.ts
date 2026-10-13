@@ -103,13 +103,13 @@ describe('canManageEventTasksPure — reorder authorization', () => {
   const creatorId = id<'users'>('creator');
   const otherUserId = id<'users'>('other');
 
-  it('allows the event creator regardless of community membership', () => {
+  it('rejects the community event creator without active membership', () => {
     const event = { createdBy: creatorId, communityId };
     expect(
       canManageEventTasksPure(event, creatorId, {
         isActiveMember: false,
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('allows an active community owner', () => {

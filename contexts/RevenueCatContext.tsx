@@ -56,6 +56,7 @@ import {
   shouldApplyCustomerInfo,
 } from '@/lib/revenuecat/identityReady';
 import { decideTogetherOfferingLoadAction } from '@/lib/revenuecat/togetherOfferingReadiness';
+import { startupTrace } from '@/lib/startupTrace';
 import {
   ENTITLEMENT_ID,
   FAMILY_ENTITLEMENT_ID,
@@ -623,6 +624,8 @@ export function RevenueCatProvider({
         // למטה. הצלחה כאן אינה תלויה בהצלחת getOfferings.
         setIsInitialized(true);
         setSdkMode('configured');
+        // TEMPORARY (Step A baseline instrumentation).
+        startupTrace('T2_RC_CONFIGURED');
       } catch (error) {
         // RevenueCat SDK עצמו לא זמין (מפתח שגוי / configure נכשל).
         // DEBUG ONLY — log error instead of silently swallowing it
@@ -693,6 +696,9 @@ export function RevenueCatProvider({
         }));
         setPackages(PREVIEW_PACKAGES);
       } finally {
+        // TEMPORARY (Step A baseline instrumentation) — marks completion of
+        // the offerings load attempt regardless of success/failure.
+        startupTrace('T2_RC_OFFERINGS_DONE');
         setIsLoading(false);
       }
     }
@@ -701,6 +707,17 @@ export function RevenueCatProvider({
     // No cleanup needed here — this effect never registers a listener.
     // Listener lifecycle is owned entirely by the identity-transition effect.
   }, [isExpoGo, isConfigured]);
+
+  // TEMPORARY (Step A baseline instrumentation) — trace once, the first
+  // time the internal `isLoading` state (set by the initialize() effect
+  // above, across every one of its exit paths) becomes false.
+  const rcLoadingFalseTracedRef = useRef(false);
+  useEffect(() => {
+    if (!isLoading && !rcLoadingFalseTracedRef.current) {
+      rcLoadingFalseTracedRef.current = true;
+      startupTrace('T2_RC_LOADING_FALSE');
+    }
+  }, [isLoading]);
 
   // ============================================================================
   // InYomi Together — named-Offering loading (strict, no silent fallback)
@@ -971,6 +988,10 @@ export function RevenueCatProvider({
     async (userId: string, thisGeneration: number) => {
       logInInFlightRef.current = true;
       setIdentitySyncStatus('syncing');
+      // TEMPORARY (Step A baseline instrumentation) — attempt number and
+      // success boolean only, per instrumentation privacy constraints. No
+      // user id, CustomerInfo, or error content is included.
+      startupTrace('RC_SYNC_ATTEMPT_START', { attempt: thisGeneration });
 
       try {
         const Purchases = (await import('react-native-purchases')).default;
@@ -978,6 +999,10 @@ export function RevenueCatProvider({
 
         if (identityGenerationRef.current !== thisGeneration) {
           // A newer identity transition has already superseded this attempt.
+          startupTrace('RC_SYNC_ATTEMPT_END', {
+            attempt: thisGeneration,
+            success: false,
+          });
           return;
         }
 
@@ -986,9 +1011,21 @@ export function RevenueCatProvider({
           thisGeneration,
           logInResult.customerInfo
         );
+        startupTrace('T2_RC_LOGIN_DONE', {
+          attempt: thisGeneration,
+          success: true,
+        });
+        startupTrace('RC_SYNC_ATTEMPT_END', {
+          attempt: thisGeneration,
+          success: true,
+        });
       } catch (error) {
         if (identityGenerationRef.current !== thisGeneration) {
           // Stale failure from a superseded attempt — discard.
+          startupTrace('RC_SYNC_ATTEMPT_END', {
+            attempt: thisGeneration,
+            success: false,
+          });
           return;
         }
 
@@ -996,6 +1033,14 @@ export function RevenueCatProvider({
         console.warn('[RevenueCat] logIn failed', {
           identityGeneration: thisGeneration,
           code: errorCode,
+        });
+        startupTrace('T2_RC_LOGIN_DONE', {
+          attempt: thisGeneration,
+          success: false,
+        });
+        startupTrace('RC_SYNC_ATTEMPT_END', {
+          attempt: thisGeneration,
+          success: false,
         });
 
         activeRevenueCatUserIdRef.current = null;
@@ -1146,6 +1191,20 @@ export function RevenueCatProvider({
         failedForUserId,
       })
     : isLoading;
+
+  // TEMPORARY (Step A baseline instrumentation) — traces the actual
+  // `isLoading` value exposed to consumers (i.e. what the authenticated
+  // routing gate reads as `isRevenueCatLoading`), the first time it
+  // becomes false.
+  const exposedLoadingFalseTracedRef = useRef(false);
+  useEffect(() => {
+    if (!exposedIsLoading && !exposedLoadingFalseTracedRef.current) {
+      exposedLoadingFalseTracedRef.current = true;
+      startupTrace('T2_RC_EXPOSED_LOADING_FALSE', {
+        isRevenueCatLoading: exposedIsLoading,
+      });
+    }
+  }, [exposedIsLoading]);
 
   // ============================================================================
   // רכישת חבילה

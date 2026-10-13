@@ -1,11 +1,15 @@
 package expo.modules.googlecalendarauth
 
 import android.app.Activity
+import android.util.Log
+import androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.AuthorizationResult
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.gms.common.api.Scope
 import expo.modules.kotlin.activityresult.AppContextActivityResultLauncher
 import expo.modules.kotlin.exception.Exceptions
@@ -17,6 +21,10 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 private const val MODULE_NAME = "ExpoGoogleCalendarAuth"
+
+// GoogleSignInStatusCodes.SIGN_IN_CANCELLED (legacy cancel code some Play
+// Services builds still report); inlined to avoid importing the legacy Sign-In API.
+private const val SIGN_IN_CANCELLED = 12501
 
 /**
  * The ONLY scope this module ever requests. Do not add identity, profile,
@@ -91,6 +99,12 @@ class ExpoGoogleCalendarAuthModule : Module() {
     val authorizationResult = try {
       awaitAuthorization(activity, request)
     } catch (e: Exception) {
+      // TEMPORARY diagnostics: exception class + ApiException status code only.
+      // Never log the message, token, or any credential material.
+      Log.w(
+        MODULE_NAME,
+        "authorize() failed: exception=${e.javaClass.simpleName} statusCode=${(e as? ApiException)?.statusCode}"
+      )
       throw AuthorizationFailedException(e)
     }
 
@@ -106,21 +120,64 @@ class ExpoGoogleCalendarAuthModule : Module() {
     authorizationContract.pendingIntentSender = pendingIntent.intentSender
     val activityResult = authorizationLauncher.launch(GoogleAuthorizationLaunchInput())
 
-    // User cancellation (back button, dismiss, etc.) is a clean outcome,
-    // not an error — never thrown as an exception.
-    if (activityResult.resultCode != Activity.RESULT_OK) {
-      return GoogleCalendarAuthResult(accessToken = null, grantedScopes = emptyList(), cancelled = true)
+    val resultIntent = activityResult.intent
+
+    // The registry reports a failure to even start the consent UI as
+    // RESULT_CANCELED plus this extra. That is a real failure, not a user cancel.
+    if (resultIntent?.hasExtra(StartIntentSenderForResult.EXTRA_SEND_INTENT_EXCEPTION) == true) {
+      Log.w(
+        MODULE_NAME,
+        "consent launch failed: resultCode=${activityResult.resultCode} sendIntentException=true"
+      )
+      throw AuthorizationFailedException()
     }
 
+    // Diagnostic only: never log the intent contents or any token.
+    Log.i(
+      MODULE_NAME,
+      "consent result: resultCode=${activityResult.resultCode} hasIntent=${resultIntent != null}"
+    )
+
+    // No data at all: only a RESULT_CANCELED can be treated as user cancellation
+    // (back button, dismiss). RESULT_OK without data is a real error.
+    if (resultIntent == null) {
+      if (activityResult.resultCode == Activity.RESULT_OK) {
+        throw IntentResultFailedException()
+      }
+      return cancelledResult()
+    }
+
+    // Always ask Google for the real outcome instead of trusting `resultCode`
+    // alone (this mirrors Google's documented sample, which parses the Intent
+    // without checking resultCode). A genuine user cancel surfaces as an
+    // ApiException with a CANCELED status; any other status is a real failure
+    // (e.g. DEVELOPER_ERROR for a package/SHA-1 mismatch) and must not be
+    // silently swallowed as a cancel.
     val finalResult = try {
       Identity.getAuthorizationClient(activity)
-        .getAuthorizationResultFromIntent(activityResult.intent)
+        .getAuthorizationResultFromIntent(resultIntent)
+    } catch (e: ApiException) {
+      Log.w(
+        MODULE_NAME,
+        "getAuthorizationResultFromIntent failed: statusCode=${e.statusCode} resultCode=${activityResult.resultCode}"
+      )
+      if (e.statusCode == CommonStatusCodes.CANCELED || e.statusCode == SIGN_IN_CANCELLED) {
+        return cancelledResult()
+      }
+      throw IntentResultFailedException(e)
     } catch (e: Exception) {
+      Log.w(
+        MODULE_NAME,
+        "getAuthorizationResultFromIntent failed: exception=${e.javaClass.simpleName} resultCode=${activityResult.resultCode}"
+      )
       throw IntentResultFailedException(e)
     }
 
     return finalResult.toModuleResult()
   }
+
+  private fun cancelledResult(): GoogleCalendarAuthResult =
+    GoogleCalendarAuthResult(accessToken = null, grantedScopes = emptyList(), cancelled = true)
 
   private fun ensurePlayServicesAvailable(activity: Activity) {
     val status = GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(activity)

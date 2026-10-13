@@ -6,6 +6,10 @@ import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import EventScreen from '@/lib/components/event/EventScreen';
 import { buildDuplicateEventTemplate } from '@/lib/eventDuplication';
+import {
+  participantDetails,
+  personalTaskEdits,
+} from '@/lib/personalEventEditing';
 import type { EventAttachmentDraft, EventData } from '@/lib/types/event';
 
 const PRIMARY = '#36a9e2';
@@ -449,9 +453,6 @@ export default function NewEventScreen(): React.JSX.Element {
   const createEvent = useMutation(api.events.create);
   const generateUploadUrl = useMutation(api.events.generateUploadUrl);
   // FIXED: persist personal event checklist tasks created in EventScreen
-  const createEventTasks = useMutation(api.eventTasks.createBatch);
-  const setTaskAssignee = useMutation(api.eventTasks.setAssignee);
-  const toggleEventTaskCompleted = useMutation(api.eventTasks.toggleCompleted);
   // Use resolveMySpaceId-backed query so the event lands in the same space
   // that listByDateRange (calendar/home) reads from.
   // api.users.getMySpace used .first() which returned the wrong row for users
@@ -562,6 +563,8 @@ export default function NewEventScreen(): React.JSX.Element {
       // Let any Convex errors propagate — EventScreen.handleSave catches them
       // FIXED: return eventId so EventScreen can show the post-save success/share sheet
       const newEventId = await createEvent({
+        participantDetails: participantDetails(data.participants),
+        ...personalTaskEdits(data.tasks),
         title: data.title,
         description: data.notes?.trim() || undefined,
         startTime: startMs,
@@ -601,53 +604,14 @@ export default function NewEventScreen(): React.JSX.Element {
         relatedBirthdayName: relatedBirthdayName || undefined,
       });
 
-      const tasksToCreate = data.tasks.filter(
-        (task) => task.title.trim().length > 0
-      );
-      if (tasksToCreate.length > 0) {
-        const taskIds = await createEventTasks({
-          eventId: newEventId as Id<'events'>,
-          tasks: tasksToCreate.map((task) => ({ title: task.title.trim() })),
-        });
-
-        for (let i = 0; i < tasksToCreate.length; i++) {
-          const task = tasksToCreate[i];
-          const taskId = taskIds[i];
-          if (!taskId) continue;
-
-          const assignedParticipantId =
-            task.assignedParticipantIds?.[0] ?? task.assigneeId;
-          const assignedParticipant = assignedParticipantId
-            ? data.participants.find((p) => p.id === assignedParticipantId)
-            : undefined;
-          const assignedName =
-            assignedParticipant?.name.trim() || task.assignee?.name.trim();
-
-          if (assignedName) {
-            await setTaskAssignee({
-              id: taskId as Id<'eventTasks'>,
-              assignee: { type: 'manual', name: assignedName },
-            }).catch(() => {});
-          }
-
-          if (task.completed) {
-            await toggleEventTaskCompleted({
-              id: taskId as Id<'eventTasks'>,
-            }).catch(() => {});
-          }
-        }
-      }
       return newEventId;
     },
     [
       createEvent,
-      createEventTasks,
       generateUploadUrl,
       relatedBirthdayId,
       relatedBirthdayName,
-      setTaskAssignee,
       spaceId,
-      toggleEventTaskCompleted,
     ]
   );
 

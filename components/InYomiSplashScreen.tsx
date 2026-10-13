@@ -1,253 +1,138 @@
-import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef } from 'react';
-import {
-  Animated,
-  Image,
-  StyleSheet,
-  useWindowDimensions,
-  View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Image, StyleSheet, View } from 'react-native';
+import { startupTrace } from '@/lib/startupTrace';
 
-// inyomi-splash-logo-transparent.png: 707 × 353, transparent background,
-// horizontal wordmark with Hebrew tagline below.
-const LOGO_ASPECT_RATIO = 707 / 353;
-const DOT_COLORS = ['#ff8a3d', '#f15f9a', '#2b086f'] as const;
+// inyomi-native-splash-logo.png: 893 × 689, transparent background — the
+// same logo composition used in the native Android/iOS splash screens
+// (iY icon + "InYomi" wordmark + Hebrew tagline).
+const LOGO_ASPECT_RATIO = 893 / 689;
 
-export function InYomiSplashScreen() {
-  const { width, height } = useWindowDimensions();
-  const dotAnimations = useRef(
-    DOT_COLORS.map(() => new Animated.Value(0.45))
-  ).current;
+// Fixed logo width (dp), calibrated to match the apparent size of the logo
+// within the native splash screens, rather than scaling with screen width.
+// The native splash renders the logo inside a fixed 288dp square icon
+// (Android adaptive-icon foreground), so its apparent size does not scale
+// with device width either — a percentage-of-screen-width formula here
+// caused a visible size jump between native and React splash on wide
+// screens. Clamped defensively for extreme screen sizes only.
+// NOTE: calibrated against the Android native splash. If on-device
+// verification shows the iOS Storyboard splash logo rendering larger than
+// this value, this can become `Platform.OS === 'ios' ? 210 : 190` — a
+// calibration-only change, not an architectural one.
+const NATIVE_LOGO_APPARENT_WIDTH = 190;
+const LOGO_WIDTH_MIN = 160;
+const LOGO_WIDTH_MAX = 240;
 
-  // Logo: 82 % of screen width, floored at 260, capped at 440 for tablets.
+// TEMPORARY (Step A/B instrumentation) — fixed, safe metadata identifying
+// WHICH mount produced a T0_CHILD_SPLASH_READY / T0_CHILD_SPLASH_UNMOUNTED
+// trace line. 'root' is the root-level branded bridge (app/_layout.tsx);
+// 'auth' / 'authenticated' are the two child layouts. Never route params or
+// any other identifier is logged here.
+type InYomiSplashScreenSource = 'root' | 'auth' | 'authenticated';
+
+type InYomiSplashScreenProps = {
+  source?: InYomiSplashScreenSource;
+  // Step B: fired once this instance's own root View has actually been
+  // laid out — i.e. there is now a real, visually-identical InYomi surface
+  // painted. Purely a readiness signal; never changes routing or app state.
+  onReady?: () => void;
+  // Root-bridge-only visual-readiness signal: fired once this instance's
+  // own logo Image has finished loading (RN Image `onLoad`). Optional and
+  // additive — child (auth/authenticated) instances never pass this, so
+  // their behavior is unaffected. Used by the ROOT instance in
+  // app/_layout.tsx to gate SplashScreen.hideAsync() on the logo asset
+  // actually being ready, not just the container having laid out.
+  onImageLoad?: () => void;
+};
+
+// This component is the React Native continuation of the native splash
+// screen. It must stay visually static and identical in background/logo to
+// the native splash (#EDE8E2 + centered logo) so the native → React
+// transition and any auth ↔ authenticated remount are imperceptible. No
+// animations, timers, or decorative elements are used here intentionally —
+// see the splash startup fix plan for rationale.
+export function InYomiSplashScreen({
+  source,
+  onReady,
+  onImageLoad,
+}: InYomiSplashScreenProps = {}) {
+  // TEMPORARY (Step A baseline instrumentation) — measures when this
+  // component's own layout has actually been computed/painted, i.e. the
+  // React "child splash" is visually ready. This callback ONLY emits a
+  // timing trace and (Step B) notifies the caller-supplied onReady: it
+  // does not change routing, does not hide/show anything on its own, and
+  // does not read or write any app state. Guarded with a ref so it fires
+  // once per mount even though onLayout can fire more than once.
+  const hasTracedLayoutRef = useRef(false);
+  const handleLayout = () => {
+    if (hasTracedLayoutRef.current) return;
+    hasTracedLayoutRef.current = true;
+    startupTrace('T0_CHILD_SPLASH_READY', source ? { source } : undefined);
+    onReady?.();
+  };
+
+  // TEMPORARY (Step A/B instrumentation) — trace-only. Helps confirm from
+  // logs alone whether a beige gap corresponds to an unmount of one child
+  // splash before the next one mounts. Only emitted if this instance ever
+  // became ready (mirrors handleLayout's guard) and only when a `source`
+  // was supplied, so the root-bridge usage (no `source`) does not emit an
+  // unmount line for its own (permanent-until-removed) instance.
+  useEffect(() => {
+    return () => {
+      if (hasTracedLayoutRef.current && source) {
+        startupTrace('T0_CHILD_SPLASH_UNMOUNTED', { source });
+      }
+    };
+  }, [source]);
+
+  // Fixed-dp logo sizing (see NATIVE_LOGO_APPARENT_WIDTH above) — does not
+  // depend on screen width, matching how the native splash logo behaves.
   const logoWidth = useMemo(
-    () => Math.min(Math.max(width * 0.82, 260), 440),
-    [width]
+    () =>
+      Math.min(
+        Math.max(NATIVE_LOGO_APPARENT_WIDTH, LOGO_WIDTH_MIN),
+        LOGO_WIDTH_MAX
+      ),
+    []
   );
   const logoHeight = useMemo(() => logoWidth / LOGO_ASPECT_RATIO, [logoWidth]);
 
-  // Responsive shape dimensions derived from screen size.
-  const blobSize = useMemo(() => width * 0.82, [width]);
-  const pillWidth = useMemo(() => width * 1.08, [width]);
-  const pillHeight = useMemo(() => height * 0.115, [height]);
-
-  useEffect(() => {
-    const animations = dotAnimations.map((value, index) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(index * 180),
-          Animated.timing(value, {
-            toValue: 1,
-            duration: 720,
-            useNativeDriver: true,
-          }),
-          Animated.timing(value, {
-            toValue: 0.45,
-            duration: 720,
-            useNativeDriver: true,
-          }),
-        ])
-      )
-    );
-
-    Animated.parallel(animations).start();
-
-    return () => {
-      for (const animation of animations) {
-        animation.stop();
-      }
-    };
-  }, [dotAnimations]);
+  // Fires once, when the logo Image itself has finished loading. Guarded
+  // so it emits only once per mount even if `onLoad` were somehow called
+  // more than once. No-op unless `onImageLoad` was supplied (root only).
+  const hasFiredImageLoadRef = useRef(false);
+  const handleImageLoad = () => {
+    if (hasFiredImageLoadRef.current) return;
+    hasFiredImageLoadRef.current = true;
+    onImageLoad?.();
+  };
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar style="dark" backgroundColor="#FFF8F3" />
+    <View style={styles.safe} onLayout={handleLayout}>
+      <StatusBar style="dark" backgroundColor="#EDE8E2" />
 
-      {/* Warm cream gradient base */}
-      <LinearGradient
-        colors={['#FFF6EE', '#FFF8F3', '#FEF0E8', '#FFF5ED']}
-        locations={[0, 0.4, 0.75, 1]}
-        style={StyleSheet.absoluteFill}
-      />
-
-      {/* ── Background shapes ─────────────────────────────────────────────
-          All shapes use warm cream / peach / beige tones at very low opacity.
-          They are cropped by the screen edges via negative offsets.
-      ──────────────────────────────────────────────────────────────────── */}
-
-      {/* Top-right large peach circle */}
-      <View
-        pointerEvents="none"
-        style={[
-          styles.shapeBase,
-          {
-            width: blobSize,
-            height: blobSize,
-            top: -blobSize * 0.3,
-            right: -blobSize * 0.26,
-            backgroundColor: 'rgba(255, 178, 120, 0.15)',
-          },
-        ]}
-      />
-
-      {/* Upper pill crossing left–centre area */}
-      <View
-        pointerEvents="none"
-        style={[
-          styles.shapeBase,
-          {
-            width: pillWidth,
-            height: pillHeight,
-            top: height * 0.13,
-            left: -pillWidth * 0.24,
-            backgroundColor: 'rgba(255, 165, 130, 0.12)',
-            transform: [{ rotate: '-12deg' }],
-          },
-        ]}
-      />
-
-      {/* Bottom-left warm beige circle */}
-      <View
-        pointerEvents="none"
-        style={[
-          styles.shapeBase,
-          {
-            width: blobSize * 0.9,
-            height: blobSize * 0.9,
-            bottom: -blobSize * 0.28,
-            left: -blobSize * 0.3,
-            backgroundColor: 'rgba(255, 196, 150, 0.14)',
-          },
-        ]}
-      />
-
-      {/* Bottom-right warm peach pill */}
-      <View
-        pointerEvents="none"
-        style={[
-          styles.shapeBase,
-          {
-            width: pillWidth,
-            height: pillHeight * 0.9,
-            bottom: height * 0.16,
-            right: -pillWidth * 0.26,
-            backgroundColor: 'rgba(255, 155, 105, 0.11)',
-            transform: [{ rotate: '15deg' }],
-          },
-        ]}
-      />
-
-      {/* ── Logo ─────────────────────────────────────────────────────────── */}
       <View style={styles.content}>
         <Image
-          source={require('../assets/images/inyomi-splash-logo-transparent.png')}
-          style={[
-            styles.logo,
-            {
-              width: logoWidth,
-              height: logoHeight,
-            },
-          ]}
-          resizeMode="contain"
-          accessible
           accessibilityLabel="InYomi"
+          accessible
+          resizeMode="contain"
+          onLoad={handleImageLoad}
+          source={require('../assets/images/inyomi-native-splash-logo.png')}
+          style={{ width: logoWidth, height: logoHeight }}
         />
       </View>
-
-      {/* ── Loading indicators ────────────────────────────────────────────
-          Behavior, timing, and logic are identical to the previous version.
-      ──────────────────────────────────────────────────────────────────── */}
-      <View style={styles.loaderWrap}>
-        <View style={styles.dotsRow}>
-          {DOT_COLORS.map((color, index) => {
-            const scale = dotAnimations[index].interpolate({
-              inputRange: [0.45, 1],
-              outputRange: [0.82, 1.08],
-            });
-
-            return (
-              <Animated.View
-                key={color}
-                style={[
-                  styles.dot,
-                  {
-                    backgroundColor: color,
-                    opacity: dotAnimations[index],
-                    transform: [{ scale }],
-                  },
-                ]}
-              />
-            );
-          })}
-        </View>
-
-        <View style={styles.progressTrack}>
-          <LinearGradient
-            colors={['#ff8a3d', '#f15f9a', '#2b086f']}
-            start={{ x: 0, y: 0.5 }}
-            end={{ x: 1, y: 0.5 }}
-            style={styles.progressFill}
-          />
-        </View>
-      </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#FFF8F3',
-    overflow: 'hidden',
+    backgroundColor: '#EDE8E2',
   },
   content: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 24,
-  },
-  logo: {
-    maxWidth: '90%',
-  },
-  loaderWrap: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 70,
-    alignItems: 'center',
-    gap: 16,
-  },
-  dotsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 9,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  progressTrack: {
-    width: 148,
-    height: 3,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255, 255, 255, 0.86)',
-    overflow: 'hidden',
-  },
-  progressFill: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: 54,
-    borderRadius: 999,
-  },
-  // Shared base for all background shapes (blobs, pills, halos).
-  shapeBase: {
-    position: 'absolute',
-    borderRadius: 999,
   },
 });

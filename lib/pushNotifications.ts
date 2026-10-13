@@ -30,8 +30,18 @@ export function consumePendingNavigationTarget(): string | null {
   return target;
 }
 
+/**
+ * Non-destructive read of the pending navigation target — unlike
+ * consumePendingNavigationTarget(), this does NOT clear it. Used by the
+ * cold-start notification guard (app/(authenticated)/_layout.tsx) to check
+ * "was a target captured?" without consuming it before routing is ready.
+ */
+export function peekPendingNavigationTarget(): string | null {
+  return pendingNavigationTarget;
+}
+
 export function subscribeToPendingNavigation(
-  listener: PendingNavigationListener,
+  listener: PendingNavigationListener
 ): () => void {
   pendingNavigationListeners.add(listener);
   return () => {
@@ -108,16 +118,13 @@ export async function setupNotificationCategories(): Promise<void> {
     },
   ]);
 
-  await Notifications.setNotificationCategoryAsync(
-    'COMMUNITY_IMPORTANT_ITEM',
-    [
-      {
-        identifier: 'ADD_TO_TASKS',
-        buttonTitle: 'הוסף למשימות שלי',
-        options: { opensAppToForeground: true },
-      },
-    ]
-  );
+  await Notifications.setNotificationCategoryAsync('COMMUNITY_IMPORTANT_ITEM', [
+    {
+      identifier: 'ADD_TO_TASKS',
+      buttonTitle: 'הוסף למשימות שלי',
+      options: { opensAppToForeground: true },
+    },
+  ]);
 }
 
 export async function registerForPushNotifications(): Promise<string | null> {

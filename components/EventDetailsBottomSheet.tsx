@@ -911,7 +911,7 @@ export function EventDetailsBottomSheet({
     eventTasks !== undefined && eventTasks.length > 0;
   const canSeeEventTasksSection = displayEvent?.communityId
     ? canManageTasks || hasAuthorizedEventTasks
-    : isEventCreator;
+    : isEventCreator || hasAuthorizedEventTasks;
 
   /**
    * Part D1 — "שכפל אירוע" is gated by the EXACT community-event-CREATION

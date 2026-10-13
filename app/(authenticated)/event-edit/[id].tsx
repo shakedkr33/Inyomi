@@ -7,11 +7,12 @@ import type { Id } from '@/convex/_generated/dataModel';
 import { saveCommunityTaskAssignments } from '@/lib/communityTaskAssignmentSave';
 import EventScreen from '@/lib/components/event/EventScreen';
 import type { FamilyMemberChip } from '@/lib/components/event/ParticipantsCard';
-import {
-  resolveCommunityTaskAssignmentDiff,
-  resolvePersonalTaskAssignmentDiff,
-} from '@/lib/eventTaskAssignmentDiff';
+import { resolveCommunityTaskAssignmentDiff } from '@/lib/eventTaskAssignmentDiff';
 import { reconcileEventTaskOrder } from '@/lib/eventTaskOrderReconcile';
+import {
+  participantDetails,
+  personalTaskEdits,
+} from '@/lib/personalEventEditing';
 import type {
   EventAttachmentDraft,
   EventData,
@@ -111,7 +112,8 @@ type ConvexTask = NonNullable<
 function convexEventToEventData(
   event: ConvexEvent,
   tasks: ConvexTask[],
-  familyMembers: FamilyMemberChip[] = []
+  familyMembers: FamilyMemberChip[] = [],
+  eligibleAccounts: { userId: Id<'users'>; fullName: string }[] = []
 ): EventData {
   const start = new Date(event.startTime);
   const end = new Date(event.endTime);
@@ -156,52 +158,73 @@ function convexEventToEventData(
   const familyMemberById = new Map<string, FamilyMemberChip>(
     familyMembers.map((fm) => [fm._id, fm])
   );
-  // Cross-reference by display name to identify family member names stored in the
-  // legacy participants array (where names were saved alongside family member IDs).
-  const familyMemberByName = new Map<string, FamilyMemberChip>(
-    familyMembers
-      .filter((fm) => Boolean(fm.displayName))
-      .map((fm) => [fm.displayName as string, fm])
-  );
-  const familyIdsSet = new Set(familyIds);
+  // Never infer participant identity from a display name, including duplicates.
+  const participants: Participant[] = event.participantDetails
+    ? event.participantDetails.map((p) => ({ ...p }))
+    : [
+        ...(eventRecord.participants ?? []).map((name, index) => ({
+          id: `legacy:${index}`,
+          name,
+          color: '#36a9e2',
+          source: 'legacy' as const,
+        })),
+        ...familyIds.map((id) => {
+          const fm = familyMemberById.get(id);
+          return {
+            id,
+            name: fm?.displayName ?? 'משתתף/ת',
+            color: fm?.color ?? '#36a9e2',
+            source: 'family' as const,
+            userId: fm?.linkedUserId,
+          };
+        }),
+        ...(event.sharedWithUserIds ?? [])
+          .filter(
+            (id) =>
+              !familyMembers.some(
+                (fm) => fm.linkedUserId === id && familyIds.includes(fm._id)
+              )
+          )
+          .map((id) => ({
+            id,
+            userId: id,
+            name: 'משתתף/ת',
+            color: '#36a9e2',
+            source: 'user' as const,
+          })),
+      ];
 
-  // External participants: names from the DB participants array that do NOT
-  // correspond to any family member in sharedWithFamilyMemberIds.
-  // This correctly handles old events where family member names were saved
-  // in the participants array alongside their IDs in sharedWithFamilyMemberIds.
-  const externalParticipants: Participant[] = (eventRecord.participants ?? [])
-    .filter((name) => {
-      const fm = familyMemberByName.get(name);
-      return !fm || !familyIdsSet.has(fm._id);
-    })
-    .map((name) => ({ id: name, name, color: '#36a9e2' }));
-
-  // Family participants: reconstructed from sharedWithFamilyMemberIds with the
-  // correct entity row IDs so onFamilyChange filtering works during editing.
-  const familyParticipants: Participant[] = familyIds
-    .map((id) => familyMemberById.get(id))
-    .filter((fm): fm is FamilyMemberChip => fm != null)
-    .map((fm) => ({
-      id: fm._id,
-      name: fm.displayName ?? '',
-      color: fm.color ?? '#36a9e2',
-    }));
-
-  const participants: Participant[] = [
-    ...externalParticipants,
-    ...familyParticipants,
-  ];
+  if (!event.communityId)
+    for (const participant of participants) {
+      if (!participant.userId) continue;
+      const account = eligibleAccounts.find(
+        (user) => user.userId === participant.userId
+      );
+      participant.assignmentEligible = Boolean(account);
+      if (account && participant.source === 'user')
+        participant.name = account.fullName;
+    }
 
   const eventTasks: EventTask[] = tasks.map((t) => ({
     id: t._id,
     title: t.title,
     completed: t.completed ?? false,
-    assigneeId: t.assignedToUserId ?? undefined,
+    assignee:
+      t.assignedToUserId || t.assignedToManual
+        ? {
+            id: t.assignedToUserId ?? `legacy-task:${t._id}`,
+            name: t.assigneeDisplay ?? t.assignedToManual ?? 'הקצאה קיימת',
+            color: '#36a9e2',
+          }
+        : undefined,
+    assigneeId:
+      t.assignedToUserId ??
+      (t.assignedToManual ? `legacy-task:${t._id}` : undefined),
     assignedParticipantIds: t.assignedToManual?.trim()
-      ? [t.assignedToManual.trim()]
+      ? [`legacy-task:${t._id}`]
       : t.assignedToUserId
         ? [t.assignedToUserId]
-        : undefined,
+        : [],
   }));
 
   const attachments: EventAttachmentDraft[] = (event.attachments ?? []).map(
@@ -232,9 +255,11 @@ function convexEventToEventData(
     remindersEnabled,
     reminders,
     participants,
+    sharedWithUserIds: event.sharedWithUserIds,
     sharedWithFamilyMemberIds: familyIds.length > 0 ? familyIds : undefined,
     allFamily: allFamilyFlag || undefined,
     tasks: eventTasks,
+    originalTasks: tasks,
     tasksVisibleToParticipants: event.tasksVisibleToParticipants ?? false,
     showAllTasksToAll: false,
     createdAt: event._creationTime ?? Date.now(),
@@ -256,17 +281,24 @@ export default function EditEventScreen(): React.JSX.Element {
   const event = useQuery(api.events.getById, { eventId });
   const eventTasks = useQuery(api.eventTasks.listByEvent, { eventId });
   const currentUserId = useQuery(api.users.getMyId);
+  const personalAssignees = useQuery(
+    api.eventTasks.listPersonalAssignees,
+    event && !event.communityId && event.createdBy === currentUserId
+      ? { eventId }
+      : 'skip'
+  );
   const serverFamilyContacts = useQuery(api.members.listMyFamilyContacts);
   const familyMembers: FamilyMemberChip[] = useMemo(
     () =>
       (serverFamilyContacts?.members ?? [])
-        .filter((m) => m._id !== serverFamilyContacts?.selfEntityId)
+        .filter((m) => !m.linkedUserId || m.linkedUserId !== currentUserId)
         .map((m) => ({
           _id: m._id,
           displayName: m.displayName,
           color: m.color,
+          linkedUserId: m.linkedUserId,
         })),
-    [serverFamilyContacts]
+    [serverFamilyContacts, currentUserId]
   );
   const communityMembersPack = useQuery(
     api.communities.getCommunityMembers,
@@ -335,7 +367,7 @@ export default function EditEventScreen(): React.JSX.Element {
     if (event) {
       setRsvpRequired(event.requiresRsvp !== false);
     }
-  }, [event?._id, event?.requiresRsvp]);
+  }, [event]);
 
   const handleSave = useCallback(
     async (data: EventData): Promise<string> => {
@@ -391,22 +423,39 @@ export default function EditEventScreen(): React.JSX.Element {
         locationUrl: data.onlineUrl ? undefined : data.locationUrl || undefined,
         tasksVisibleToParticipants: data.tasksVisibleToParticipants,
         requiresRsvp: rsvpRequired,
-        participants: participantNames,
+        ...(isCommunityEvent
+          ? { participants: participantNames ?? [] }
+          : {
+              ...personalTaskEdits(data.tasks, data.originalTasks ?? []),
+              ...(data.participantsDirty
+                ? {
+                    participants: participantNames ?? [],
+                    participantDetails: participantDetails(data.participants),
+                    sharedWithUserIds: (data.sharedWithUserIds ??
+                      []) as Id<'users'>[],
+                    sharedWithFamilyMemberIds:
+                      data.sharedWithFamilyMemberIds ?? [],
+                  }
+                : {}),
+            }),
         // Preserve family sharing fields — previously these were omitted and
         // therefore silently cleared on every edit, which broke visibility for
         // shared family members.
-        allFamily: data.allFamily || undefined,
-        sharedWithFamilyMemberIds:
-          data.sharedWithFamilyMemberIds &&
-          data.sharedWithFamilyMemberIds.length > 0
-            ? data.sharedWithFamilyMemberIds
-            : undefined,
+        allFamily: data.allFamily,
         attachments: resolvedAttachments,
         reminders: data.remindersEnabled
           ? data.reminders.map((r) => r.offsetMinutes)
           : [],
         importantItems: data.importantItems ?? [],
       });
+
+      if (!isCommunityEvent) {
+        router.replace({
+          pathname: '/(authenticated)/event/[id]',
+          params: { id: eventId },
+        });
+        return eventId;
+      }
 
       const assignmentUpdates: Array<() => Promise<unknown>> = [];
 
@@ -448,16 +497,6 @@ export default function EditEventScreen(): React.JSX.Element {
                 },
               })
             );
-            continue;
-          }
-          const assignedName = data.participants
-            .find((p) => p.id === assignedPid)
-            ?.name?.trim();
-          if (assignedName) {
-            await setTaskAssignee({
-              id: taskId as Id<'eventTasks'>,
-              assignee: { type: 'manual', name: assignedName },
-            }).catch(() => {});
           }
         }
       }
@@ -494,19 +533,6 @@ export default function EditEventScreen(): React.JSX.Element {
               })
             );
           }
-          continue;
-        }
-
-        const diff = resolvePersonalTaskAssignmentDiff(
-          task,
-          orig,
-          data.participants
-        );
-        if (diff.changed) {
-          await setTaskAssignee({
-            id: task.id as Id<'eventTasks'>,
-            assignee: diff.assignee as { type: 'manual'; name: string } | null,
-          }).catch(() => {});
         }
       }
 
@@ -596,14 +622,29 @@ export default function EditEventScreen(): React.JSX.Element {
         event === undefined ||
         event === null ||
         eventTasks === undefined ||
-        serverFamilyContacts === undefined
+        serverFamilyContacts === undefined ||
+        (!event.communityId &&
+          event.createdBy === currentUserId &&
+          personalAssignees === undefined)
       ) {
         return null;
       }
-      return convexEventToEventData(event, eventTasks, familyMembers);
+      return convexEventToEventData(
+        event,
+        eventTasks,
+        familyMembers,
+        personalAssignees ?? []
+      );
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [event, eventTasks, serverFamilyContacts]
+    [
+      event,
+      eventTasks,
+      serverFamilyContacts,
+      familyMembers,
+      personalAssignees,
+      currentUserId,
+    ]
   );
 
   const headerTitle = isCommunityEvent ? 'עריכת אירוע קהילתי' : 'עריכת אירוע';

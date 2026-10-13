@@ -7,7 +7,6 @@ import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation, mutation, query } from './_generated/server';
 import { insertCommunityActivity } from './communityActivities';
-import { stampEventOwnerScope } from './ownerScope';
 import {
   accumulateMainOverviewCandidate,
   type CommunityEventEarlyRemovalVerdict,
@@ -31,7 +30,19 @@ import {
   selectRecentCancelledCommunityEvents,
 } from './communityCalendarState';
 import { isActiveCommunityMember } from './communityMemberUtils';
+import {
+  canReadPersonalEvent,
+  canReadPersonalEventWithMembers,
+} from './eventAccess';
 import { hasCreatorOrphanAuthority, resolveMySpaceId } from './members';
+import { stampEventOwnerScope } from './ownerScope';
+import {
+  participantDetail,
+  personalTaskChange,
+  preparePersonalTaskChanges,
+  validatePersonalInvitations,
+} from './personalEventEditing';
+import { requireSpaceWriteAccess } from './spaceWriteAccess';
 import {
   isStorageReferencedByOtherDocument,
   safeDeleteStorageIfUnreferenced,
@@ -297,38 +308,8 @@ export const getEventAttachmentUrl = query({
         userId
       );
       if (!isActiveCommunityMember(membership)) return null;
-    } else if (event.createdBy !== userId) {
-      // Check creator, space membership, and explicit sharing.
-      let canAccess = false;
-
-      if (event.spaceId) {
-        const memberRow = await ctx.db
-          .query('members')
-          .withIndex('by_user', (q) => q.eq('userId', userId))
-          .filter((q) => q.eq(q.field('spaceId'), event.spaceId))
-          .first();
-        if (memberRow) canAccess = true;
-      }
-
-      if (!canAccess) {
-        const viewerMemberRows = await ctx.db
-          .query('members')
-          .withIndex('by_user', (q) => q.eq('userId', userId))
-          .collect();
-        const viewerMemberIds = new Set(
-          viewerMemberRows.map((r) => r._id as string)
-        );
-        const sharedUserIds = (event.sharedWithUserIds ?? []) as string[];
-        const sharedMemberIds = event.sharedWithFamilyMemberIds ?? [];
-        if (
-          sharedUserIds.includes(userId as string) ||
-          sharedMemberIds.some((mid) => viewerMemberIds.has(mid))
-        ) {
-          canAccess = true;
-        }
-      }
-
-      if (!canAccess) return null;
+    } else if (!(await canReadPersonalEvent(ctx, event, userId))) {
+      return null;
     }
 
     // ── Verify the storageId is referenced by this exact event ────────────────
@@ -392,41 +373,8 @@ export const getById = query({
       };
     }
 
-    // Creator always has access to their own event.
-    if (event.createdBy === userId) {
-      return { ...event, isSavedToMyCalendar: false };
-    }
-
-    // Space member — can view personal events in their shared family space.
-    if (event.spaceId) {
-      const memberRow = await ctx.db
-        .query('members')
-        .withIndex('by_user', (q) => q.eq('userId', userId))
-        .filter((q) => q.eq(q.field('spaceId'), event.spaceId))
-        .first();
-      if (memberRow) return { ...event, isSavedToMyCalendar: false };
-    }
-
-    // Cross-space: event lives in a different space than the viewer's resolved
-    // space (e.g. Yaniv's event stored under spaceY, but viewed by User A whose
-    // resolved space is spaceA). Allow access when explicitly shared.
-    const viewerMemberRows = await ctx.db
-      .query('members')
-      .withIndex('by_user', (q) => q.eq('userId', userId))
-      .collect();
-    const viewerMemberIds = new Set(
-      viewerMemberRows.map((r) => r._id as string)
-    );
-    const sharedUserIds = (event.sharedWithUserIds ?? []) as string[];
-    const sharedMemberIds = event.sharedWithFamilyMemberIds ?? [];
-    const isExplicitlyShared =
-      sharedUserIds.includes(userId as string) ||
-      sharedMemberIds.some((mid) => viewerMemberIds.has(mid));
-    if (isExplicitlyShared) {
-      return { ...event, isSavedToMyCalendar: false };
-    }
-
-    return null;
+    if (!(await canReadPersonalEvent(ctx, event, userId))) return null;
+    return { ...event, isSavedToMyCalendar: false };
   },
 });
 
@@ -1509,17 +1457,7 @@ export const listByDateRange = query({
         // shared with (via sharedWithFamilyMemberIds or sharedWithUserIds), or
         // the event was explicitly shared with the whole family (allFamily).
         const isCreator = (ev.createdBy as string) === (userId as string);
-        const isAllFamily = ev.allFamily === true;
-        const isInUserIds = (ev.sharedWithUserIds ?? []).some(
-          (id) => (id as string) === (userId as string)
-        );
-        // Use myMemberIdsAllSpaces (not myMemberIdsInSpace) so that when User A
-        // saves the viewer's entity row ID from spaceA into sharedWithFamilyMemberIds,
-        // the viewer's lookup succeeds even if their resolved primary space is spaceB.
-        const isInMemberIds = (ev.sharedWithFamilyMemberIds ?? []).some((mid) =>
-          myMemberIdsAllSpaces.has(mid)
-        );
-        if (!isCreator && !isAllFamily && !isInUserIds && !isInMemberIds) {
+        if (!canReadPersonalEventWithMembers(ev, userId, myMemberRows)) {
           continue;
         }
 
@@ -1640,6 +1578,9 @@ export const create = mutation({
     groupId: v.optional(v.id('spaces')),
     // FIXED: persist personal event participants collected in EventScreen
     participants: v.optional(v.array(v.string())),
+    participantDetails: v.optional(v.array(participantDetail)),
+    personalTaskChanges: v.optional(v.array(personalTaskChange)),
+    deletedPersonalTaskIds: v.optional(v.array(v.id('eventTasks'))),
     sharedWithUserIds: v.optional(v.array(v.id('users'))),
     communityId: v.optional(v.id('communities')),
     tasksVisibleToParticipants: v.optional(v.boolean()),
@@ -1664,6 +1605,10 @@ export const create = mutation({
     const resolvedSpaceId =
       args.spaceId ??
       (args.communityId ? await getUserSpaceId(ctx, userId) : undefined);
+
+    if (resolvedSpaceId !== undefined) {
+      await requireSpaceWriteAccess(ctx, userId, resolvedSpaceId);
+    }
 
     let communityName = '';
     if (args.communityId) {
@@ -1709,8 +1654,18 @@ export const create = mutation({
       uploadedAt: now,
     }));
 
+    if (!args.communityId) await validatePersonalInvitations(ctx, userId, args);
+    const { personalTaskChanges, deletedPersonalTaskIds, ...eventFields } =
+      args;
+    if (
+      deletedPersonalTaskIds?.length ||
+      personalTaskChanges?.some((t) => t.id)
+    )
+      throw new Error('משימה קיימת אינה שייכת לאירוע חדש');
+    if (args.communityId && personalTaskChanges?.length)
+      throw new Error('פעולה זו זמינה רק באירוע אישי');
     const eventId = await ctx.db.insert('events', {
-      ...args,
+      ...eventFields,
       spaceId: resolvedSpaceId,
       attachments: stamped,
       importantItems,
@@ -1728,6 +1683,19 @@ export const create = mutation({
         createdBy: userId,
       }),
     });
+
+    if (personalTaskChanges?.length) {
+      const created = await ctx.db.get(eventId);
+      if (!created) throw new Error('אירוע לא נמצא');
+      await (
+        await preparePersonalTaskChanges(
+          ctx,
+          created,
+          userId,
+          personalTaskChanges
+        )
+      )();
+    }
 
     if (args.communityId) {
       const existingSave = await ctx.db
@@ -1835,6 +1803,9 @@ export const update = mutation({
     groupId: v.optional(v.id('spaces')),
     // FIXED: allow edit flows to preserve/update existing event sharing fields
     participants: v.optional(v.array(v.string())),
+    participantDetails: v.optional(v.array(participantDetail)),
+    personalTaskChanges: v.optional(v.array(personalTaskChange)),
+    deletedPersonalTaskIds: v.optional(v.array(v.id('eventTasks'))),
     sharedWithUserIds: v.optional(v.array(v.id('users'))),
     allFamily: v.optional(v.boolean()),
     sharedWithFamilyMemberIds: v.optional(v.array(v.string())),
@@ -1846,7 +1817,17 @@ export const update = mutation({
     reminders: v.optional(v.array(v.number())),
     importantItems: v.optional(v.array(importantItemObject)),
   },
-  handler: async (ctx, { id, attachments, importantItems, ...fields }) => {
+  handler: async (
+    ctx,
+    {
+      id,
+      attachments,
+      importantItems,
+      personalTaskChanges,
+      deletedPersonalTaskIds,
+      ...fields
+    }
+  ) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error('לא מחובר למערכת');
 
@@ -1881,6 +1862,17 @@ export const update = mutation({
         throw new Error('אין הרשאה לערוך את האירוע');
       }
     }
+
+    if (!existing.communityId)
+      await validatePersonalInvitations(ctx, userId, fields, existing);
+    const applyPersonalTasks = await preparePersonalTaskChanges(
+      ctx,
+      { ...existing, ...fields },
+      userId,
+      personalTaskChanges,
+      deletedPersonalTaskIds,
+      existing
+    );
 
     let stampedAttachments: typeof existing.attachments | undefined;
     if (attachments !== undefined) {
@@ -1964,6 +1956,7 @@ export const update = mutation({
     );
 
     await ctx.db.patch(id, patch);
+    await applyPersonalTasks();
 
     if (existing.communityId && hasActualChange) {
       const communityId = existing.communityId;

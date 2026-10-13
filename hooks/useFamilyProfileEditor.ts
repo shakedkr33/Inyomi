@@ -1,7 +1,8 @@
-import { useMutation } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
 import { useRef, useState } from 'react';
-import { Keyboard } from 'react-native';
+import { Alert, Keyboard } from 'react-native';
 import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 import type { SelectedContactData } from '../components/onboarding/AddPersonBottomSheet';
 import {
   PET_COLORS,
@@ -50,6 +51,7 @@ export function useFamilyProfileEditor(
   const updateMyProfile = useMutation(api.users.updateMyProfile);
   // FIXED: removeMember now deletes from Convex members table, propagates to all devices
   const removeEntityMember = useMutation(api.members.removeEntityMember);
+  const mySpaceRole = useQuery(api.members.getMySpaceRole);
 
   // ── Core profile state ────────────────────────────────────────────────────
   // FIXED: added owner personal field hydration — reads firstName/lastName/nickname/personalColor from context
@@ -76,9 +78,28 @@ export function useFamilyProfileEditor(
     setIdentityEdited(true);
     setLastNameState(value);
   };
-  const [personalColor, setPersonalColor] = useState<string>(
+  const [personalColor, setPersonalColorState] = useState<string>(
     data.personalColor || PROFILE_COLORS[5]
   );
+  // BUG FIX: ColorPicker's onSelectColor used to only update this local
+  // state — on the regular Settings → "ניהול פרופיל" edit screen there is
+  // no save button for color at all (no bottom CTA on that route, same gap
+  // the first-name fix addressed), so a selected color never reached
+  // Convex. MainScreenHeader (Home avatar) reads `currentUser.profileColor`
+  // reactively from `api.users.getCurrentUser`, so it kept showing the old
+  // color until logout/login or app restart re-hydrated OnboardingContext
+  // from the (still-old) server value. Persisting immediately on selection
+  // via the SAME updateMyProfile mutation saveProfile()/saveAll() already
+  // use (it already accepts profileColor) makes every existing reactive
+  // reader pick up the change immediately — no new source of truth, no
+  // manual refresh. Mirrors the existing immediate-persist pattern already
+  // used below for markMemberInvited/removeMember.
+  const setPersonalColor = (color: string) => {
+    setPersonalColorState(color);
+    updateMyProfile({ profileColor: color }).catch((e) =>
+      console.error('[SET_PERSONAL_COLOR] updateMyProfile error:', e)
+    );
+  };
 
   // Used in the Family Space owner card (pre-filled from firstName + lastName)
   const [ownerFullName, setOwnerFullName] = useState(
@@ -294,27 +315,22 @@ export function useFamilyProfileEditor(
   // convexEntityId: the real Convex _id from the members table for this entity row.
   // Callers who have access to serverFamilyContacts (family-profile.tsx) should look it
   // up and pass it so the entity row is deleted immediately, propagating to all devices.
-  const removeMember = (id: string, convexEntityId?: string) => {
-    console.log('[REMOVE] localId:', id, 'convexEntityId:', convexEntityId);
+  const removeMember = async (id: string, convexEntityId?: string): Promise<boolean> => {
     const updated = familyMembers.filter((m) => m.id !== id);
-    setFamilyMembers(updated);
-    // Prefer the explicit convexEntityId; fall back to id if it looks like a Convex ID
-    const entityIdToDelete =
-      convexEntityId ?? (!/^\d+$/.test(id) ? id : undefined);
-    console.log(
-      '[REMOVE] calling removeEntityMember?',
-      !!entityIdToDelete,
-      'id:',
-      entityIdToDelete
-    );
-    if (entityIdToDelete) {
-      removeEntityMember({ memberId: entityIdToDelete as any }).catch((e) =>
-        console.error('[REMOVE] removeEntityMember error:', e)
-      );
+    try {
+      const entityId = convexEntityId ?? (!/^\d+$/.test(id) ? id : undefined);
+      if (entityId) {
+        await removeEntityMember({ memberId: entityId as Id<'members'> });
+      }
+      if (mySpaceRole?.isOwner) {
+        await updateMyProfile({ familyContacts: updated });
+      }
+      setFamilyMembers(updated);
+      return true;
+    } catch (error) {
+      Alert.alert('לא ניתן להסיר את הפרופיל', error instanceof Error ? error.message : 'אפשר לנסות שוב');
+      return false;
     }
-    updateMyProfile({ familyContacts: updated }).catch((e) =>
-      console.error('[REMOVE] updateMyProfile error:', e)
-    );
   };
 
   // FIXED: markMemberInvited now persists inviteStatus=invited to Convex immediately
@@ -388,6 +404,27 @@ export function useFamilyProfileEditor(
       nickname: nickname.trim() || undefined,
       personalColor,
     });
+    // BUG FIX: this used to only update local OnboardingContext state —
+    // on the regular Settings → "ניהול פרופיל" edit screen there is no
+    // other save action for the name fields (no bottom CTA there), so the
+    // "שמירת פרטים" button looked saved (local state + confirmation flash)
+    // but the Convex `users` row was never patched. Home's greeting reads
+    // the name reactively from `api.users.getCurrentUser`, so it kept
+    // showing the old name until logout/login or app restart re-hydrated
+    // OnboardingContext from the (still-old) server value. Persisting here
+    // via the same updateMyProfile mutation saveProfile() already uses
+    // makes Home's existing reactive query pick up the change immediately
+    // — no new source of truth, no manual refresh.
+    const namePatch = buildProfileNameSavePatch({
+      identityEdited,
+      firstName,
+      lastName,
+    });
+    if (Object.keys(namePatch).length > 0) {
+      updateMyProfile(namePatch).catch((e) =>
+        console.error('[SAVE_PERSONAL_NAME] updateMyProfile error:', e)
+      );
+    }
     Keyboard.dismiss();
     if (personalSavedTimerRef.current)
       clearTimeout(personalSavedTimerRef.current);
@@ -545,7 +582,7 @@ export function useFamilyProfileEditor(
     return updateMyProfile({
       ...namePatch,
       profileColor: personalColor,
-      familyContacts: deduped,
+      ...(mySpaceRole?.isOwner ? { familyContacts: deduped } : {}),
     }).then(() => undefined);
   };
 

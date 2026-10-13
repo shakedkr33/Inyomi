@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { needsExplicitRTL } from '@/lib/rtl';
+import { shouldUseAppleReviewProvider } from '@/lib/services/appleReviewAuth';
 import { mapPhoneAuthError } from '@/lib/services/authErrorUtils';
 
 const CODE_LENGTH = 6;
@@ -73,8 +74,10 @@ export default function VerifyScreen() {
       setError(null);
 
       try {
-        const isAppleReviewLogin =
-          phone === '+972510000000' && digits === '123456';
+        // SECURITY (P2-H03): routing depends ONLY on the phone number, never
+        // on the OTP digits — the OTP itself is never known to the client.
+        // See lib/services/appleReviewAuth.ts for the full explanation.
+        const isAppleReviewLogin = shouldUseAppleReviewProvider(phone);
         await signIn(isAppleReviewLogin ? 'apple-review' : 'phone', {
           phone,
           code: digits,

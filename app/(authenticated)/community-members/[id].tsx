@@ -18,6 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { useStartupDestinationReady } from '@/lib/hooks/useStartupDestinationReady';
 import { rtl } from '@/lib/rtl';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -123,6 +124,10 @@ function MemberRow({
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function CommunityMembersScreen() {
+  // Finite startup destination — reachable directly on cold start via a
+  // notification target.
+  const { onLayout: handleCommunityMembersDestinationLayout } =
+    useStartupDestinationReady('community-members');
   const { id, returnTab } = useLocalSearchParams<{
     id: string;
     returnTab?: string;
@@ -334,7 +339,11 @@ export default function CommunityMembersScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView
+      style={styles.container}
+      edges={['top']}
+      onLayout={handleCommunityMembersDestinationLayout}
+    >
       {/* ── כותרת */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>

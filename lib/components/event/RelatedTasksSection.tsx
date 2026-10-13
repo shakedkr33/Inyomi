@@ -22,6 +22,8 @@ const PRIMARY = '#36a9e2';
 const TINT = '#e8f5fd';
 
 interface RelatedTasksSectionProps {
+  defaultAssigneeId?: string;
+  showAssignmentSelector?: boolean;
   tasks: EventTask[];
   participants: Participant[];
   completedCount: number;
@@ -40,6 +42,8 @@ interface RelatedTasksSectionProps {
 
 export function RelatedTasksSection({
   tasks,
+  defaultAssigneeId,
+  showAssignmentSelector = true,
   participants,
   completedCount,
   tasksVisibleToParticipants,
@@ -110,6 +114,9 @@ export function RelatedTasksSection({
       id: Date.now().toString(),
       title,
       completed: false,
+      assignedParticipantIds: defaultAssigneeId
+        ? [defaultAssigneeId]
+        : undefined,
     };
     onChange([...tasks, newTask]);
     setAddTaskModalVisible(false);
@@ -137,6 +144,12 @@ export function RelatedTasksSection({
   // ── Render helpers ────────────────────────────────────────────────────────
   const renderAssigneeAvatars = (task: EventTask): React.ReactNode => {
     const assignees = resolveAssignees(task);
+    if (
+      assignees.length === 0 &&
+      task.assignee &&
+      task.assignedParticipantIds?.[0] === task.assigneeId
+    )
+      assignees.push(task.assignee);
     if (assignees.length === 0) return null;
     const visible = assignees.slice(0, 3);
     return (
@@ -239,16 +252,18 @@ export function RelatedTasksSection({
               </Pressable>
 
               {/* "הקצה" button */}
-              <Pressable
-                onPress={() => openAssignSheet(task)}
-                style={s.assignBtn}
-                accessible={true}
-                accessibilityRole="button"
-                accessibilityLabel={`הקצה משימה: ${task.title}`}
-                hitSlop={6}
-              >
-                <Text style={s.assignBtnText}>הקצה</Text>
-              </Pressable>
+              {showAssignmentSelector ? (
+                <Pressable
+                  onPress={() => openAssignSheet(task)}
+                  style={s.assignBtn}
+                  accessible={true}
+                  accessibilityRole="button"
+                  accessibilityLabel={`הקצה משימה: ${task.title}`}
+                  hitSlop={6}
+                >
+                  <Text style={s.assignBtnText}>הקצה</Text>
+                </Pressable>
+              ) : null}
 
               {/* Delete */}
               <Pressable

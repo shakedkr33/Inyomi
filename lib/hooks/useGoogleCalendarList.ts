@@ -39,10 +39,16 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isGoogleHolidayCalendarId } from '../services/googleHolidayCalendarFilter';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-export type CalendarListStatus = 'idle' | 'loading' | 'ready' | 'empty' | 'error';
+export type CalendarListStatus =
+  | 'idle'
+  | 'loading'
+  | 'ready'
+  | 'empty'
+  | 'error';
 
 export type CalendarItem = {
   /**
@@ -58,8 +64,17 @@ export type CalendarItem = {
 
 export type UseGoogleCalendarListResult = {
   status: CalendarListStatus;
-  /** Mapped calendar entries; empty array in all non-ready states. */
+  /**
+   * Mapped calendar entries; empty array in all non-ready states.
+   * Google's own holiday calendars are never included here — InYomi is the
+   * holiday source of truth (see googleHolidayCalendarFilter.ts).
+   */
   calendars: readonly CalendarItem[];
+  /**
+   * Count of Google holiday calendars that were excluded from `calendars`
+   * on the most recent successful fetch. 0 in all non-ready states.
+   */
+  filteredHolidayCount: number;
   /** Localised Hebrew error message; null unless status is 'error'. */
   errorMessage: string | null;
   /**
@@ -100,7 +115,7 @@ const CALENDAR_LIST_URL =
 const UNNAMED_TITLE = 'יומן ללא שם';
 
 /** Generic Hebrew error shown for any fetch failure; intentionally opaque. */
-const LOAD_ERROR_MSG = 'לא ניתן לטעון את היומנים. נסי שוב.';
+const LOAD_ERROR_MSG = 'לא ניתן לטעון את היומנים. אפשר לנסות שוב.';
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
@@ -114,10 +129,11 @@ const LOAD_ERROR_MSG = 'לא ניתן לטעון את היומנים. נסי ש�
  * return to idle.
  */
 export function useGoogleCalendarList(
-  accessToken: string | null,
+  accessToken: string | null
 ): UseGoogleCalendarListResult {
   const [status, setStatus] = useState<CalendarListStatus>('idle');
   const [calendars, setCalendars] = useState<readonly CalendarItem[]>([]);
+  const [filteredHolidayCount, setFilteredHolidayCount] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Guard: prevent state updates on an unmounted component.
@@ -141,6 +157,7 @@ export function useGoogleCalendarList(
     if (isMounted.current) {
       setStatus('idle');
       setCalendars([]);
+      setFilteredHolidayCount(0);
       setErrorMessage(null);
     }
   }, []);
@@ -160,10 +177,12 @@ export function useGoogleCalendarList(
     if (isMounted.current) {
       setStatus('loading');
       setCalendars([]);
+      setFilteredHolidayCount(0);
       setErrorMessage(null);
     }
 
     const collected: CalendarItem[] = [];
+    let holidayCount = 0;
     let pageToken: string | undefined;
 
     try {
@@ -231,6 +250,13 @@ export function useGoogleCalendarList(
           // Skip entries with missing or non-string IDs.
           if (typeof entry.id !== 'string' || !entry.id) continue;
 
+          // Google holiday calendars must never be importable — InYomi is the
+          // holiday source of truth. Exclude them from the selectable list.
+          if (isGoogleHolidayCalendarId(entry.id)) {
+            holidayCount += 1;
+            continue;
+          }
+
           // Prefer summaryOverride (user-set label) over summary (calendar name).
           const override =
             typeof entry.summaryOverride === 'string'
@@ -258,6 +284,7 @@ export function useGoogleCalendarList(
 
       if (isMounted.current) {
         setCalendars(collected);
+        setFilteredHolidayCount(holidayCount);
         setStatus(collected.length === 0 ? 'empty' : 'ready');
         setErrorMessage(null);
       }
@@ -289,5 +316,12 @@ export function useGoogleCalendarList(
     await runFetch(accessToken);
   }, [accessToken, runFetch]);
 
-  return { status, calendars, errorMessage, reload, clear };
+  return {
+    status,
+    calendars,
+    filteredHolidayCount,
+    errorMessage,
+    reload,
+    clear,
+  };
 }

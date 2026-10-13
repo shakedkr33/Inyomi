@@ -13,9 +13,9 @@
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/images/inyomi-splash-logo-transparent.png",
+      "image": "./assets/images/inyomi-native-splash-logo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#FFF8F3"
+      "backgroundColor": "#EDE8E2"
     },
     "ios": {
       "supportsTablet": true,

@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { rtl } from '@/lib/rtl';
+import { getHebcalRecordsForYear } from '@/lib/services/hebcalHolidayProvider';
+import { HOLIDAY_CATEGORY_DEFINITIONS } from '@/lib/services/holidayCategoryDefinitions';
 import {
   loadCalendarLayerFilters,
   saveCalendarLayerFilters,
@@ -20,38 +22,13 @@ import {
   loadHolidayOverlayPreferences,
   saveHolidayOverlayPreferences,
 } from '@/lib/storage/holidayOverlayPreferences';
-import { getHebcalRecordsForYear } from '@/lib/services/hebcalHolidayProvider';
 import type { HolidayCategoryId } from '@/lib/types/holidayOverlay';
 
 // ── Category definitions (display order is fixed per spec) ────────────────────
+// Shared with the Google Calendar import flow's holiday-selection step —
+// see lib/services/holidayCategoryDefinitions.ts.
 
-type CategoryDef = {
-  id: HolidayCategoryId;
-  label: string;
-  subtitle?: string;
-};
-
-const CATEGORIES: CategoryDef[] = [
-  {
-    id: 'jewish_holidays',
-    label: 'חגים ומועדים יהודיים',
-    subtitle: 'פסח, סוכות, ראש השנה וחנוכה',
-  },
-  {
-    id: 'israeli_national_days',
-    label: 'ימים לאומיים בישראל',
-    subtitle: 'יום השואה, יום הזיכרון, יום העצמאות ויום ירושלים',
-  },
-  {
-    id: 'fast_days',
-    label: 'צומות',
-    subtitle: 'תשעה באב, י״ז בתמוז וצום גדליה',
-  },
-  {
-    id: 'rosh_chodesh',
-    label: 'ראשי חודשים',
-  },
-];
+const CATEGORIES = HOLIDAY_CATEGORY_DEFINITIONS;
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -196,7 +173,10 @@ export default function HolidayOverlaySettingsScreen(): React.JSX.Element {
                   activeOpacity={0.7}
                   accessible={true}
                   accessibilityRole="switch"
-                  accessibilityState={{ checked: isEnabled, disabled: !isHydrated }}
+                  accessibilityState={{
+                    checked: isEnabled,
+                    disabled: !isHydrated,
+                  }}
                   accessibilityLabel={cat.label}
                   style={{
                     flexDirection: rtl.flexDirection,
@@ -284,7 +264,9 @@ export default function HolidayOverlaySettingsScreen(): React.JSX.Element {
             lineHeight: 22,
           }}
         >
-          {'החגים מוצגים כשכבה ביומן ואינם אירועים אישיים. אפשר להסתיר אותם בכל עת דרך סינון היומן.'}
+          {
+            'החגים מוצגים כשכבה ביומן ואינם אירועים אישיים. אפשר להסתיר אותם בכל עת דרך סינון היומן.'
+          }
         </Text>
       </ScrollView>
     </SafeAreaView>

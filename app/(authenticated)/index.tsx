@@ -44,7 +44,9 @@ import { NotificationsDrawer } from '@/lib/components/notifications/Notification
 import { SubtaskImagePreviewModal } from '@/lib/components/task/SubtaskImagePreviewModal';
 import { SubtaskAttachmentPreview } from '@/lib/components/task/SubtasksSection';
 import { isEventEligibleForHomeImportantItemsPreview } from '@/lib/homeImportantItemsPreview';
+import { useStartupDestinationReady } from '@/lib/hooks/useStartupDestinationReady';
 import { APP_IS_RTL, getTextAlign, position, rtl, spacing } from '@/lib/rtl';
+import { startupTrace } from '@/lib/startupTrace';
 import { getHomeReminderMetadata } from '@/lib/taskClassification';
 import { isTaskPastDue } from '@/lib/taskDueStatus';
 import type { SubTaskAttachment } from '@/lib/types/task';
@@ -548,6 +550,18 @@ export default function HomeScreen() {
     birthdays: contextBirthdays,
   } = useBirthdaySheets();
 
+  // Finite startup destination — the normal/default cold-start landing
+  // screen for an authenticated, fully-onboarded user with no pending
+  // redirect. See lib/hooks/useStartupDestinationReady.ts.
+  const { onLayout: handleHomeDestinationLayout } =
+    useStartupDestinationReady('home');
+
+  // TEMPORARY (Step A baseline instrumentation) — fires once, on Home's
+  // first mount (which only happens once every routing gate has passed).
+  useEffect(() => {
+    startupTrace('T8_HOME_MOUNTED');
+  }, []);
+
   // ── Convex: spaceId ────────────────────────────────────────────────────────
   // TODO: כאשר defaultSpaceId ייאכלס ב-onboarding, לעבור לשליפה ישירה מ-user.defaultSpaceId
   // getMySpace מחזיר את ה-spaceId ישירות (Id<'spaces'> | null)
@@ -797,13 +811,23 @@ export default function HomeScreen() {
     [communityEvents]
   );
 
+  // ── Personal events for selected date ─────────────────────────────────────
+  const personalEventData =
+    useQuery(api.events.listByDateRange, { from, to }) ?? [];
+
   // Batch query: authorized event tasks per community event (server-filtered per role/visibility).
   // Skipped when there are no community events to avoid unnecessary subscriptions.
   const homeEventTaskResults =
-    useQuery(
-      api.eventTasks.listEventTasksForHome,
-      communityEventIds.length > 0 ? { eventIds: communityEventIds } : 'skip'
-    ) ?? [];
+    useQuery(api.eventTasks.listEventTasksForHome, {
+      eventIds: [
+        ...new Set([
+          ...communityEventIds,
+          ...personalEventData
+            .filter((ev) => !ev.communityId)
+            .map((ev) => ev._id),
+        ]),
+      ],
+    }) ?? [];
 
   // Build a fast lookup: eventId → authorized task accordion data.
   const eventTaskDataById = useMemo<Record<string, EventTaskAccordionData>>(
@@ -843,10 +867,6 @@ export default function HomeScreen() {
       api.profileCircles.getFamilyAlsoAddedCommunityEvents,
       communityEventIds.length > 0 ? { eventIds: communityEventIds } : 'skip'
     ) ?? {};
-
-  // ── Personal events for selected date ─────────────────────────────────────
-  const personalEventData =
-    useQuery(api.events.listByDateRange, { from, to }) ?? [];
 
   // ── My RSVPs — one query for all events; used to detect personal invite status ──
   const myRsvpsHome = useQuery(api.eventRsvps.listByUser) ?? [];
@@ -1509,9 +1529,7 @@ export default function HomeScreen() {
           // Carry authorizedEventTasks from community data so accordion data
           // survives deduplication regardless of which representation wins the
           // seen-id check (mirrors the importantItems propagation pattern).
-          authorizedEventTasks: communityIdStr
-            ? eventTaskDataById[String(ev._id)]
-            : undefined,
+          authorizedEventTasks: eventTaskDataById[String(ev._id)],
           profileCircles,
           profileCirclesExtraCount,
           profileCirclesContext,
@@ -2310,6 +2328,7 @@ export default function HomeScreen() {
         { flex: 1, backgroundColor: '#f6f7f8' },
         ANDROID_MATCH_IOS_LAYOUT ? styles.safeAreaRtl : null,
       ]}
+      onLayout={handleHomeDestinationLayout}
     >
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <View style={stylesRtl.headerSurface}>

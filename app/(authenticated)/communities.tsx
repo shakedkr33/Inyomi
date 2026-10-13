@@ -29,6 +29,7 @@ import { useNotifications } from '@/contexts/NotificationsContext';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { NotificationsDrawer } from '@/lib/components/notifications/NotificationsDrawer';
+import { useStartupDestinationReady } from '@/lib/hooks/useStartupDestinationReady';
 import { APP_IS_RTL, rtl } from '@/lib/rtl';
 
 const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
@@ -153,7 +154,9 @@ function ActivitySummary({ nextActivity, referenceNow }: ActivitySummaryProps) {
   // card's direction:'ltr' overrides cleanly). On Android we must use physical 'right'.
   // On iOS the global I18nManager.isRTL=true is not cancelled by direction:'ltr',
   // so rtl.textAlign='left' still lands on physical right via Yoga flip (no change).
-  const titleAlign = ANDROID_MATCH_IOS_LAYOUT ? 'right' : (rtl.textAlign ?? 'right');
+  const titleAlign = ANDROID_MATCH_IOS_LAYOUT
+    ? 'right'
+    : (rtl.textAlign ?? 'right');
   const rowDir = rtl.flexDirection;
 
   if (nextActivity) {
@@ -261,7 +264,9 @@ function CommunityCard({
   // Inside direction:'ltr' cardWrapper, Android's explicit direction:'rtl' root makes
   // the card's direction:'ltr' a clean override — Yoga no longer flips 'left' to right.
   // Use physical 'right' on Android. iOS global RTL is unaffected (no change there).
-  const titleAlign = ANDROID_MATCH_IOS_LAYOUT ? 'right' : (rtl.textAlign ?? 'right');
+  const titleAlign = ANDROID_MATCH_IOS_LAYOUT
+    ? 'right'
+    : (rtl.textAlign ?? 'right');
   const rowDir = rtl.flexDirection;
   const membersCount = Number.isFinite(item.membersCount)
     ? item.membersCount
@@ -453,6 +458,10 @@ function PopoverMenu({ visible, position, onClose, items }: PopoverMenuProps) {
 // ─── Main Screen ──────────────────────────────────────────────────────────────
 
 export default function CommunitiesScreen() {
+  // Finite startup destination — reachable directly on cold start via a
+  // notification target.
+  const { onLayout: handleCommunitiesDestinationLayout } =
+    useStartupDestinationReady('communities');
   const router = useRouter();
   const { width: screenWidth } = useWindowDimensions();
   const {
@@ -838,7 +847,14 @@ export default function CommunitiesScreen() {
   const cardWidth = (availableGridWidth - GRID_COLUMN_GAP) / 2;
 
   return (
-    <SafeAreaView style={[styles.container, ANDROID_MATCH_IOS_LAYOUT ? styles.safeAreaRtl : null]} edges={['top']}>
+    <SafeAreaView
+      style={[
+        styles.container,
+        ANDROID_MATCH_IOS_LAYOUT ? styles.safeAreaRtl : null,
+      ]}
+      edges={['top']}
+      onLayout={handleCommunitiesDestinationLayout}
+    >
       <View style={styles.headerSurface}>
         <MainScreenHeader
           title="הקהילות שלי"
@@ -873,7 +889,10 @@ export default function CommunitiesScreen() {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={[styles.chipsRow, { flexDirection: rtl.flexDirection }]}
+        contentContainerStyle={[
+          styles.chipsRow,
+          { flexDirection: rtl.flexDirection },
+        ]}
         style={styles.chipsScroll}
       >
         {FILTER_CHIPS.map((chip) => {

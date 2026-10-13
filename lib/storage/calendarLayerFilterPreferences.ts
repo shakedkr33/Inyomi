@@ -74,14 +74,20 @@ export async function loadCalendarLayerFilters(): Promise<CalendarLayerFilters> 
 
 /**
  * Persist calendar layer filter preferences immediately.
- * Never throws — storage failure is silently ignored.
+ *
+ * Never throws — storage failure resolves to `false` instead so a caller
+ * that cares (e.g. the Google import flow) can surface a non-blocking
+ * warning. Existing fire-and-forget callers that ignore the return value
+ * keep their current behavior unchanged.
  */
 export async function saveCalendarLayerFilters(
   filters: CalendarLayerFilters
-): Promise<void> {
+): Promise<boolean> {
   try {
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
+    return true;
   } catch {
     // Storage write failure must never crash the calendar
+    return false;
   }
 }

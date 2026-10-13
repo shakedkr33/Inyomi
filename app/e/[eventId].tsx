@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
+import { useStartupDestinationReady } from '@/lib/hooks/useStartupDestinationReady';
 import { PENDING_COMMUNITY_EVENT_ID_KEY } from '@/lib/pendingEventLink';
 
 const PRIMARY = '#36a9e2';
@@ -33,6 +34,16 @@ export default function CommunityEventLinkScreen(): React.JSX.Element {
     api.events.resolveCommunityEventLink,
     validEventId ? { eventId: validEventId } : 'skip'
   );
+
+  // This top-level route can be reached directly on a cold start
+  // (community event link), bypassing both the (auth) and (authenticated)
+  // child InYomiSplashScreen layouts. The loading/redirect-pending branch
+  // below is transient (it may still redirect to sign-in, the resolved
+  // event, or the community-join screen) so it must NOT report readiness —
+  // only the two genuinely terminal branches (not-member, event
+  // unavailable) do, via handleTerminalLayout.
+  const { onLayout: handleTerminalLayout } =
+    useStartupDestinationReady('community-event');
 
   useEffect(() => {
     if (authLoading || isAuthenticated || !eventId) return;
@@ -82,7 +93,11 @@ export default function CommunityEventLinkScreen(): React.JSX.Element {
 
   if (resolution?.status === 'notMember') {
     return (
-      <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      <SafeAreaView
+        style={styles.container}
+        edges={['top', 'bottom']}
+        onLayout={handleTerminalLayout}
+      >
         <View style={styles.centered}>
           <MaterialIcons name="groups" size={56} color="#94a3b8" />
           <Text style={styles.title}>
@@ -111,7 +126,11 @@ export default function CommunityEventLinkScreen(): React.JSX.Element {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+    <SafeAreaView
+      style={styles.container}
+      edges={['top', 'bottom']}
+      onLayout={handleTerminalLayout}
+    >
       <View style={styles.centered}>
         <MaterialIcons name="event-busy" size={56} color="#94a3b8" />
         <Text style={styles.title}>האירוע הזה כבר לא זמין</Text>

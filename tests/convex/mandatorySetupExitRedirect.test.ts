@@ -51,8 +51,15 @@ describe('app/(authenticated)/_layout.tsx — needsMandatorySetupExitRedirect', 
   });
 
   it('does NOT include needsMandatorySetupExitRedirect in the splash-screen early return — Tabs must stay mounted for the navigate call to succeed', () => {
+    // Anchored on `!isReadyToRoute ||` DIRECTLY FOLLOWED by `!isAuthenticated
+    // ||` — the ONLY such gate in this file — so this cannot accidentally
+    // match the unrelated, single-line `if (!isReadyToRoute ||
+    // !coldStartCheckDone) return;` guard earlier in the component. The
+    // matched JSX tag is intentionally permissive about props (e.g.
+    // `source="authenticated"`) — this test only asserts which CONDITIONS
+    // gate the splash-screen early return, not the exact JSX it renders.
     const splashReturnMatch = LAYOUT_SOURCE.match(
-      /if \(\s*!isReadyToRoute \|\|[\s\S]*?return <InYomiSplashScreen \/>;\s*\}/
+      /if \(\s*\n\s*!isReadyToRoute \|\|\s*\n\s*!isAuthenticated \|\|[\s\S]*?return <InYomiSplashScreen[\s\S]*?\/>;\s*\}/
     );
     expect(splashReturnMatch).not.toBeNull();
     expect(splashReturnMatch?.[0] ?? '').not.toContain(

@@ -1,5 +1,5 @@
 // FIXED: added EventAttachmentDraft type and attachments field to EventData
-import type { Id } from '@/convex/_generated/dataModel';
+import type { Doc, Id } from '@/convex/_generated/dataModel';
 
 // ─── Attachments ──────────────────────────────────────────────────────────────
 
@@ -22,6 +22,10 @@ export interface EventAttachmentDraft {
 }
 
 export interface Participant {
+  source?: 'family' | 'contact' | 'legacy' | 'user';
+  userId?: Id<'users'>;
+  /** Local picker eligibility; does not change historical identity. */
+  assignmentEligible?: boolean;
   id: string;
   /** Display name used throughout the app. For contact-sourced participants this
    *  is populated from localDisplayName at creation time. */
@@ -120,7 +124,19 @@ export interface EventData {
   remindersEnabled: boolean;
   reminders: Reminder[];
   participants: Participant[];
+  /** Local edit intent; never persisted as event data. */
+  participantsDirty?: boolean;
   tasks: EventTask[];
+  /** Immutable form-load snapshot for personal edit diffs; never persisted. */
+  originalTasks?: Pick<
+    Doc<'eventTasks'>,
+    | '_id'
+    | 'title'
+    | 'completed'
+    | 'order'
+    | 'assignedToUserId'
+    | 'assignedToManual'
+  >[];
   tasksVisibleToParticipants: boolean;
   showAllTasksToAll: boolean;
   createdAt: number;

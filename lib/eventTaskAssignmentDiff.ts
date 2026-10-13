@@ -95,24 +95,30 @@ export function resolveCommunityTaskAssignmentDiff(
 }
 
 /**
- * Personal Event branch — assignee resolves to a manual display name
- * from `participants` (family members / free-text participants).
+ * Personal Event branch — preserve untouched legacy state; deliberate
+ * reassignment requires a verified account, never a display-name match.
  */
 export function resolvePersonalTaskAssignmentDiff(
   task: EditableAssignmentTask,
   orig: PersistedAssignmentTask,
-  participants: { id: string; name: string }[]
+  participants: { id: string; name: string; userId?: string }[]
 ): AssignmentDiffResult {
   const assignedPid = resolveFormAssignedParticipantId(task);
-  const originalManualName = orig.assignedToManual?.trim();
-  const assignedName = participants
-    .find((p) => p.id === assignedPid)
-    ?.name?.trim();
-  const changed =
-    assignedName !== originalManualName || Boolean(orig.assignedToUserId);
-  if (!changed) return { changed: false, assignee: null };
+  // Unchanged form identity preserves account-backed and legacy assignments.
+  if (
+    assignedPid === task.assigneeId ||
+    task.assignedParticipantIds === undefined
+  )
+    return { changed: false, assignee: null };
+  if (!assignedPid)
+    return {
+      changed: Boolean(orig.assignedToUserId || orig.assignedToManual),
+      assignee: null,
+    };
+  const participant = participants.find((p) => p.id === assignedPid);
+  if (!participant?.userId) throw new Error('נדרש חשבון מקושר להקצאת משימה');
   return {
-    changed: true,
-    assignee: assignedName ? { type: 'manual', name: assignedName } : null,
+    changed: participant.userId !== orig.assignedToUserId,
+    assignee: { type: 'user', userId: participant.userId },
   };
 }

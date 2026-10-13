@@ -1,3 +1,7 @@
+import {
+  personalAssignmentChoices,
+  selectFamilyParticipants,
+} from '@/lib/personalEventEditing';
 // FIXED: added EventAttachmentsSection between LocationCard and RecurrenceRow
 // FIXED: post-save success/share sheet for personal events
 import { MaterialIcons } from '@expo/vector-icons';
@@ -234,16 +238,17 @@ export default function EventScreen({
   // FIXED: load family members for the family sharing section in ParticipantsCard.
   // selfEntityId is the signed-in user's own entity row — excluded from the chips
   // so the creator is never shown (they are always implicitly included).
+  const currentUserId = useQuery(api.users.getMyId);
   const serverFamilyContacts = useQuery(api.members.listMyFamilyContacts);
   const familyMembers: FamilyMemberChip[] = (
     serverFamilyContacts?.members ?? []
   )
-    .filter((m) => m._id !== serverFamilyContacts?.selfEntityId)
+    .filter((m) => !m.linkedUserId || m.linkedUserId !== currentUserId)
     .map((m) => ({
       _id: m._id,
       displayName: m.displayName,
       color: m.color,
-      matchedUserId: m.matchedUserId as string | undefined,
+      linkedUserId: m.linkedUserId,
     }));
   const isEditMode = Boolean(initialData);
   const [isDirty, setIsDirty] = useState(!isEditMode);
@@ -590,7 +595,68 @@ export default function EventScreen({
   const shouldShowReminders = true;
   const taskVisibilityOffHelperText = isCommunityEvent
     ? 'כל משתתף יראה רק משימות שהוקצו אליו. מנהלי האירוע ימשיכו לראות את כולן'
-    : 'רק את רואה את המשימות';
+    : 'המשימות גלויות ליוצרי האירוע ולחשבונות שאליהם הוקצו';
+
+  const applyParticipantChange = (change: Partial<EventData>) => {
+    const patch = { ...change, participantsDirty: true };
+    const nextUsers = new Set(
+      patch.sharedWithUserIds ?? event.sharedWithUserIds ?? []
+    );
+    const removedUsers = new Set<string>(
+      [
+        ...(event.sharedWithUserIds ?? []),
+        ...event.participants.flatMap((p) => (p.userId ? [p.userId] : [])),
+      ].filter(
+        (id) =>
+          !nextUsers.has(id) &&
+          !(patch.participants ?? event.participants).some(
+            (p) => p.userId === id
+          )
+      )
+    );
+    const affected = event.tasks.filter((task) =>
+      task.assignedParticipantIds?.some((id) => removedUsers.has(id))
+    );
+    if (!affected.length) {
+      updateEvent(patch);
+      return;
+    }
+    Alert.alert(
+      'משימות של משתתפים שהוסרו',
+      `יש לבחור מה לעשות עם ${affected.length} משימות. המשימות עצמן יישמרו.`,
+      [
+        { text: 'חזרה', style: 'cancel' },
+        {
+          text: 'ביטול ההקצאה',
+          onPress: () =>
+            updateEvent({
+              ...patch,
+              tasks: event.tasks.map((task) =>
+                affected.includes(task)
+                  ? { ...task, assignedParticipantIds: [] }
+                  : task
+              ),
+            }),
+        },
+        ...(currentUserId
+          ? [
+              {
+                text: 'העברה אליי',
+                onPress: () =>
+                  updateEvent({
+                    ...patch,
+                    tasks: event.tasks.map((task) =>
+                      affected.includes(task)
+                        ? { ...task, assignedParticipantIds: [currentUserId] }
+                        : task
+                    ),
+                  }),
+              },
+            ]
+          : []),
+      ]
+    );
+  };
 
   const handleAddImportantItem = (): void => {
     const title = importantItemDraft.trim();
@@ -843,107 +909,38 @@ export default function EventScreen({
           {showParticipants ? (
             <ParticipantsCard
               participants={event.participants}
-              onChange={(p) => {
-                const removedIds = new Set(
-                  event.participants
-                    .filter((prev) => !p.some((next) => next.id === prev.id))
-                    .map((prev) => prev.id)
+              onChange={(participants) => {
+                const removed = event.participants.filter(
+                  (p) => !participants.some((next) => next.id === p.id)
                 );
-                const tasks =
-                  removedIds.size > 0
-                    ? event.tasks.map((t) => ({
-                        ...t,
-                        assignedParticipantIds: (
-                          t.assignedParticipantIds ?? []
-                        ).filter((id) => !removedIds.has(id)),
-                      }))
-                    : event.tasks;
-
-                // FIXED: removing a family member from participants also deselects them in family section
-                const removedFamilyIds = [...removedIds].filter((id) =>
-                  familyMembers.some((fm) => fm._id === id)
+                const removedUsers = new Set<string>(
+                  removed.flatMap((p) => (p.userId ? [p.userId] : []))
                 );
-
-                if (removedFamilyIds.length > 0) {
-                  const newFamilyIds = (
+                applyParticipantChange({
+                  participants,
+                  sharedWithFamilyMemberIds: (
                     event.sharedWithFamilyMemberIds ?? []
-                  ).filter((id) => !removedFamilyIds.includes(id));
-                  updateEvent({
-                    participants: p,
-                    tasks,
-                    // If "כולם" was on and a member is removed, turn it off
-                    allFamily: event.allFamily ? undefined : event.allFamily,
-                    sharedWithFamilyMemberIds:
-                      newFamilyIds.length > 0 ? newFamilyIds : undefined,
-                  });
-                } else {
-                  updateEvent({ participants: p, tasks });
-                }
+                  ).filter((id) => !removed.some((p) => p.id === id)),
+                  sharedWithUserIds: (event.sharedWithUserIds ?? []).filter(
+                    id => !removedUsers.has(id) || participants.some(p => p.userId === id)
+                  ),
+                });
               }}
               familyMembers={familyMembers}
               allFamily={event.allFamily}
-              sharedWithFamilyMemberIds={event.sharedWithFamilyMemberIds}
-              onFamilyChange={(af, ids) => {
-                // FIXED: family member selection now syncs to event.participants for display
-                const patch: Partial<EventData> = {
-                  allFamily: af || undefined,
-                  sharedWithFamilyMemberIds: ids.length > 0 ? ids : undefined,
-                };
-
-                // Derive sharedWithUserIds — only real Convex user IDs from matchedUserId
-                if (af) {
-                  const userIds = familyMembers
-                    .map((fm) => fm.matchedUserId)
-                    .filter((id): id is string => Boolean(id));
-                  patch.sharedWithUserIds =
-                    userIds.length > 0 ? userIds : undefined;
-                } else if (ids.length > 0) {
-                  const userIds = familyMembers
-                    .filter((fm) => ids.includes(fm._id))
-                    .map((fm) => fm.matchedUserId)
-                    .filter((id): id is string => Boolean(id));
-                  patch.sharedWithUserIds =
-                    userIds.length > 0 ? userIds : undefined;
-                } else {
-                  patch.sharedWithUserIds = undefined;
-                }
-
-                // Keep participants that are NOT family members (external contacts/email)
-                const existingNonFamily = event.participants.filter(
-                  (p) => !familyMembers.some((fm) => fm._id === p.id)
-                );
-
-                if (af) {
-                  // "כולם" — add every family member as a participant
-                  patch.participants = [
-                    ...existingNonFamily,
-                    ...familyMembers.map((fm) => ({
-                      id: fm._id,
-                      name: fm.displayName ?? '',
-                      color: fm.color ?? '#36a9e2',
-                      avatarUrl: undefined,
-                    })),
-                  ];
-                } else if (ids.length > 0) {
-                  // Individual selection — only the selected family members
-                  patch.participants = [
-                    ...existingNonFamily,
-                    ...familyMembers
-                      .filter((fm) => ids.includes(fm._id))
-                      .map((fm) => ({
-                        id: fm._id,
-                        name: fm.displayName ?? '',
-                        color: fm.color ?? '#36a9e2',
-                        avatarUrl: undefined,
-                      })),
-                  ];
-                } else {
-                  // Nothing selected — strip all family members from participants
-                  patch.participants = existingNonFamily;
-                }
-
-                updateEvent(patch);
-              }}
+              sharedWithFamilyMemberIds={[
+                ...new Set([
+                  ...(event.sharedWithFamilyMemberIds ?? []),
+                  ...event.participants
+                    .filter((p) => p.source === 'family')
+                    .map((p) => p.id),
+                ]),
+              ]}
+              onFamilyChange={(_allFamily, ids) =>
+                applyParticipantChange(
+                  selectFamilyParticipants(event, ids, familyMembers)
+                )
+              }
               onConfigureFamilyProfile={
                 isCommunityEvent ? undefined : openFamilyProfileSetup
               }
@@ -953,7 +950,19 @@ export default function EventScreen({
           {/* Related Tasks */}
           <RelatedTasksSection
             tasks={event.tasks}
-            participants={taskParticipants ?? event.participants}
+            participants={
+              isCommunityEvent
+                ? (taskParticipants ?? event.participants)
+                : personalAssignmentChoices(currentUserId, event.participants)
+            }
+            defaultAssigneeId={
+              isCommunityEvent ? undefined : (currentUserId ?? undefined)
+            }
+            showAssignmentSelector={
+              isCommunityEvent ||
+              personalAssignmentChoices(currentUserId, event.participants)
+                .length > 1
+            }
             completedCount={completedTasks}
             tasksVisibleToParticipants={event.tasksVisibleToParticipants}
             showToggle={true}

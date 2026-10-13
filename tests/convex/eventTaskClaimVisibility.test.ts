@@ -193,7 +193,7 @@ describe('[TEST 7 cont.] existing server-side claim permission is unchanged', ()
       'utf8'
     );
     expect(EVENT_TASKS_SOURCE).toContain(
-      '!canManageTasks && event.tasksVisibleToParticipants !== true'
+      '!canManageTasks && !canViewParticipantTasks'
     );
   });
 
