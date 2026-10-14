@@ -27,6 +27,28 @@ export interface Notification {
 
 const STORAGE_KEY = '@notifications/list';
 
+/** Legacy cache: preserve every other account, and never overwrite unreadable data. */
+export async function clearAccountNotifications(userId: string): Promise<void> {
+  if (!userId) throw new Error('An account id is required for cleanup');
+  const raw = await AsyncStorage.getItem(STORAGE_KEY);
+  if (!raw) return;
+  const records: unknown = JSON.parse(raw);
+  if (
+    !Array.isArray(records) ||
+    records.some(
+      (row) =>
+        typeof row !== 'object' ||
+        row === null ||
+        typeof row.userId !== 'string'
+    )
+  )
+    throw new Error('Invalid local notification cache');
+  await AsyncStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify(records.filter((row) => row.userId !== userId))
+  );
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function readAll(): Promise<Notification[]> {

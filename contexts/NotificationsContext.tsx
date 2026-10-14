@@ -28,14 +28,17 @@ export function NotificationsProvider({
 }: {
   children: React.ReactNode;
 }): React.JSX.Element {
-  // Gate the query: skip while Convex auth is still loading or the user is
-  // unauthenticated. NotificationsProvider is mounted at the root layout level
-  // (outside the authenticated route group), so it is alive during cold start,
-  // logout, login transitions, and Expo hot reload. Calling the query without
-  // this guard causes the server to throw "Not authenticated", which propagates
-  // as an unhandled error and crashes the React tree on Android (and iOS).
+  // The SDK may still report authenticated after server-side revocation.
+  // getMyId validates the live session and safely returns null in that window.
+  // The list endpoint must also handle revocation: an existing subscription
+  // can re-run before this render has a chance to unsubscribe it.
   const { isLoading: isAuthLoading, isAuthenticated } = useConvexAuth();
-  const shouldFetch = !isAuthLoading && isAuthenticated;
+  const canResolveIdentity = !isAuthLoading && isAuthenticated;
+  const accountId = useQuery(
+    api.users.getMyId,
+    canResolveIdentity ? {} : 'skip'
+  );
+  const shouldFetch = canResolveIdentity && !!accountId;
 
   // useQuery is always called unconditionally (hook ordering rules).
   // "skip" tells Convex to not subscribe at all, returning undefined safely.
@@ -49,7 +52,17 @@ export function NotificationsProvider({
   // Safe empty state while unauthenticated or auth is still loading.
   // isLoading is true only when authenticated and the query hasn't resolved yet,
   // so logged-out consumers never see a permanent spinner.
-  const notifications: UserNotification[] = rawNotifications ?? [];
+  // Do not expose a cached result belonging to a previous account while
+  // identity/subscription updates settle. Server authorization is authoritative.
+  const notifications = useMemo<UserNotification[]>(
+    () =>
+      shouldFetch
+        ? (rawNotifications ?? []).filter(
+            (notification) => notification.recipientUserId === accountId
+          )
+        : [],
+    [shouldFetch, rawNotifications, accountId]
+  );
   const isLoading = shouldFetch && rawNotifications === undefined;
 
   const unseenCount = useMemo(
@@ -58,12 +71,14 @@ export function NotificationsProvider({
   );
 
   const markAllSeen = useCallback((): void => {
+    if (!shouldFetch) return;
     void markAllReadMutation();
-  }, [markAllReadMutation]);
+  }, [markAllReadMutation, shouldFetch]);
 
   const archiveAll = useCallback((): void => {
+    if (!shouldFetch) return;
     void archiveAllMutation();
-  }, [archiveAllMutation]);
+  }, [archiveAllMutation, shouldFetch]);
 
   const value = useMemo<NotificationsContextValue>(
     () => ({

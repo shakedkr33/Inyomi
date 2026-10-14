@@ -26,7 +26,7 @@
       "autoIncrement": true,
       "environment": "production",
       "env": {
-        "EXPO_PUBLIC_CONVEX_URL": "https://sincere-panther-608.convex.cloud"
+        "EXPO_PUBLIC_CONVEX_URL": "https://peaceful-cricket-429.convex.cloud"
       }
     }
   },

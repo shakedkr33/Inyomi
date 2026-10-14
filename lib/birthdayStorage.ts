@@ -20,6 +20,8 @@ const LEGACY_MIGRATION_MARKER_KEY = 'inyomi_birthdays_migration_v1';
 // v2: scoped by the authenticated Convex user id — inyomi_birthdays_v2_<userId>.
 // Every read/write requires an explicit userId; there is no global fallback.
 const STORAGE_KEY_PREFIX = 'inyomi_birthdays_v2_';
+const pendingWrites = new Map<string, Promise<void>>();
+const deletedAccounts = new Set<string>();
 
 /** Returns the per-user storage key. Never share this key across users. */
 export function getBirthdayStorageKey(userId: string): string {
@@ -37,10 +39,10 @@ export function getBirthdayStorageKey(userId: string): string {
 export async function loadPersistedBirthdays(
   userId: string
 ): Promise<Birthday[] | null> {
-  if (!userId) return null;
+  if (!userId || deletedAccounts.has(userId)) return null;
   try {
     const raw = await AsyncStorage.getItem(getBirthdayStorageKey(userId));
-    if (!raw) return null;
+    if (!raw || deletedAccounts.has(userId)) return null;
     return JSON.parse(raw) as Birthday[];
   } catch {
     return null;
@@ -60,10 +62,30 @@ export async function persistBirthdays(
   if (!userId) {
     throw new Error('persistBirthdays requires an authenticated userId');
   }
-  await AsyncStorage.setItem(
-    getBirthdayStorageKey(userId),
-    JSON.stringify(birthdays)
+  if (deletedAccounts.has(userId)) return;
+  const write = (pendingWrites.get(userId) ?? Promise.resolve()).then(
+    async () => {
+      if (deletedAccounts.has(userId)) return;
+      await AsyncStorage.setItem(
+        getBirthdayStorageKey(userId),
+        JSON.stringify(birthdays)
+      );
+    }
   );
+  pendingWrites.set(
+    userId,
+    write.catch(() => {})
+  );
+  await write;
+}
+
+/** Call only after confirmed server deletion; never remove another user's key. */
+export async function clearPersistedBirthdays(userId: string): Promise<void> {
+  if (!userId) throw new Error('An account id is required for cleanup');
+  deletedAccounts.add(userId);
+  await pendingWrites.get(userId);
+  await AsyncStorage.removeItem(getBirthdayStorageKey(userId));
+  pendingWrites.delete(userId);
 }
 
 // ─── One-time legacy key purge (safe, idempotent, no ownership guess) ────────

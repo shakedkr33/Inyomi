@@ -166,6 +166,7 @@ export async function executeAccountDeletion(
 }
 
 export interface AccountDeletionCleanupDeps {
+  clearAccountCache?: () => Promise<void>;
   clearOnboardingDraft: () => Promise<void>;
   resetData: () => void;
   signOut: () => Promise<void>;
@@ -180,10 +181,23 @@ export interface AccountDeletionCleanupDeps {
  */
 export async function runAccountDeletionCleanup(
   deps: AccountDeletionCleanupDeps
-): Promise<void> {
-  await deps.clearOnboardingDraft();
-  deps.resetData();
-  await deps.signOut();
+): Promise<{ cleanupSucceeded: boolean }> {
+  let cleanupSucceeded = true;
+  // A storage failure must not strand a deleted account signed in. Attempt
+  // every cleanup step and let the UI report incomplete local cleanup.
+  for (const cleanup of [
+    deps.clearAccountCache,
+    deps.clearOnboardingDraft,
+    deps.resetData,
+    deps.signOut,
+  ]) {
+    try {
+      await cleanup?.();
+    } catch {
+      cleanupSucceeded = false;
+    }
+  }
+  return { cleanupSucceeded };
 }
 
 export interface AccountDeletionGuard {

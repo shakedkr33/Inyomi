@@ -25,6 +25,8 @@
 
 import { describe, expect, it } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
+import { createOrUpdateUser } from '../../convex/users';
+import { invoke, privacyFixture } from './helpers/privacyFixture';
 
 const CONVEX_DIR = new URL('../../convex/', import.meta.url);
 
@@ -99,7 +101,8 @@ describe('P2-L10 — no public client mutation can set paid/free status directly
   });
 
   it('no public mutation across convex/ declares a client-supplied "paid" literal argument', () => {
-    const paidLiteralArgPattern = /:\s*v\.union\([^)]*v\.literal\(['"]paid['"]\)/;
+    const paidLiteralArgPattern =
+      /:\s*v\.union\([^)]*v\.literal\(['"]paid['"]\)/;
     for (const { name, source } of ALL_CONVEX_SOURCE) {
       expect(
         paidLiteralArgPattern.test(source),
@@ -121,12 +124,18 @@ describe('P2-L10 — no public client mutation can set paid/free status directly
 });
 
 describe('P2-L10 — legitimate subscription-adjacent state handling remains intact', () => {
-  it('createOrUpdateUser still exists and still assigns a server-controlled default userType (not client-supplied)', () => {
-    expect(USERS_SOURCE).toMatch(/export const createOrUpdateUser\b/);
-    expect(USERS_SOURCE).toMatch(/userType:\s*'free' as const/);
+  it('legacy user endpoint cannot overwrite subscription state or create users', async () => {
+    const f = privacyFixture();
+    f.tables.users[0].userType = 'paid';
+    const before = structuredClone(f.tables);
+    expect(await invoke(createOrUpdateUser, f.ctx, {})).toBe('owner');
+    expect(f.tables).toEqual(before);
+    await f.ctx.db.delete('owner');
+    await expect(invoke(createOrUpdateUser, f.ctx, {})).rejects.toThrow();
+    expect(f.tables.users).toEqual([{ _id: 'viewer' }]);
   });
 
-  it("getIsQaUser (server-verified QA override) still exists and remains a read-only query, not a mutation", () => {
+  it('getIsQaUser (server-verified QA override) still exists and remains a read-only query, not a mutation', () => {
     expect(USERS_SOURCE).toMatch(/export const getIsQaUser = query\(/);
   });
 });

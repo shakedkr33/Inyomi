@@ -13,13 +13,13 @@
  *   record are written.
  */
 
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { resolveMySpaceId } from './members';
 import { stampEventOwnerScope } from './ownerScope';
+import { getAuthUserId } from './sessionAuth';
 import { requireSpaceWriteAccess } from './spaceWriteAccess';
 
 // ── hasCompletedGoogleImport ──────────────────────────────────────────────────

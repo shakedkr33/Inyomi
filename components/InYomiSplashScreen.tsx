@@ -26,9 +26,10 @@ const LOGO_WIDTH_MAX = 240;
 // TEMPORARY (Step A/B instrumentation) — fixed, safe metadata identifying
 // WHICH mount produced a T0_CHILD_SPLASH_READY / T0_CHILD_SPLASH_UNMOUNTED
 // trace line. 'root' is the root-level branded bridge (app/_layout.tsx);
-// 'auth' / 'authenticated' are the two child layouts. Never route params or
+// 'auth' / 'authenticated' are the child layouts; 'welcome' is the artwork
+// overlay on the first-launch screen. Never route params or
 // any other identifier is logged here.
-type InYomiSplashScreenSource = 'root' | 'auth' | 'authenticated';
+type InYomiSplashScreenSource = 'root' | 'auth' | 'welcome' | 'authenticated';
 
 type InYomiSplashScreenProps = {
   source?: InYomiSplashScreenSource;
@@ -71,16 +72,17 @@ export function InYomiSplashScreen({
     onReady?.();
   };
 
-  // TEMPORARY (Step A/B instrumentation) — trace-only. Helps confirm from
-  // logs alone whether a beige gap corresponds to an unmount of one child
-  // splash before the next one mounts. Only emitted if this instance ever
-  // became ready (mirrors handleLayout's guard) and only when a `source`
-  // was supplied, so the root-bridge usage (no `source`) does not emit an
-  // unmount line for its own (permanent-until-removed) instance.
+  // Development-only layer diagnostics. Welcome's own artwork-loading overlay
+  // is distinct from the auth layout's loading splash. A mount/unmount trace
+  // identifies a React layer, never proves native visibility or physical paint.
   useEffect(() => {
+    if (source) startupTrace('T0_CHILD_SPLASH_MOUNTED', { source });
     return () => {
-      if (hasTracedLayoutRef.current && source) {
-        startupTrace('T0_CHILD_SPLASH_UNMOUNTED', { source });
+      if (source) {
+        startupTrace('T0_CHILD_SPLASH_UNMOUNTED', {
+          source,
+          hadLayout: hasTracedLayoutRef.current,
+        });
       }
     };
   }, [source]);

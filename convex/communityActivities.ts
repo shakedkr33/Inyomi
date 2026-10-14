@@ -1,9 +1,9 @@
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx } from './_generated/server';
 import { query } from './_generated/server';
 import { isActiveCommunityMember } from './communityMemberUtils';
+import { getAuthUserId } from './sessionAuth';
 
 const communityActivityTypeValidator = v.union(
   v.literal('event_created'),

@@ -1,17 +1,24 @@
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { mutation } from './_generated/server';
+import { getAuthUserId } from './sessionAuth';
 
 export const registerPushToken = mutation({
   args: {
     token: v.string(),
     platform: v.union(v.literal('ios'), v.literal('android')),
     deviceId: v.optional(v.string()),
+    expectedUserId: v.optional(v.id('users')),
   },
   returns: v.id('pushTokens'),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error('Not authenticated');
+
+    // Live user/session validation is centralized; preserve the caller's
+    // expected identity check for account-switch registration races.
+    if (args.expectedUserId !== undefined && args.expectedUserId !== userId) {
+      throw new Error('Not authenticated');
+    }
 
     const now = Date.now();
 

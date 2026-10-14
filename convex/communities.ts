@@ -1,7 +1,7 @@
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
-import type { Id } from './_generated/dataModel';
+import { shouldSkipMarkCommunityViewed } from '../lib/communityViewedIdempotency';
 import { internal } from './_generated/api';
+import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { insertCommunityActivity } from './communityActivities';
@@ -9,8 +9,8 @@ import {
   effectiveMemberStatus,
   isActiveCommunityMember,
 } from './communityMemberUtils';
-import { shouldSkipMarkCommunityViewed } from '../lib/communityViewedIdempotency';
 import { resolveMySpaceId } from './members';
+import { getAuthUserId } from './sessionAuth';
 import { createUserNotifications } from './userNotifications';
 
 async function requireOwnerOrAdminActive(

@@ -87,10 +87,20 @@ function fixture(
     ...extra,
   };
   const writes: string[] = [];
+  // Real auth boundary requires persisted synthetic users and sessions.
+  tables.users ??= [];
+  if (userId && !tables.users.some((row) => row._id === userId)) {
+    tables.users.push({ _id: userId });
+  }
+  tables.authSessions = tables.users.map((row) => ({
+    _id: `${row._id}-session`,
+    userId: row._id,
+    expirationTime: Date.now() + 60000,
+  }));
   const ctx = {
     auth: {
       getUserIdentity: async () =>
-        userId ? { subject: `${userId}|session` } : null,
+        userId ? { subject: `${userId}|${userId}-session` } : null,
     },
     db: {
       normalizeId: (_table: string, id: string) => id,

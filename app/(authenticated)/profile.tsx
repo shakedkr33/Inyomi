@@ -25,6 +25,7 @@ import {
   setDevPlanOverride,
   subscribeDevPlanOverride,
 } from '@/config/devPlanOverride';
+import { ACCOUNT_DELETION_URL } from '@/config/legalUrls';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { api } from '@/convex/_generated/api';
@@ -40,7 +41,15 @@ import { getSelfProfileAvatarInitials } from '@/lib/avatarInitials';
 // a stored/local spaceType flag. Reused here (not duplicated) to decide the
 // unified profile card's subtitle. See lib/spaceTypeDerivation.ts.
 import { getBillingPeriodFromProductIdentifier } from '@/lib/billingPeriod';
+import { clearPersistedBirthdays } from '@/lib/birthdayStorage';
+import { beginExplicitLogoutNavigation } from '@/lib/explicitLogoutNavigation';
+import { clearAccountNotifications } from '@/lib/notificationsStorage';
 import { clearOnboardingDraft } from '@/lib/onboardingState';
+import { openLegalUrl } from '@/lib/openLegalUrl';
+import {
+  pushTokenLifecycle,
+  unregisterDevicePushToken,
+} from '@/lib/pushNotifications';
 import { APP_IS_RTL, rtl } from '@/lib/rtl';
 import { deriveSpaceTypeFromFamilyMembers } from '@/lib/spaceTypeDerivation';
 
@@ -262,6 +271,10 @@ export default function ProfileScreen() {
     presentCustomerCenter,
   } = useRevenueCat();
   const deleteMyAccount = useMutation(api.users.deleteMyAccount);
+  const accountId = useQuery(api.users.getMyId);
+  const unregisterPushToken = useMutation(api.pushTokens.unregisterPushToken);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const signOutRunning = useRef(false);
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const [isDebugUnlocked, setIsDebugUnlocked] = useState(false);
   // Delete-account single-flight guard + loading flag. Guards against a
@@ -331,16 +344,28 @@ export default function ProfileScreen() {
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   const handleSignOut = async () => {
+    if (isDeletingAccount || signOutRunning.current) return;
     Alert.alert(
       'התנתקות',
-      'האם אתה בטוח שברצונך להתנתק?',
+      'להתנתק מהחשבון?',
       [
         { text: 'ביטול', style: 'cancel' },
         {
-          text: 'התנתק',
+          text: 'התנתקות',
           style: 'destructive',
           onPress: async () => {
+            if (
+              signOutRunning.current ||
+              deleteAccountGuardRef.current.isRunning()
+            )
+              return;
+            signOutRunning.current = true;
+            setIsSigningOut(true);
+            let cancelLogoutNavigation: (() => void) | undefined;
             try {
+              await pushTokenLifecycle.beforeSignOut(() =>
+                unregisterDevicePushToken(unregisterPushToken)
+              );
               // FIXED: Stage 1 — clear temporary onboarding state BEFORE
               // signOut() so a second person using this device never
               // inherits it. Done deterministically here rather than
@@ -353,9 +378,22 @@ export default function ProfileScreen() {
               // layout's existing hydrateFromServer effect).
               await clearOnboardingDraft();
               resetData();
+              cancelLogoutNavigation = beginExplicitLogoutNavigation();
               await signOut();
+              // While signOut awaited the server, the layout could rehydrate
+              // the still-valid profile after our first reset. Clear it again
+              // once local Auth has settled, before another account can enter.
+              resetData();
             } catch {
-              Alert.alert('שגיאה', 'אירעה שגיאה בהתנתקות');
+              cancelLogoutNavigation?.();
+              pushTokenLifecycle.resume();
+              Alert.alert(
+                'ההתנתקות לא הושלמה',
+                'לא ניתן לאשר שההתראות לחשבון הופסקו. יש לבדוק את החיבור ולנסות שוב.'
+              );
+            } finally {
+              signOutRunning.current = false;
+              setIsSigningOut(false);
             }
           },
         },
@@ -371,6 +409,10 @@ export default function ProfileScreen() {
   // the account/session stays fully intact and the backend's own (already
   // actionable, Hebrew) blocker message is shown when available.
   const runDeleteAccountFlow = async () => {
+    // Capture before deletion invalidates reactive queries. Never substitute
+    // a later logged-in account's id during local cleanup.
+    const deletedAccountId = accountId;
+    if (!deletedAccountId || signOutRunning.current) return;
     const result = await deleteAccountGuardRef.current.run(async () => {
       setIsDeletingAccount(true);
       return await executeAccountDeletion(deleteMyAccount);
@@ -396,13 +438,22 @@ export default function ProfileScreen() {
     // rows itself (@convex-dev/auth's signOut swallows the resulting
     // "already signed out" error and still clears local tokens), and
     // flipping `isAuthenticated` to false is exactly what the authenticated
-    // layout's existing routing effect uses to `router.replace('/(auth)/sign-in')`
+    // layout's existing routing effect uses to `router.replace('/(auth)')`
     // — no bespoke navigation call is added here. RevenueCat local identity
     // is reset the same way an ordinary logout already resets it: once
     // convexUserId becomes null, RevenueCatProvider's identity-transition
     // effect (contexts/RevenueCatContext.tsx) clears isPremium/customerData
     // for this device — reused as-is, not duplicated here.
-    await runAccountDeletionCleanup({
+    const cleanup = await runAccountDeletionCleanup({
+      clearAccountCache: async () => {
+        const results = await Promise.allSettled([
+          clearPersistedBirthdays(deletedAccountId),
+          clearAccountNotifications(deletedAccountId),
+        ]);
+        if (results.some((entry) => entry.status === 'rejected')) {
+          throw new Error('Local account cleanup incomplete');
+        }
+      },
       clearOnboardingDraft,
       resetData,
       signOut,
@@ -413,7 +464,12 @@ export default function ProfileScreen() {
     // screen's React tree, so it stays visible even as the auth-state
     // navigation effect above replaces this screen with the sign-in route
     // in the background — the message is never lost to the route change.
-    Alert.alert('החשבון נמחק בהצלחה', 'החשבון ומידע האישי נמחקו לצמיתות.');
+    Alert.alert(
+      'החשבון נמחק',
+      cleanup.cleanupSucceeded
+        ? 'מחיקת החשבון הושלמה. מנוי בחנות, אם קיים, מנוהל בנפרד.'
+        : 'החשבון נמחק, אך ניקוי המידע במכשיר או ההתנתקות לא הושלמו. יש לפנות לתמיכה.'
+    );
   };
 
   // ── Delete account — Step 2: neutral store-subscription warning ─────────
@@ -453,7 +509,7 @@ export default function ProfileScreen() {
 
   // ── Delete account — Step 1: destructive warning entry point ────────────
   const handleDeleteAccount = () => {
-    if (isDeletingAccount) {
+    if (isDeletingAccount || signOutRunning.current) {
       return;
     }
     Alert.alert(
@@ -603,15 +659,25 @@ export default function ProfileScreen() {
           />
         </View>
 
+        <SettingsRow
+          label="מידע על מחיקת חשבון"
+          onPress={() => void openLegalUrl(ACCOUNT_DELETION_URL)}
+        />
+
         {/* ── Destructive actions ── */}
         <View style={[styles.card, styles.settingsCard, styles.dangerCard]}>
-          <SettingsRow label="התנתקות" danger onPress={handleSignOut} />
           <SettingsRow
-            label={isDeletingAccount ? 'מוחק את החשבון…' : 'מחיקת חשבון'}
+            label={isSigningOut ? 'התנתקות…' : 'התנתקות'}
+            danger
+            disabled={isDeletingAccount || isSigningOut}
+            onPress={handleSignOut}
+          />
+          <SettingsRow
+            label={isDeletingAccount ? 'מחיקת החשבון…' : 'מחיקת חשבון'}
             danger
             hideChevron
             isLast
-            disabled={isDeletingAccount}
+            disabled={isDeletingAccount || isSigningOut || !accountId}
             onPress={handleDeleteAccount}
           />
         </View>

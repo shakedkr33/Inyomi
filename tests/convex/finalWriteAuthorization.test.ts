@@ -63,7 +63,7 @@ const entity = {
 };
 function fixture(userId: string | null = 'viewer') {
   const tables: Record<string, Row[]> = structuredClone({
-    users: [{ _id: 'viewer' }],
+    users: [{ _id: 'viewer' }, { _id: 'owner' }],
     spaces: [{ _id: 'space', type: 'family', ownerId: 'owner' }],
     members: [access, entity],
     events: [
@@ -104,10 +104,20 @@ function fixture(userId: string | null = 'viewer') {
     Object.values(tables)
       .flat()
       .find((row) => row._id === id) ?? null;
+  // Real auth boundary requires persisted synthetic users and sessions.
+  tables.users ??= [];
+  if (userId && !tables.users.some((row) => row._id === userId)) {
+    tables.users.push({ _id: userId });
+  }
+  tables.authSessions = tables.users.map((row) => ({
+    _id: `${row._id}-session`,
+    userId: row._id,
+    expirationTime: Date.now() + 60000,
+  }));
   const ctx = {
     auth: {
       getUserIdentity: async () =>
-        userId ? { subject: `${userId}|session` } : null,
+        userId ? { subject: `${userId}|${userId}-session` } : null,
     },
     db: {
       get,
@@ -294,7 +304,7 @@ it('preserves RSVP responses while requiring the creator to release personal ass
   expect(tables).toEqual(before);
   const creatorCtx = {
     ...ctx,
-    auth: { getUserIdentity: async () => ({ subject: 'owner|session' }) },
+    auth: { getUserIdentity: async () => ({ subject: 'owner|owner-session' }) },
   };
   await invoke(setAssignee, creatorCtx, { id: 'my-task', assignee: null });
   expect(

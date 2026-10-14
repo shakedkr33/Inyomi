@@ -108,10 +108,20 @@ function fixture(userId: string | null = 'viewer') {
     Object.values(tables)
       .flat()
       .find((row) => row._id === id) ?? null;
+  // Real auth boundary requires persisted synthetic users and sessions.
+  tables.users ??= [];
+  if (userId && !tables.users.some((row) => row._id === userId)) {
+    tables.users.push({ _id: userId });
+  }
+  tables.authSessions = tables.users.map((row) => ({
+    _id: `${row._id}-session`,
+    userId: row._id,
+    expirationTime: Date.now() + 60000,
+  }));
   const ctx = {
     auth: {
       getUserIdentity: async () =>
-        userId ? { subject: `${userId}|session` } : null,
+        userId ? { subject: `${userId}|${userId}-session` } : null,
     },
     db: {
       get,
@@ -537,7 +547,9 @@ for (const visible of [false, true]) {
     it(`Home personal task visibility: ${visible}, invitation=${invited}`, async () => {
       const f = ownerFixture();
       const viewer = fixture('viewer');
+      const viewerSessions = viewer.tables.authSessions;
       Object.assign(viewer.tables, f.tables);
+      viewer.tables.authSessions = viewerSessions;
       Object.assign(viewer.tables.events[0], {
         allFamily: true,
         tasksVisibleToParticipants: visible,
@@ -820,7 +832,20 @@ for (const scenario of [
     it(`community management ${operation}: ${scenario.name}`, async () => {
       const f = ownerFixture();
       f.ctx.auth.getUserIdentity = async () =>
-        scenario.actor ? { subject: `${scenario.actor}|session` } : null;
+        scenario.actor
+          ? { subject: `${scenario.actor}|${scenario.actor}-session` }
+          : null;
+      if (
+        scenario.actor &&
+        !f.tables.users.some((u) => u._id === scenario.actor)
+      ) {
+        f.tables.users.push({ _id: scenario.actor });
+        f.tables.authSessions.push({
+          _id: `${scenario.actor}-session`,
+          userId: scenario.actor,
+          expirationTime: Date.now() + 60000,
+        });
+      }
       f.tables.events[0].communityId = 'community';
       if (scenario.role)
         f.tables.communityMembers.push({
@@ -854,7 +879,9 @@ for (const [operation, handler] of [
 ] as const) {
   it(`active ordinary assignee retains ${operation}`, async () => {
     const f = ownerFixture();
-    f.ctx.auth.getUserIdentity = async () => ({ subject: 'viewer|session' });
+    f.ctx.auth.getUserIdentity = async () => ({
+      subject: 'viewer|viewer-session',
+    });
     f.tables.events[0].communityId = 'community';
     f.tables.communityMembers.push({
       _id: 'member',
@@ -953,7 +980,9 @@ for (const scenario of [
         _id: 'concurrent',
       });
     if (scenario === 'unauthorized')
-      f.ctx.auth.getUserIdentity = async () => ({ subject: 'viewer|session' });
+      f.ctx.auth.getUserIdentity = async () => ({
+        subject: 'viewer|viewer-session',
+      });
     if (scenario === 'unauthenticated')
       f.ctx.auth.getUserIdentity = async () => null;
     if (scenario === 'cancelled') f.tables.events[0].status = 'cancelled';
@@ -1004,7 +1033,9 @@ for (const status of ['active', 'left', 'pending', 'removed']) {
   for (const operation of ['claim', 'unclaim']) {
     it(`ordinary member ${operation} requires active membership: ${status}`, async () => {
       const f = ownerFixture();
-      f.ctx.auth.getUserIdentity = async () => ({ subject: 'viewer|session' });
+      f.ctx.auth.getUserIdentity = async () => ({
+        subject: 'viewer|viewer-session',
+      });
       Object.assign(f.tables.events[0], {
         communityId: 'community',
         startTime: Date.now() + 60_000,
@@ -1473,7 +1504,9 @@ for (const visible of [false, true]) {
         },
       ];
       const viewer = fixture(viewerId);
+      const viewerSessions = viewer.tables.authSessions;
       Object.assign(viewer.tables, f.tables);
+      viewer.tables.authSessions = viewerSessions;
       const invited = ['owner', 'viewer', 'external'].includes(viewerId);
       const detail = await invoke(events.getById, viewer.ctx, {
         eventId: 'event',
@@ -1700,7 +1733,9 @@ for (const assignee of ['owner', 'viewer']) {
         });
         const before = structuredClone(f.tables.eventTasks[0]);
         const viewer = fixture('viewer');
+        const viewerSessions = viewer.tables.authSessions;
         Object.assign(viewer.tables, f.tables);
+        viewer.tables.authSessions = viewerSessions;
         await invoke(tasks.setAssignee, f.ctx, { id: 'task', assignee: null });
         expect(f.tables.eventTasks[0]).toEqual({
           ...before,

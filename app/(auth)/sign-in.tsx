@@ -1,6 +1,6 @@
 import { useAuthActions } from '@convex-dev/auth/react';
-import { useRouter } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -14,7 +14,12 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '@/config/legalUrls';
+import { useOtpRequestScope } from '@/lib/hooks/useOtpRequestScope';
+import { openLegalUrl } from '@/lib/openLegalUrl';
 import { parseIsraeliPhone } from '@/lib/phoneUtils';
+import { shouldUseAppleReviewProvider } from '@/lib/services/appleReviewAuth';
+import { mapOtpSendError } from '@/lib/services/authErrorUtils';
 
 export default function PhoneInputScreen() {
   const { signIn } = useAuthActions();
@@ -24,6 +29,14 @@ export default function PhoneInputScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<TextInput>(null);
+  const normalizedPhone = parseIsraeliPhone(phone.trim()) ?? '';
+  const otp = useOtpRequestScope(normalizedPhone, false, phone);
+  useFocusEffect(
+    useCallback(() => {
+      setIsLoading(false);
+      setError(null);
+    }, [])
+  );
 
   const handleContinue = async () => {
     if (isLoading) return;
@@ -36,30 +49,37 @@ export default function PhoneInputScreen() {
       return;
     }
 
-    const isAppleReviewPhone = normalized === '+972510000000';
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      if (isAppleReviewPhone) {
-        router.push({
-          pathname: '/(auth)/verify',
-          params: { phone: normalized },
-        });
-        return;
-      }
-
-      await signIn('phone', { phone: normalized });
+    if (otp.busy) return;
+    if (shouldUseAppleReviewProvider(normalized)) {
       router.push({
         pathname: '/(auth)/verify',
         params: { phone: normalized },
       });
-    } catch {
-      setError('לא הצלחנו לשלוח את הקוד כרגע. אפשר לנסות שוב בעוד כמה דקות.');
-    } finally {
-      setIsLoading(false);
+      return;
     }
+    if (otp.remaining > 0) {
+      setError(`אפשר לבקש שליחה נוספת בעוד ${otp.remaining} שניות.`);
+      return;
+    }
+    await otp.run(
+      'send',
+      async () => {
+        setIsLoading(true);
+        setError(null);
+        return signIn('phone', { phone: normalized });
+      },
+      () => {
+        setIsLoading(false);
+        router.push({
+          pathname: '/(auth)/verify',
+          params: { phone: normalized },
+        });
+      },
+      (err) => {
+        setIsLoading(false);
+        setError(mapOtpSendError(err));
+      }
+    );
   };
 
   const hasInput = phone.trim().length > 0;
@@ -106,6 +126,8 @@ export default function PhoneInputScreen() {
                 style={styles.input}
                 value={phone}
                 onChangeText={(text) => {
+                  if (text !== phone) otp.invalidate();
+                  setIsLoading(false);
                   setPhone(text);
                   if (error) setError(null);
                 }}
@@ -134,14 +156,16 @@ export default function PhoneInputScreen() {
               onPress={handleContinue}
               style={[
                 styles.cta,
-                (!hasInput || isLoading) && styles.ctaDisabled,
+                (!hasInput || isLoading || otp.busy) && styles.ctaDisabled,
               ]}
-              disabled={!hasInput || isLoading}
+              disabled={!hasInput || isLoading || otp.busy}
               accessible={true}
               accessibilityRole="button"
               accessibilityLabel="שלח קוד"
               accessibilityHint="שלח קוד אימות לטלפון"
-              accessibilityState={{ disabled: !hasInput || isLoading }}
+              accessibilityState={{
+                disabled: !hasInput || isLoading || otp.busy,
+              }}
             >
               {isLoading ? (
                 <ActivityIndicator color="#ffffff" />
@@ -151,10 +175,10 @@ export default function PhoneInputScreen() {
             </Pressable>
 
             <Text style={styles.legal}>
-              {'בלחיצה על "שלח קוד" הנך מאשר/ת את '}
+              {'המשך הכניסה מהווה הסכמה ל'}
               <Text
                 style={styles.legalLink}
-                onPress={() => {}}
+                onPress={() => void openLegalUrl(TERMS_OF_SERVICE_URL)}
                 accessible={true}
                 accessibilityRole="link"
                 accessibilityLabel="תנאי השימוש"
@@ -164,7 +188,7 @@ export default function PhoneInputScreen() {
               {' ואת '}
               <Text
                 style={styles.legalLink}
-                onPress={() => {}}
+                onPress={() => void openLegalUrl(PRIVACY_POLICY_URL)}
                 accessible={true}
                 accessibilityRole="link"
                 accessibilityLabel="מדיניות הפרטיות"

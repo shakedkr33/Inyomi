@@ -1,5 +1,5 @@
 import { useAuthActions } from '@convex-dev/auth/react';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -14,9 +14,13 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useOtpRequestScope } from '@/lib/hooks/useOtpRequestScope';
 import { needsExplicitRTL } from '@/lib/rtl';
 import { shouldUseAppleReviewProvider } from '@/lib/services/appleReviewAuth';
-import { mapPhoneAuthError } from '@/lib/services/authErrorUtils';
+import {
+  mapOtpSendError,
+  mapPhoneAuthError,
+} from '@/lib/services/authErrorUtils';
 
 const CODE_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -34,110 +38,96 @@ export default function VerifyScreen() {
   const { phone } = useLocalSearchParams<{ phone: string }>();
 
   const [code, setCode] = useState('');
+  const inputAttempt = useRef({ digits: '' });
   const [isVerifying, setIsVerifying] = useState(false);
   const [isResending, setIsResending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_SECONDS);
-  const [canResend, setCanResend] = useState(false);
-
-  // Hidden input ref — we focus it when user taps the visual boxes
+  const otp = useOtpRequestScope(phone ?? '', true);
+  const cooldown = otp.remaining;
+  const canResend = cooldown === 0;
   const hiddenInputRef = useRef<TextInput>(null);
 
-  // Synchronous in-flight guard — prevents dual verification requests
-  // even when React state batching hasn't flushed yet.
-  const verifyingRef = useRef(false);
-
-  // If phone param is missing (e.g. deep link / reload), send user back
+  useFocusEffect(
+    // biome-ignore lint/correctness/useExhaustiveDependencies: a changed route phone starts fresh input state.
+    useCallback(() => {
+      inputAttempt.current = { digits: '' };
+      setCode('');
+      setError(null);
+      setIsVerifying(false);
+      setIsResending(false);
+    }, [phone])
+  );
   useEffect(() => {
-    if (!phone) {
-      router.replace('/(auth)/sign-in');
-    }
+    if (!phone) router.replace('/(auth)/sign-in');
   }, [phone, router]);
 
-  // Resend cooldown countdown
-  useEffect(() => {
-    if (cooldown <= 0) {
-      setCanResend(true);
-      return;
-    }
-    const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [cooldown]);
-
-  const verify = useCallback(
-    async (digits: string) => {
-      if (!phone || digits.length !== CODE_LENGTH || verifyingRef.current)
-        return;
-
-      verifyingRef.current = true;
-      setIsVerifying(true);
-      setError(null);
-
-      try {
-        // SECURITY (P2-H03): routing depends ONLY on the phone number, never
-        // on the OTP digits — the OTP itself is never known to the client.
-        // See lib/services/appleReviewAuth.ts for the full explanation.
+  const verify = async (digits: string) => {
+    if (!phone || digits.length !== CODE_LENGTH) return;
+    const submittedInput = inputAttempt.current;
+    await otp.run(
+      'verify',
+      async () => {
+        setIsVerifying(true);
+        setError(null);
         const isAppleReviewLogin = shouldUseAppleReviewProvider(phone);
-        await signIn(isAppleReviewLogin ? 'apple-review' : 'phone', {
+        return signIn(isAppleReviewLogin ? 'apple-review' : 'phone', {
           phone,
           code: digits,
         });
-        router.replace('/(authenticated)/family-bootstrap');
-      } catch (err) {
-        setError(mapPhoneAuthError(err));
-        // The hidden input is never made non-editable while verifying (see
-        // the TextInput below), so it never loses native focus during the
-        // request. No imperative focus/timeout workaround is needed here —
-        // the keyboard simply stays open and the user can correct the code.
-      } finally {
-        verifyingRef.current = false;
+      },
+      (result) => {
         setIsVerifying(false);
+        if (result.signingIn) {
+          setError(null);
+          router.replace('/(authenticated)/family-bootstrap');
+        } else if (inputAttempt.current === submittedInput) {
+          setError(mapPhoneAuthError(new Error('Could not verify code')));
+        }
+      },
+      (err) => {
+        setIsVerifying(false);
+        if (inputAttempt.current === submittedInput)
+          setError(mapPhoneAuthError(err));
       }
-    },
-    [phone, signIn, router]
-  );
+    );
+  };
 
   const handleCodeChange = (text: string) => {
-    // Strip non-digits, cap at CODE_LENGTH
     const digits = text.replace(/[^0-9]/g, '').slice(0, CODE_LENGTH);
+    if (inputAttempt.current.digits !== digits)
+      inputAttempt.current = { digits };
     setCode(digits);
     setError(null);
-
-    // Auto-submit when all digits are entered
-    if (digits.length === CODE_LENGTH) {
-      verify(digits);
-    }
+    // The shared synchronous gate also covers same-tick autofill during send.
+    // No effect queues/submits digits when the request later completes.
+    if (digits.length === CODE_LENGTH) void verify(digits);
   };
 
   const handleResend = async () => {
-    if (!canResend || isResending || isVerifying || !phone) return;
-
-    setIsResending(true);
-    setError(null);
-
-    try {
-      await signIn('phone', { phone });
-      // Only clear the previous (invalid) digits once the resend actually
-      // succeeded — clearing before success would wipe the user's entry for
-      // a request that might still fail.
-      setCode('');
-      setCooldown(RESEND_COOLDOWN_SECONDS);
-      setCanResend(false);
-      Alert.alert('נשלח!', 'קוד חדש נשלח למספר שלך.', [
-        {
-          text: 'אישור',
-          // Restore focus once the user dismisses the alert, so the new
-          // code can be typed immediately. Deterministic (event-driven)
-          // instead of a timing guess — the native alert can briefly hold
-          // first-responder status while visible.
-          onPress: () => hiddenInputRef.current?.focus(),
-        },
-      ]);
-    } catch {
-      setError('לא הצלחנו לשלוח קוד חדש. אפשר לנסות שוב.');
-    } finally {
-      setIsResending(false);
-    }
+    if (!phone || !canResend) return;
+    await otp.run(
+      'send',
+      async () => {
+        setIsResending(true);
+        setError(null);
+        return signIn('phone', { phone });
+      },
+      () => {
+        setIsResending(false);
+        inputAttempt.current = { digits: '' };
+        setCode('');
+        Alert.alert('שלחנו קוד אימות נוסף', undefined, [
+          {
+            text: 'אישור',
+            onPress: otp.guard(() => hiddenInputRef.current?.focus()),
+          },
+        ]);
+      },
+      (err) => {
+        setIsResending(false);
+        setError(mapOtpSendError(err));
+      }
+    );
   };
 
   const focusInput = () => {
@@ -149,7 +139,7 @@ export default function VerifyScreen() {
     ? phone.replace(/(\+972)(\d+)(\d{4})$/, '$1•••$3')
     : '';
 
-  const isSubmitting = isVerifying || isResending;
+  const isSubmitting = otp.busy || isVerifying || isResending;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -163,7 +153,10 @@ export default function VerifyScreen() {
         >
           {/* כפתור חזרה */}
           <Pressable
-            onPress={() => router.back()}
+            onPress={() => {
+              otp.invalidate();
+              router.back();
+            }}
             style={styles.backBtn}
             accessible={true}
             accessibilityRole="button"
@@ -203,7 +196,7 @@ export default function VerifyScreen() {
               // while verification/resend is in flight causes the native
               // TextInput to resign first-responder status on-device, and
               // it does NOT reliably regain focus/keyboard when flipped
-              // back to true. `verifyingRef` (in `verify`) is the guard
+              // back to true. the shared synchronous request gate is the guard
               // against duplicate submissions instead — the input itself
               // must never become non-interactive just because a request
               // is in flight.
@@ -257,7 +250,7 @@ export default function VerifyScreen() {
             disabled={code.length < CODE_LENGTH || isSubmitting}
             accessible={true}
             accessibilityRole="button"
-            accessibilityLabel="אמתי קוד"
+            accessibilityLabel="אימות קוד"
             accessibilityState={{
               disabled: code.length < CODE_LENGTH || isSubmitting,
             }}
@@ -274,15 +267,19 @@ export default function VerifyScreen() {
             {canResend ? (
               <Pressable
                 onPress={handleResend}
-                disabled={isResending || isVerifying}
+                disabled={isSubmitting}
                 accessible={true}
                 accessibilityRole="button"
-                accessibilityLabel="שלח קוד חדש"
+                accessibilityLabel="שליחה חוזרת של קוד"
+                accessibilityState={{
+                  disabled: isSubmitting,
+                  busy: isResending,
+                }}
               >
                 {isResending ? (
-                  <ActivityIndicator size="small" color="#4A9FE2" />
+                  <Text style={styles.resendActive}>שולחים קוד אימות...</Text>
                 ) : (
-                  <Text style={styles.resendActive}>שלח לי קוד חדש</Text>
+                  <Text style={styles.resendActive}>שליחה חוזרת של קוד</Text>
                 )}
               </Pressable>
             ) : (
@@ -294,7 +291,7 @@ export default function VerifyScreen() {
 
           {/* אם לא קיבלת — הנחיה */}
           <Text style={styles.helpText}>
-            {`לא קיבלת קוד? כדאי לבדוק שהמספר נכון. אחרי ${RESEND_COOLDOWN_SECONDS} שניות אפשר לבקש קוד חדש.`}
+            {`לא קיבלת קוד? כדאי לבדוק שהמספר נכון. אחרי ${RESEND_COOLDOWN_SECONDS} שניות אפשר לבקש שליחה חוזרת.`}
           </Text>
         </ScrollView>
       </KeyboardAvoidingView>

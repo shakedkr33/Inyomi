@@ -34,6 +34,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { WebViewModal } from '@/components/WebViewModal';
 import { COUPON_FLOW_ENABLED } from '@/config/appConfig';
+import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '@/config/legalUrls';
 import { useRevenueCat } from '@/contexts/RevenueCatContext';
 import { formatCurrency } from '@/lib/formatCurrency';
 import {
@@ -57,12 +58,6 @@ const CHECK_BG = '#E3EEF2';
 const SEGMENT_BORDER = '#E2E6EA';
 
 const heroImage = require('@/assets/images/paywall-hero.jpg');
-
-// Legal links shown in the paywall footer. Scoped to this screen only —
-// see config/appConfig.ts TERMS_URL / PRIVACY_URL for the app-wide defaults
-// used elsewhere (e.g. app/(auth)/paywall/index.tsx), which are untouched.
-const TOGETHER_TERMS_URL = 'https://inyomi.com/terms';
-const TOGETHER_PRIVACY_URL = 'https://inyomi.com/privacy';
 
 // benefit3 ("תזכורות לכל הדברים החשובים") is intentionally not rendered —
 // removed from the on-screen list per UI-polish request to fit the paywall
@@ -297,13 +292,13 @@ export default function SubscriptionScreen() {
       <WebViewModal
         onClose={() => setTermsVisible(false)}
         title={STR.terms}
-        url={TOGETHER_TERMS_URL}
+        url={TERMS_OF_SERVICE_URL}
         visible={termsVisible}
       />
       <WebViewModal
         onClose={() => setPrivacyVisible(false)}
         title={STR.privacy}
-        url={TOGETHER_PRIVACY_URL}
+        url={PRIVACY_POLICY_URL}
         visible={privacyVisible}
       />
 

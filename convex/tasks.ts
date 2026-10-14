@@ -1,4 +1,3 @@
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -13,6 +12,7 @@ import {
   cancelPendingJobsForTaskAndUserHelper,
   cancelPendingJobsForTaskHelper,
 } from './reminderScheduler';
+import { getAuthUserId } from './sessionAuth';
 import { requireSpaceWriteAccess } from './spaceWriteAccess';
 import {
   buildImportantItemsBundleSubtasks,

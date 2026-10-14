@@ -1,8 +1,8 @@
 // FIXED: share link management for personal event sharing
 //        one active link per event — createShareLink self-heals legacy duplicates
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { mutation, query } from './_generated/server';
+import { getAuthUserId } from './sessionAuth';
 
 // ─── Token generation ─────────────────────────────────────────────────────────
 // 24-char alphanumeric — same pattern as communities.inviteCode
@@ -29,7 +29,8 @@ export const createShareLink = mutation({
     if (!userId) throw new Error('לא מחובר למערכת');
 
     const event = await ctx.db.get(eventId);
-    if (!event) throw new Error('אירוע לא נמצא');
+    if (!event || event.deletedAt !== undefined)
+      throw new Error('אירוע לא נמצא');
     if (event.createdBy !== userId)
       throw new Error('אין הרשאה ליצור לינק לאירוע זה');
 
@@ -111,7 +112,7 @@ export const getSharePreview = query({
     }
 
     const event = await ctx.db.get(link.eventId);
-    if (!event) {
+    if (!event || event.deletedAt !== undefined) {
       return { status: 'not_found' as const };
     }
 
@@ -147,7 +148,8 @@ export const getMyShareLink = query({
 
     // Same management permission as createShareLink and revokeShareLink.
     const event = await ctx.db.get(eventId);
-    if (!event || event.createdBy !== userId) return null;
+    if (!event || event.deletedAt !== undefined || event.createdBy !== userId)
+      return null;
 
     const link = await ctx.db
       .query('shareLinks')

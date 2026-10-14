@@ -1,9 +1,9 @@
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { buildOnboardingAnswersPatch } from '../lib/onboardingAnswers';
 import type { Id } from './_generated/dataModel';
 import { mutation } from './_generated/server';
 import { executeFamilyJoin, resolveKind } from './members';
+import { getAuthUserId } from './sessionAuth';
 
 // ── Phone normalization ───────────────────────────────────────────────────────
 // FIXED: retroactive phone-based family member matching on initial onboarding save

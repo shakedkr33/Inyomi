@@ -57,5 +57,7 @@ export const COUPON_FLOW_ENABLED = false;
 
 // 👤 נדרשת פעולת משתמש: עדכן את הקישורים לדפי תנאי השימוש ומדיניות הפרטיות שלך
 // הקישורים צריכים להוביל לדפי Landing Page שלך (לא בתוך האפליקציה)
-export const TERMS_URL = 'https://yourdomain.com/terms';
-export const PRIVACY_URL = 'https://yourdomain.com/privacy';
+export {
+  PRIVACY_POLICY_URL as PRIVACY_URL,
+  TERMS_OF_SERVICE_URL as TERMS_URL,
+} from './legalUrls';

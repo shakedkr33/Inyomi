@@ -52,7 +52,41 @@ const {
   loadPersistedBirthdays,
   persistBirthdays,
   purgeLegacyGlobalBirthdayStorage,
+  clearPersistedBirthdays,
 } = await import('../../lib/birthdayStorage');
+
+it('successful account cleanup removes only that account and rejects stale writes', async () => {
+  const a = 'deleted_account_cleanup';
+  const b = 'surviving_account_cleanup';
+  await persistBirthdays(a, [birthday('a', 'A')]);
+  await persistBirthdays(b, [birthday('b', 'B')]);
+  const pending = persistBirthdays(a, [birthday('late', 'Late')]);
+  await clearPersistedBirthdays(a);
+  await pending;
+  await persistBirthdays(a, [birthday('stale', 'Stale')]);
+  expect(store.has(getBirthdayStorageKey(a))).toBe(false);
+  expect(await loadPersistedBirthdays(b)).toMatchObject([{ name: 'B' }]);
+});
+
+it('legacy notification cleanup preserves another account and fails closed on corrupt cache', async () => {
+  const { clearAccountNotifications } = await import(
+    '../../lib/notificationsStorage'
+  );
+  store.set(
+    '@notifications/list',
+    JSON.stringify([
+      { userId: 'A', title: 'A' },
+      { userId: 'B', title: 'B' },
+    ])
+  );
+  await clearAccountNotifications('A');
+  expect(JSON.parse(store.get('@notifications/list') ?? 'null')).toEqual([
+    { userId: 'B', title: 'B' },
+  ]);
+  store.set('@notifications/list', 'corrupt');
+  await expect(clearAccountNotifications('A')).rejects.toThrow();
+  expect(store.get('@notifications/list')).toBe('corrupt');
+});
 
 const LEGACY_GLOBAL_KEY = 'inyomi_birthdays_v1';
 const LEGACY_MARKER_KEY = 'inyomi_birthdays_migration_v1';

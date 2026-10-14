@@ -45,6 +45,7 @@ import {
   isColdStartCaptureComplete,
   onColdStartCaptureComplete,
 } from '@/lib/coldStartCaptureGate';
+import { consumeSignedOutDestination } from '@/lib/explicitLogoutNavigation';
 import { importTrace } from '@/lib/importFlowTrace';
 import { resolvePostAuthOnboardingRoute } from '@/lib/onboardingRouting';
 import { clearOnboardingDraft } from '@/lib/onboardingState';
@@ -52,7 +53,9 @@ import { PENDING_COMMUNITY_EVENT_ID_KEY } from '@/lib/pendingEventLink';
 import {
   consumePendingNavigationTarget,
   peekPendingNavigationTarget,
+  pushTokenLifecycle,
   registerForPushNotifications,
+  rememberDevicePushToken,
   setupNotificationHandlers,
   subscribeToPendingNavigation,
 } from '@/lib/pushNotifications';
@@ -327,6 +330,7 @@ export default function AuthenticatedLayout() {
   const router = useRouter();
   const segments = useSegments();
   const registerPushToken = useMutation(api.pushTokens.registerPushToken);
+  const pushUserId = useQuery(api.users.getMyId, isAuthenticated ? {} : 'skip');
   const [isActionSheetVisible, setIsActionSheetVisible] = useState(false);
   const [activeCommunityContext, setActiveCommunityContext] =
     useState<ActiveCommunityContext | null>(null);
@@ -560,41 +564,33 @@ export default function AuthenticatedLayout() {
       .catch(() => {});
   }, [isAuthenticated, router]);
 
-  // Register push token and wire notification tap handler once onboarding is done
+  // Serialize registration and explicit logout, including late permission
+  // prompts and requests already in flight. Re-register on account changes.
   useEffect(() => {
-    if (userStatus?.onboardingComplete !== true) return;
-
-    let cleanup: (() => void) | undefined;
-
-    const init = async () => {
-      let token: string | null = null;
-      try {
-        token = await registerForPushNotifications();
-      } catch (err) {
-        console.warn('[Push] registerForPushNotifications threw:', err);
-      }
-
-      if (token) {
-        try {
-          await registerPushToken({
+    if (userStatus?.onboardingComplete !== true || !pushUserId) return;
+    const deactivate = pushTokenLifecycle.activate(pushUserId);
+    const cleanup = setupNotificationHandlers();
+    void pushTokenLifecycle
+      .register(
+        pushUserId,
+        registerForPushNotifications,
+        rememberDevicePushToken,
+        (token) =>
+          registerPushToken({
             token,
+            expectedUserId: pushUserId,
             platform: Platform.OS as 'ios' | 'android',
             deviceId: Device.modelId ?? undefined,
-          });
-        } catch (err) {
-          console.warn('[Push] registerPushToken mutation failed:', err);
-        }
-      }
-
-      cleanup = setupNotificationHandlers();
-    };
-
-    init();
-
+          })
+      )
+      .catch(() => {
+        console.warn('[Push] Token registration failed');
+      });
     return () => {
-      cleanup?.();
+      deactivate();
+      cleanup();
     };
-  }, [userStatus?.onboardingComplete, registerPushToken, router]);
+  }, [userStatus?.onboardingComplete, pushUserId, registerPushToken]);
 
   // Wait for: navigation tree, auth state, RevenueCat, and user profile to resolve
   const isUserStatusLoading = isAuthenticated && userStatus === undefined;
@@ -932,10 +928,10 @@ export default function AuthenticatedLayout() {
   // ─── Push notification navigation ──────────────────────────────────────────
   // Keep a ref that always mirrors the current readiness so the subscription
   // callback (which closes over a stale value) can check it synchronously.
-  const isReadyToRouteRef = useRef(isReadyToRoute);
+  const isReadyToRouteRef = useRef(isAuthenticated && isReadyToRoute);
   useEffect(() => {
-    isReadyToRouteRef.current = isReadyToRoute;
-  }, [isReadyToRoute]);
+    isReadyToRouteRef.current = isAuthenticated && isReadyToRoute;
+  }, [isAuthenticated, isReadyToRoute]);
 
   // Subscribe to targets that arrive while the component is mounted (warm /
   // background taps, or a cold-start target that was stored before readiness).
@@ -966,7 +962,7 @@ export default function AuthenticatedLayout() {
   // above) — otherwise this could run, find nothing yet, and unblock
   // shouldBlockForColdStartNav's peek before the real target exists.
   useEffect(() => {
-    if (!isReadyToRoute || !coldStartCheckDone) return;
+    if (!isAuthenticated || !isReadyToRoute || !coldStartCheckDone) return;
     const target = consumePendingNavigationTarget();
     if (target) {
       router.replace(target as Parameters<typeof router.replace>[0]);
@@ -979,15 +975,35 @@ export default function AuthenticatedLayout() {
     if (coldStartHadPendingNavRef.current && !coldStartNavConsumed) {
       setColdStartNavConsumed(true);
     }
-  }, [isReadyToRoute, coldStartCheckDone, coldStartNavConsumed, router]);
+  }, [
+    isAuthenticated,
+    isReadyToRoute,
+    coldStartCheckDone,
+    coldStartNavConsumed,
+    router,
+  ]);
+
+  const signedOutDestinationRef = useRef<ReturnType<
+    typeof consumeSignedOutDestination
+  > | null>(null);
+  useEffect(() => {
+    // Logout only needs resolved Auth and a mounted root navigator. Waiting
+    // for subscription/profile/onboarding gates can strand a signed-out user.
+    if (isAuthenticated) {
+      signedOutDestinationRef.current = null;
+      return;
+    }
+    if (!isLoading && !isAuthenticated && navigationState?.key) {
+      // Only an explicit Profile logout chooses phone entry. Deletion and
+      // other signed-out transitions retain their existing Welcome fallback.
+      signedOutDestinationRef.current ??= consumeSignedOutDestination();
+      router.replace(signedOutDestinationRef.current);
+    }
+  }, [isLoading, isAuthenticated, navigationState?.key, router]);
 
   useEffect(() => {
     if (!isReadyToRoute) return;
-
-    if (!isAuthenticated) {
-      router.replace('/(auth)/sign-in');
-      return;
-    }
+    if (!isAuthenticated) return;
 
     if (needsOnboardingRedirect) {
       // Straight to Q1 — the single Welcome screen is the pre-auth

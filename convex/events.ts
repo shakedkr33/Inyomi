@@ -1,5 +1,4 @@
 // FIXED: added generateUploadUrl, getEventAttachmentUrl, and attachment support to create + update
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { CANCELLED_COMMUNITY_EVENT_VISIBILITY_WINDOW_MS } from '../lib/eventsTabDateHelpers';
 import type { PersonalHomeParticipants } from '../lib/personalHomeParticipants';
@@ -44,6 +43,7 @@ import {
   validatePersonalInvitations,
 } from './personalEventEditing';
 import { resolvePersonalHomeParticipants } from './personalHomeParticipants';
+import { getAuthUserId } from './sessionAuth';
 import { requireSpaceWriteAccess } from './spaceWriteAccess';
 import {
   isStorageReferencedByOtherDocument,
@@ -2563,6 +2563,17 @@ export const softDeletePersonalEvent = mutation({
       deletedBy: userId,
     });
 
+    // Deletion revokes the original public link, including after a restore.
+    // Existing recipients keep their limited saved snapshot; independent
+    // copies are untouched. Cancellation alone does not revoke sharing.
+    const links = await ctx.db
+      .query('shareLinks')
+      .withIndex('by_event', (q) => q.eq('eventId', eventId))
+      .collect();
+    for (const link of links) {
+      if (!link.revoked) await ctx.db.patch(link._id, { revoked: true });
+    }
+
     return { success: true as const };
   },
 });
@@ -2584,6 +2595,16 @@ export const restorePersonalEvent = mutation({
     if (event.deletedAt === undefined) throw new Error('האירוע לא נמחק');
     if ((event.deletedBy as string | undefined) !== (userId as string))
       throw new Error('אין הרשאה לשחזר אירוע זה');
+
+    // Also cover legacy trash records deleted before link revocation shipped.
+    // Restoring the event must not silently republish its original public URL.
+    const links = await ctx.db
+      .query('shareLinks')
+      .withIndex('by_event', (q) => q.eq('eventId', eventId))
+      .collect();
+    for (const link of links) {
+      if (!link.revoked) await ctx.db.patch(link._id, { revoked: true });
+    }
 
     await ctx.db.patch(eventId, {
       deletedAt: undefined,

@@ -232,7 +232,7 @@ export default function WelcomeScreen() {
 
       {isSplashOverlayVisible ? (
         <View style={StyleSheet.absoluteFill}>
-          <InYomiSplashScreen source="auth" />
+          <InYomiSplashScreen source="welcome" />
         </View>
       ) : null}
     </SafeAreaView>

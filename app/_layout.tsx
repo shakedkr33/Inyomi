@@ -25,6 +25,8 @@ import {
   setupNotificationCategories,
 } from '@/lib/pushNotifications';
 import { bootstrapRTL } from '@/lib/rtlBootstrap';
+import { createOtpDevelopmentLogger } from '@/lib/services/otpDevelopmentLogger';
+import { otpRequestCoordinator } from '@/lib/services/otpRequestCoordinator';
 import { startupTrace } from '@/lib/startupTrace';
 import { getConvexUrl } from '@/utils/convexConfig';
 import { OnboardingProvider } from '../contexts/OnboardingContext';
@@ -42,7 +44,16 @@ SplashScreen.preventAutoHideAsync();
 startupTrace('T0_ROOT_MODULE');
 
 const convexUrl = getConvexUrl();
-const convex = new ConvexReactClient(convexUrl);
+const convex = new ConvexReactClient(
+  convexUrl,
+  __DEV__
+    ? {
+        logger: createOtpDevelopmentLogger(
+          () => otpRequestCoordinator.operation() === 'verify'
+        ),
+      }
+    : undefined
+);
 
 const secureStorage = {
   getItem: async (key: string) => {
@@ -151,13 +162,9 @@ export default function RootLayout() {
   const bridgeReadyTracedRef = useRef(false);
   const hasHiddenNativeSplashRef = useRef(false);
   const bridgeRemovedRef = useRef(false);
-  // Development native-splash-hide gating: wait until BOTH
-  // the root bridge container has laid out AND the root bridge's logo
-  // Image has actually loaded — not container layout alone (see
-  // maybeHideNativeSplash below). This is intentionally separate from
-  // bridgeReadyTracedRef / T_BRANDED_BRIDGE_READY, which continue to gate
-  // bridge REMOVAL (failsafe timer, buffered destination-ready signal) and
-  // must not be affected by this change.
+  // Early development handoff requires bridge layout AND logo load.
+  // Final destination readiness is an alternative handoff surface if it
+  // arrives first, so removing the bridge cannot orphan the native splash.
   const rootBridgeLayoutReadyRef = useRef(false);
   const rootBridgeLogoLoadedRef = useRef(false);
   const failsafeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -170,15 +177,19 @@ export default function RootLayout() {
   // consumes this buffered signal once the bridge itself becomes ready.
   const destinationReadySignalReceivedRef = useRef<string | null>(null);
 
-  const hideReleaseNativeSplash = useCallback(
+  const hideNativeSplashForDestination = useCallback(
     (reason: 'destination' | 'failsafe', destination?: string) => {
-      if (__DEV__ || hasHiddenNativeSplashRef.current) return;
+      if (hasHiddenNativeSplashRef.current) return;
       hasHiddenNativeSplashRef.current = true;
       if (failsafeTimerRef.current) {
         clearTimeout(failsafeTimerRef.current);
         failsafeTimerRef.current = null;
       }
-      const metadata = { environment: 'release', reason, destination };
+      const metadata = {
+        environment: __DEV__ ? 'development' : 'release',
+        reason,
+        destination,
+      };
       startupTrace('T0_HIDE_NATIVE_SPLASH', metadata);
       SplashScreen.hideAsync()
         .then(() => {
@@ -193,6 +204,12 @@ export default function RootLayout() {
 
   const removeBridge = useCallback(
     (via: 'signal' | 'failsafe', destination?: string) => {
+      // A ready destination can win the race with the bridge logo's onLoad.
+      // Removing that image would otherwise orphan the native hide request.
+      // The existing final-destination signal is itself a safe handoff surface.
+      if (via === 'signal') {
+        hideNativeSplashForDestination('destination', destination);
+      }
       if (bridgeRemovedRef.current) return;
       bridgeRemovedRef.current = true;
       if (failsafeTimerRef.current) {
@@ -202,7 +219,7 @@ export default function RootLayout() {
       setIsBridgeVisible(false);
       startupTrace('T_BRIDGE_REMOVED', { via, destination });
     },
-    []
+    [hideNativeSplashForDestination]
   );
 
   // In development, hide native splash once BOTH the root bridge container
@@ -233,12 +250,17 @@ export default function RootLayout() {
         .then(() => {
           startupTrace('T0_HIDE_NATIVE_SPLASH_RESOLVED');
         })
-        .catch(() => {});
+        .catch(() => {
+          startupTrace('T0_HIDE_NATIVE_SPLASH_FAILED', {
+            environment: 'development',
+            reason: 'bridge',
+          });
+        });
     });
   };
 
   // Root bridge container layout readiness — one of the two conditions
-  // required before the native splash may be hidden. Also unchanged:
+  // for the early bridge handoff. Also unchanged:
   // continues to gate T_BRANDED_BRIDGE_READY, the buffered
   // destination-ready signal and the bridge-removal failsafe timer below.
   const handleBridgeLayout = () => {
@@ -255,8 +277,8 @@ export default function RootLayout() {
     // A final destination may have already reported readiness before this
     // root bridge itself became ready (see destinationReadySignalReceivedRef
     // above). Now that T_BRANDED_BRIDGE_READY has fired, it is safe to
-    // honor that buffered signal (bridge removal is independent of the
-    // native-splash-hide gating above).
+    // honor that buffered signal and request native hiding even if the
+    // bridge logo has not loaded yet: the final destination is ready.
     if (destinationReadySignalReceivedRef.current !== null) {
       removeBridge('signal', destinationReadySignalReceivedRef.current);
       return;
@@ -273,8 +295,8 @@ export default function RootLayout() {
     }, BRIDGE_FAILSAFE_MS);
   };
 
-  // Root bridge logo-loaded readiness — the second of the two conditions
-  // required before the native splash may be hidden. Passed only to the
+  // Root bridge logo-loaded readiness — the second early-handoff condition.
+  // Final destination readiness does not depend on this image. Passed only to the
   // ROOT InYomiSplashScreen instance below; child (auth/authenticated)
   // instances never receive this prop and are unaffected.
   const handleRootBridgeLogoLoad = () => {
@@ -289,7 +311,7 @@ export default function RootLayout() {
   useEffect(() => {
     const unsubscribe = subscribeDestinationReady((destination) => {
       if (!__DEV__) {
-        hideReleaseNativeSplash('destination', destination);
+        hideNativeSplashForDestination('destination', destination);
         return;
       }
       if (!bridgeReadyTracedRef.current) {
@@ -308,11 +330,11 @@ export default function RootLayout() {
           environment: 'release',
           reason: 'failsafe',
         });
-        hideReleaseNativeSplash('failsafe');
+        hideNativeSplashForDestination('failsafe');
       }, BRIDGE_FAILSAFE_MS);
     }
     return unsubscribe;
-  }, [hideReleaseNativeSplash, removeBridge]);
+  }, [hideNativeSplashForDestination, removeBridge]);
 
   // Clear any pending failsafe timer on unmount (RootLayout does not
   // normally unmount, but this keeps the timer from leaking if it ever

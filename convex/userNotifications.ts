@@ -1,8 +1,8 @@
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import type { Id } from './_generated/dataModel';
-import { mutation, query } from './_generated/server';
 import type { MutationCtx } from './_generated/server';
+import { mutation, query } from './_generated/server';
+import { getAuthUserId } from './sessionAuth';
 
 // ─── Shared write helper ──────────────────────────────────────────────────────
 // Plain async TypeScript function — NOT a Convex mutation.
@@ -52,7 +52,11 @@ export const list = query({
   ),
   handler: async (ctx) => {
     const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error('Not authenticated');
+    // This root-mounted "my inbox" subscription can re-run after signOut
+    // deletes the session, before the client SDK clears its auth state.
+    // No live session means no inbox; never read notification rows here.
+    // Mutations below still reject, and valid reads remain recipient-scoped.
+    if (!userId) return [];
 
     const rows = await ctx.db
       .query('userNotifications')

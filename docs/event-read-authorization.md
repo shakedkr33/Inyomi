@@ -3,6 +3,11 @@
 Status: implemented in the working tree; live two-account and iOS/Android verification pending.
 Scope: P0 privacy authorization fixes. This is an engineering contract, not a public privacy policy.
 
+All authenticated rules below first require a live session and existing enabled
+user through `convex/sessionAuth.ts`; historical creator IDs alone do not
+authenticate a deleted user. See [session validity](authentication-session-validity.md)
+for scope, rollout and the separate limitation of already-issued Storage URLs.
+
 ## Personal events and attachments
 
 `convex/eventAccess.ts` supplies the read check used by `events.getById`,
@@ -206,6 +211,23 @@ Public `getSharePreview` continues to accept a valid non-revoked token without
 login and returns its existing limited projection. Saved linked-event recipients
 retain their separate limited-detail path; holding a link does not grant full
 source-event or attachment access.
+
+### Deleted source links (Production P0, 2026-10-13)
+
+Any defined `events.deletedAt` denies public preview, creation/lookup of an
+active share link and a new `saveLinkedEvent`, including direct backend calls
+and legacy unrevoked tokens. Soft deletion revokes existing public links in the
+same mutation; restoration also revokes legacy links before clearing deletedAt,
+so restoring an event does not silently republish its original URL. A creator
+can explicitly create a new link after restoration. Cancellation alone preserves
+the previous preview/save behavior and cancelled status.
+
+Existing saved recipients resolve a soft-deleted source from their limited
+snapshot, just as for a missing/hard-deleted source, never from live trash data.
+Their existing snapshot-to-independent-copy operation remains permitted under
+the existing recipient/destination authorization. Previously created independent
+copies are untouched. No records were migrated. Actual-handler synthetic tests
+cover these boundaries; hosted transactions and iOS/Android QA remain pending.
 
 `linkedEvents.getLinkedEventsForSpace` requires an authenticated caller with
 an access-kind `members` row for the exact requested space, using

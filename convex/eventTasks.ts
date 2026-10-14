@@ -1,4 +1,3 @@
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { ConvexError, v } from 'convex/values';
 import { prioritizePersonalAssignments } from '../lib/personalEventTaskPresentation';
 import { internal } from './_generated/api';
@@ -13,6 +12,7 @@ import {
   assertPersonalAssignee,
   isVerifiedProfile,
 } from './personalEventEditing';
+import { getAuthUserId } from './sessionAuth';
 import { createUserNotifications } from './userNotifications';
 
 // ─────────────────────────────────────────────────────────────

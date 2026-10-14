@@ -1,9 +1,9 @@
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { hasAccessRowForSpace } from '../lib/spaceAccess';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
+import { getAuthUserId } from './sessionAuth';
 
 const PERMISSION_DENIED = 'אין הרשאה לגשת למרחב זה';
 

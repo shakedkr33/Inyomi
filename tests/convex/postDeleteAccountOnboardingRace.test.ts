@@ -42,6 +42,7 @@
 
 import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import { runAccountDeletionCleanup } from '../../lib/accountDeletionUi';
 import { resolvePostAuthOnboardingRoute } from '../../lib/onboardingRouting';
 
 function readSource(relativePath: string): string {
@@ -249,18 +250,23 @@ describe('Delete Account cleanup sequence — backend success still proceeds thr
     '../../lib/accountDeletionUi.ts'
   );
 
-  it('runAccountDeletionCleanup still runs clearOnboardingDraft → resetData → signOut, in that exact order (unchanged by this task)', () => {
-    const fnMatch = ACCOUNT_DELETION_UI_SOURCE.match(
-      /export async function runAccountDeletionCleanup\([\s\S]*?\n\}/
-    );
-    expect(fnMatch).not.toBeNull();
-    const body = fnMatch?.[0] ?? '';
-    const clearIdx = body.indexOf('clearOnboardingDraft()');
-    const resetIdx = body.indexOf('resetData()');
-    const signOutIdx = body.indexOf('signOut()');
-    expect(clearIdx).toBeGreaterThan(-1);
-    expect(resetIdx).toBeGreaterThan(clearIdx);
-    expect(signOutIdx).toBeGreaterThan(resetIdx);
+  it('runs draft cleanup, memory reset and sign-out in order after account cache cleanup', async () => {
+    const calls: string[] = [];
+    await runAccountDeletionCleanup({
+      clearAccountCache: async () => {
+        calls.push('cache');
+      },
+      clearOnboardingDraft: async () => {
+        calls.push('draft');
+      },
+      resetData: () => {
+        calls.push('reset');
+      },
+      signOut: async () => {
+        calls.push('signOut');
+      },
+    });
+    expect(calls).toEqual(['cache', 'draft', 'reset', 'signOut']);
   });
 
   it('executeAccountDeletion never runs local cleanup itself — cleanup is only reachable from the caller after an explicit {ok:true} result (no implicit onboarding write window)', () => {

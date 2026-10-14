@@ -1,4 +1,3 @@
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { ConvexError, v } from 'convex/values';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx } from './_generated/server';
@@ -8,6 +7,7 @@ import {
   saveCommunityEventToPersonalCalendar,
 } from './communityEventCalendarHelpers';
 import { isActiveCommunityMember } from './communityMemberUtils';
+import { getAuthUserId } from './sessionAuth';
 
 async function getCommunityMembership(
   ctx: MutationCtx,

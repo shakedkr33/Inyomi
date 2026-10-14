@@ -212,6 +212,26 @@ describe('executeAccountDeletion', () => {
 // ── runAccountDeletionCleanup ────────────────────────────────────────────────
 
 describe('runAccountDeletionCleanup', () => {
+  it('reports cache failure but still clears in-memory state and signs out', async () => {
+    const calls: string[] = [];
+    const result = await runAccountDeletionCleanup({
+      clearAccountCache: async () => {
+        calls.push('cache');
+        throw new Error('storage');
+      },
+      clearOnboardingDraft: async () => {
+        calls.push('draft');
+      },
+      resetData: () => {
+        calls.push('reset');
+      },
+      signOut: async () => {
+        calls.push('signOut');
+      },
+    });
+    expect(result.cleanupSucceeded).toBe(false);
+    expect(calls).toEqual(['cache', 'draft', 'reset', 'signOut']);
+  });
   it('runs clearOnboardingDraft, resetData, signOut in that exact order', async () => {
     const calls: string[] = [];
     await runAccountDeletionCleanup({
@@ -437,12 +457,14 @@ describe('profile.tsx — delete account UI wiring (source inspection)', () => {
     const flowBody = PROFILE_SOURCE.slice(flowStart, flowEnd);
 
     const cleanupIndex = flowBody.indexOf('await runAccountDeletionCleanup(');
-    const successIndex = flowBody.indexOf('החשבון נמחק בהצלחה');
+    const successIndex = flowBody.indexOf("'החשבון נמחק'");
     expect(cleanupIndex).toBeGreaterThan(-1);
     expect(successIndex).toBeGreaterThan(-1);
     // The success message must be shown AFTER the cleanup/sign-out call —
     // never before, and never on the failure path (which returns earlier).
     expect(successIndex).toBeGreaterThan(cleanupIndex);
+    expect(flowBody).toContain('cleanup.cleanupSucceeded');
+    expect(flowBody).not.toContain('החשבון ומידע האישי נמחקו לצמיתות');
   });
 
   it('never shows the delete-account subscription warning with a Manage Subscription CTA', () => {

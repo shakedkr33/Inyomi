@@ -2,6 +2,8 @@ import { ConvexCredentials } from '@convex-dev/auth/providers/ConvexCredentials'
 import { Phone } from '@convex-dev/auth/providers/Phone';
 import { convexAuth } from '@convex-dev/auth/server';
 import { internal } from './_generated/api';
+import { query } from './_generated/server';
+import { getAuthUserId } from './sessionAuth';
 
 const generate6DigitOtp = () =>
   Promise.resolve(String(Math.floor(100000 + Math.random() * 900000)));
@@ -76,7 +78,7 @@ async function sendOtpWithTwilio(phone: string, code: string) {
   }
 }
 
-export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
+export const { auth, signIn, signOut, store } = convexAuth({
   providers: [
     ConvexCredentials({
       id: 'apple-review',
@@ -148,4 +150,11 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
       return userId;
     },
   },
+});
+
+// Preserve the public endpoint, but report live application authentication,
+// rather than only whether Convex accepted the JWT signature.
+export const isAuthenticated = query({
+  args: {},
+  handler: async (ctx) => (await getAuthUserId(ctx)) !== null,
 });

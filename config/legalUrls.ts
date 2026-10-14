@@ -1,23 +1,5 @@
-// ============================================================================
-// קישורים משפטיים
-// ============================================================================
-// קובץ זה מכיל את הקישורים למסמכים המשפטיים של האפליקציה
-// עדכן את הקישורים לפני הפצה לחנויות
-
-/**
- * קישור למדיניות הפרטיות
- * ⚠️ חובה: עדכן את הקישור הזה לכתובת האמיתית של מדיניות הפרטיות שלך
- * הקישור חייב להיות נגיש בפומבי (לא רק בתוך האפליקציה)
- */
-export const PRIVACY_POLICY_URL =
-  process.env.EXPO_PUBLIC_PRIVACY_POLICY_URL ||
-  'https://yourdomain.com/privacy-policy';
-
-/**
- * קישור לתנאי השימוש
- * ⚠️ חובה: עדכן את הקישור הזה לכתובת האמיתית של תנאי השימוש שלך
- * הקישור חייב להיות נגיש בפומבי (לא רק בתוך האפליקציה)
- */
-export const TERMS_OF_SERVICE_URL =
-  process.env.EXPO_PUBLIC_TERMS_OF_SERVICE_URL ||
-  'https://yourdomain.com/terms-of-service';
+// Canonical public destinations. Publishing/approving the policy text is a
+// separate release requirement; a reachable URL is not legal approval.
+export const PRIVACY_POLICY_URL = 'https://inyomi.com/privacy';
+export const TERMS_OF_SERVICE_URL = 'https://inyomi.com/terms';
+export const ACCOUNT_DELETION_URL = 'https://inyomi.com/delete-account';

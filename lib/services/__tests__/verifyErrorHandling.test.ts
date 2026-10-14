@@ -23,7 +23,8 @@ import { classifyPhoneAuthError, mapPhoneAuthError } from '../authErrorUtils';
 
 // ── Constants mirrored from the production code ───────────────────────────────
 
-const INVALID_CODE_MESSAGE = 'הקוד לא נכון. אפשר לבדוק ולנסות שוב.';
+const INVALID_CODE_MESSAGE =
+  'הקוד שהוזן אינו תקין או שפג תוקפו. אפשר לנסות שוב.';
 const GENERIC_ERROR_MESSAGE =
   'לא הצלחנו לאמת את הקוד כרגע. אפשר לנסות שוב בעוד רגע.';
 const SETTINGS_LABEL = 'העתקת אירועים מיומן חיצוני';
@@ -129,10 +130,10 @@ describe('classifyPhoneAuthError — network and unknown cases', () => {
   });
 });
 
-describe('mapPhoneAuthError — generic calm message for non-invalid errors', () => {
-  it('returns the generic calm Hebrew message for network failure', () => {
+describe('mapPhoneAuthError — connectivity and generic errors', () => {
+  it('returns the connectivity Hebrew message for network failure', () => {
     const msg = mapPhoneAuthError(new Error('Network request failed'));
-    expect(msg).toBe(GENERIC_ERROR_MESSAGE);
+    expect(msg).toBe('אין חיבור לאינטרנט. כדאי לבדוק את החיבור ולנסות שוב.');
   });
 
   it('returns the generic calm Hebrew message for unknown errors', () => {
@@ -208,11 +209,40 @@ describe('mapPhoneAuthError — gender-inclusive copy', () => {
 
   it('invalid_code message matches the specified inclusive copy', () => {
     const msg = mapPhoneAuthError(new Error('Could not verify code'));
-    expect(msg).toBe('הקוד לא נכון. אפשר לבדוק ולנסות שוב.');
+    expect(msg).toBe('הקוד שהוזן אינו תקין או שפג תוקפו. אפשר לנסות שוב.');
   });
 
   it('generic message matches the specified inclusive copy', () => {
     const msg = mapPhoneAuthError(new Error('Unexpected server 500'));
     expect(msg).toBe('לא הצלחנו לאמת את הקוד כרגע. אפשר לנסות שוב בעוד רגע.');
   });
+});
+
+for (const message of [
+  'Invalid API key',
+  'Expired session',
+  'Incorrect server configuration',
+  'Internal server error',
+]) {
+  it(`does not label a server/session problem as an incorrect OTP: ${message}`, () => {
+    expect(classifyPhoneAuthError(new Error(message))).toBe('unknown_error');
+    expect(mapPhoneAuthError(new Error(message))).toBe(GENERIC_ERROR_MESSAGE);
+  });
+}
+it('classifies an invalid connection as connectivity, not an invalid OTP', () => {
+  expect(classifyPhoneAuthError(new Error('Invalid connection state'))).toBe(
+    'network_error'
+  );
+});
+it('classifies server throttling distinctly from invalid code', () => {
+  expect(
+    classifyPhoneAuthError(
+      new Error('Too many failed attempts to verify code for this email')
+    )
+  ).toBe('rate_limited');
+  expect(
+    mapPhoneAuthError(
+      new Error('Too many failed attempts to verify code for this email')
+    )
+  ).toContain('ניסיונות רבים מדי');
 });

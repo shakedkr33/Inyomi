@@ -1,10 +1,10 @@
 // FIXED: linked event management for personal event sharing
 //        snapshot used only for sourceStatus='deleted'; live data from source otherwise
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { hasAccessRowForSpace } from '../lib/spaceAccess';
 import { mutation, query } from './_generated/server';
 import { stampEventOwnerScope } from './ownerScope';
+import { getAuthUserId } from './sessionAuth';
 import { requireSpaceWriteAccess } from './spaceWriteAccess';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ async function resolveLinkedEventData(
 
   // biome-ignore lint/suspicious/noExplicitAny: Convex db.get returns any
   const source = await (ctx.db as any).get(linked.sourceEventId);
-  if (!source) {
+  if (!source || source.deletedAt !== undefined) {
     // Source deleted but sourceStatus not yet patched — use snapshot
     return {
       title: linked.snapshotTitle,
@@ -96,7 +96,8 @@ export const saveLinkedEvent = mutation({
 
     // Load the source event
     const sourceEvent = await ctx.db.get(link.eventId);
-    if (!sourceEvent) throw new Error('האירוע המקורי לא נמצא');
+    if (!sourceEvent || sourceEvent.deletedAt !== undefined)
+      throw new Error('האירוע המקורי לא נמצא');
 
     // Owner cannot save their own event as a linked event
     if (sourceEvent.createdBy === userId) {

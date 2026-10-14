@@ -3,8 +3,43 @@ import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import { getConvexUrl } from '@/utils/convexConfig';
+import { createPushTokenLifecycle } from './pushTokenLifecycle';
 
 const PROMPT_SEEN_KEY = 'inyomi_push_permission_prompt_seen';
+export const pushTokenLifecycle = createPushTokenLifecycle();
+
+function deviceTokenStorageKey(): string {
+  return `inyomi_push_token:${getConvexUrl()}`;
+}
+
+export async function rememberDevicePushToken(token: string): Promise<void> {
+  await AsyncStorage.setItem(deviceTokenStorageKey(), token);
+}
+
+// Does not request permissions. The fallback supports installs that registered
+// before token persistence was introduced; network errors must block logout.
+export async function unregisterDevicePushToken(
+  unregister: (args: { token: string }) => Promise<unknown>
+): Promise<void> {
+  const remembered = await AsyncStorage.getItem(deviceTokenStorageKey());
+  const token = remembered ?? (await getDevicePushToken());
+  if (token) await unregister({ token });
+  // Keep the device token for retries/relaunches. It is not an auth credential
+  // or an account binding; the server owns the binding and isActive flag.
+  consumePendingNavigationTarget();
+  await Notifications.clearLastNotificationResponseAsync();
+  await Notifications.dismissAllNotificationsAsync();
+}
+
+async function getDevicePushToken(): Promise<string | null> {
+  if (Platform.OS === 'web' || !Device.isDevice) return null;
+  const projectId =
+    Constants.expoConfig?.extra?.eas?.projectId ??
+    Constants.easConfig?.projectId;
+  if (!projectId) throw new Error('Missing EAS projectId');
+  return (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+}
 
 // ─── Pending Navigation Store ─────────────────────────────────────────────────
 // Notification handlers publish a screen target here.
@@ -149,18 +184,7 @@ export async function registerForPushNotifications(): Promise<string | null> {
     }
   }
 
-  const projectId =
-    Constants.expoConfig?.extra?.eas?.projectId ??
-    (Constants as unknown as { easConfig?: { projectId?: string } }).easConfig
-      ?.projectId;
-
-  if (!projectId) {
-    console.warn('[Push] Missing EAS projectId for push token registration');
-    return null;
-  }
-
-  const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-  return tokenData.data;
+  return getDevicePushToken();
 }
 
 // ─── Cold-Start Capture ───────────────────────────────────────────────────────

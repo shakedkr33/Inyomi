@@ -14,6 +14,9 @@ export const getOrCreateAppleReviewUser = internalMutation({
       .unique();
 
     if (existingUser) {
+      if (existingUser.isActive === false) {
+        throw new Error('Account is disabled');
+      }
       await ctx.db.patch(existingUser._id, {
         phone,
         role: existingUser.role ?? 'user',

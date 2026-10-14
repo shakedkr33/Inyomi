@@ -146,7 +146,7 @@ bun dev
 - **Paywall Screen:** מסך תשלום בעברית עם תוכניות מנוי (חודשי, שנתי)
 - **RevenueCat Context:** ניהול מנויים, רכישות ושחזור רכישות
 - **Mock Payments:** מצב בדיקה שמאפשר לבדוק את ה-Paywall בלי תשלום אמיתי
-- **Webhook Integration:** סנכרון אוטומטי של סטטוס מנוי ל-Convex Database
+- **Webhook Integration:** טרם מומש; אין כרגע מקור entitlement מאומת בשרת. ראו `docs/deployment.md` למגבלות הפריסה.
 
 📖 **מדריך הגדרה:** ראה `docs/REVENUECAT_SETUP.md` להגדרה מפורטת ל-iOS ו-Android.
 

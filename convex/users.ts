@@ -1,4 +1,3 @@
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { isCalendarImportPromptPending } from '../lib/calendarImportOnboarding';
 import type { Id } from './_generated/dataModel';
@@ -11,6 +10,7 @@ import {
   resolveKind,
   resolveMySpaceId,
 } from './members';
+import { getAuthUserId } from './sessionAuth';
 
 // ── Phone normalization ───────────────────────────────────────────────────────
 // FIXED: retroactive phone-based family member matching when contacts are saved
@@ -60,45 +60,15 @@ export const getCurrentUser = query({
 // PII). Removed 2026-09: verified zero callers across app/, convex/, tests/
 // and scripts. See docs/audits/ security audit Wave 1, finding C-01.
 
-// יצירה או עדכון של משתמש (נקרא בדרך כלל מתהליך האימות)
+// Compatibility endpoint: actual creation belongs to the trusted Convex Auth
+// callback. An access token must never create/resurrect an account or select
+// another user by email. Preserve the existing no-argument ID return contract.
 export const createOrUpdateUser = mutation({
   args: {},
   handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      throw new Error('Not authenticated');
-    }
-
-    const email = identity.email ?? '';
-    const now = Date.now();
-
-    // בדיקה אם המשתמש כבר קיים
-    const existing = await ctx.db
-      .query('users')
-      .withIndex('by_email', (q) => q.eq('email', email))
-      .unique();
-
-    const userData = {
-      email,
-      emailVerified: identity.emailVerified ?? false,
-      fullName: identity.name || identity.nickname || 'User',
-      role: 'user' as const,
-      userType: 'free' as const, // ברירת מחדל - משתמש חינמי
-      isActive: true,
-      updatedAt: now,
-    };
-
-    // עדכון משתמש קיים
-    if (existing) {
-      await ctx.db.patch(existing._id, userData);
-      return existing._id;
-    }
-
-    // יצירת משתמש חדש
-    return await ctx.db.insert('users', {
-      ...userData,
-      createdAt: now,
-    });
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('Not authenticated');
+    return userId;
   },
 });
 

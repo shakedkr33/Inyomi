@@ -12,10 +12,15 @@ import ts from 'typescript';
 const root = new URL('../../../', import.meta.url);
 const paths = [
   'app/_layout.tsx',
+  'components/InYomiSplashScreen.tsx',
+  'app/(auth)/_layout.tsx',
+  'app/(auth)/index.tsx',
   'lib/bridgeReadiness.ts',
   'lib/coldStartCaptureGate.ts',
   'lib/hooks/useStartupDestinationReady.ts',
   'lib/startupTrace.ts',
+  'lib/services/otpDevelopmentLogger.ts',
+  'lib/services/otpRequestCoordinator.ts',
 ];
 const compiled = new Map(
   paths.map((path) => [
@@ -34,12 +39,19 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 function harness(
   development: boolean,
-  options: { focused?: boolean; capturePending?: boolean } = {}
+  options: {
+    focused?: boolean;
+    capturePending?: boolean;
+    authenticated?: boolean;
+    platform?: 'ios' | 'android';
+    hideFails?: boolean;
+  } = {}
 ) {
   let focused = options.focused ?? true;
   let showDestination = false;
   let now = 0;
   let nextTimer = 0;
+  let clientOptions: { logger?: unknown } | undefined;
   let hides = 0;
   let prevents = 0;
   let finishCapture: () => void = () => {};
@@ -58,14 +70,33 @@ function harness(
     'react/jsx-runtime': jsxRuntime,
     'react-native': {
       View: 'View',
-      StyleSheet: { absoluteFillObject: { position: 'absolute' } },
+      Image: 'Image',
+      Text: 'Text',
+      Pressable: 'Pressable',
+      ScrollView: 'ScrollView',
+      Platform: { OS: options.platform ?? 'ios' },
+      useWindowDimensions: () => ({ width: 390, height: 844 }),
+      StyleSheet: {
+        create: (value: unknown) => value,
+        absoluteFillObject: { position: 'absolute' },
+      },
     },
     'react-native-gesture-handler': { GestureHandlerRootView: passthrough },
-    'react-native-safe-area-context': { SafeAreaProvider: passthrough },
+    'react-native-safe-area-context': {
+      SafeAreaProvider: passthrough,
+      SafeAreaView: 'SafeAreaView',
+    },
     '@convex-dev/auth/react': { ConvexAuthProvider: passthrough },
     'convex/react': {
-      ConvexReactClient: class {},
-      useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+      ConvexReactClient: class {
+        constructor(_address: string, options?: { logger?: unknown }) {
+          clientOptions = options;
+        }
+      },
+      useConvexAuth: () => ({
+        isAuthenticated: options.authenticated ?? true,
+        isLoading: false,
+      }),
       useQuery: () => null,
     },
     '@react-navigation/native': { useIsFocused: () => focused },
@@ -77,10 +108,15 @@ function harness(
       },
       hideAsync: async () => {
         hides += 1;
+        if (options.hideFails) throw new Error('synthetic native failure');
       },
     },
     '../global.css': {},
-    '@/components/InYomiSplashScreen': { InYomiSplashScreen: 'splash' },
+    '@/config/appConfig': {},
+    '@/constants/theme': { colors: {} },
+    '@/lib/rtl': { APP_IS_RTL: true },
+    '@/lib/onboardingState': { getOnboardingDraft: async () => null },
+    'expo-linear-gradient': { LinearGradient: 'Gradient' },
     '@/contexts/NotificationsContext': { NotificationsProvider: passthrough },
     '@/contexts/RevenueCatContext': { RevenueCatProvider: passthrough },
     '../contexts/OnboardingContext': { OnboardingProvider: passthrough },
@@ -108,6 +144,7 @@ function harness(
       exports,
       __DEV__: development,
       require: (name: string) => {
+        if (name.includes('/assets/')) return 1;
         if (name in mocks) return mocks[name];
         return load(`${name.replace(/^@\//, '')}.ts`);
       },
@@ -131,12 +168,36 @@ function harness(
     const { onLayout } = useStartupDestinationReady('home');
     return React.createElement('destination', { onLayout });
   }
+  const authSlot = React.createContext(false);
+  const router = { replace: (_target: string) => {} };
   mocks['expo-router'] = {
-    Slot: () =>
-      showDestination
-        ? React.createElement(Destination)
-        : React.createElement('splash', { source: 'authenticated' }),
+    useSegments: () => ['(auth)'],
+    useLocalSearchParams: () => ({}),
+    useRouter: () => router,
+    Slot: () => {
+      const insideAuth = React.useContext(authSlot);
+      if (insideAuth) return React.createElement(Welcome);
+      if (!showDestination)
+        return React.createElement(InYomiSplashScreen, { source: 'auth' });
+      return options.authenticated === false
+        ? React.createElement(
+            authSlot.Provider,
+            { value: true },
+            React.createElement(AuthLayout)
+          )
+        : React.createElement(Destination);
+    },
   };
+  const { InYomiSplashScreen } = load<
+    typeof import('../../../components/InYomiSplashScreen')
+  >('components/InYomiSplashScreen.tsx');
+  mocks['@/components/InYomiSplashScreen'] = { InYomiSplashScreen };
+  const AuthLayout = load<{ default: React.ComponentType }>(
+    'app/(auth)/_layout.tsx'
+  ).default;
+  const Welcome = load<{ default: React.ComponentType }>(
+    'app/(auth)/index.tsx'
+  ).default;
   const { default: RootLayout } = load<{ default: React.ComponentType }>(
     'app/_layout.tsx'
   );
@@ -149,6 +210,9 @@ function harness(
   let tree: ReactTestRenderer;
 
   return {
+    get clientOptions() {
+      return clientOptions;
+    },
     get hides() {
       return hides;
     },
@@ -157,8 +221,18 @@ function harness(
     },
     get rootSplash() {
       return tree.root
-        .findAllByType('splash')
+        .findAllByType(InYomiSplashScreen)
         .find((s) => s.props.source === 'root');
+    },
+    get splashes() {
+      return tree.root.findAllByType(InYomiSplashScreen);
+    },
+    get welcomeVisible() {
+      return (
+        tree.root.findAllByProps({ accessibilityLabel: 'בואו נתחיל' })
+          .length === 1 &&
+        tree.root.findAllByType(InYomiSplashScreen).length === 0
+      );
     },
     logs,
     timers,
@@ -176,8 +250,29 @@ function harness(
     },
     async layoutDestination() {
       await act(async () =>
-        tree.root.findByType('destination').props.onLayout()
+        options.authenticated === false
+          ? tree.root
+              .findByType(AuthLayout)
+              .findAllByType('View')[0]
+              .props.onLayout()
+          : tree.root.findByType('destination').props.onLayout()
       );
+    },
+    async settleWelcome() {
+      const welcome = tree.root.findByType(Welcome);
+      const heroSlot = welcome
+        .findAllByType('View')
+        .find((v) => v.props.onLayout);
+      if (!heroSlot) throw new Error('Welcome hero slot missing');
+      await act(async () =>
+        heroSlot.props.onLayout({
+          nativeEvent: { layout: { width: 300, height: 400 } },
+        })
+      );
+      await act(async () => {
+        for (const image of welcome.findAllByType('Image'))
+          image.props.onLoad();
+      });
     },
     async focusDestination() {
       focused = true;
@@ -269,6 +364,7 @@ describe('release native splash lifecycle', () => {
 
   it('does not enable unrelated release startup logs', () => {
     const h = harness(false);
+    expect(h.clientOptions).toBeUndefined();
     h.startupTrace('GATES');
     h.startupTrace('T1_AUTH_RESOLVED');
     expect(h.logs).toEqual([]);
@@ -278,9 +374,25 @@ describe('release native splash lifecycle', () => {
 });
 
 describe('development bridge lifecycle', () => {
+  it('hides native splash when destination readiness removes the bridge before its logo loads', async () => {
+    const h = harness(true);
+    await h.mount();
+    await act(async () => h.rootSplash?.parent?.props.onLayout());
+    await h.showDestination();
+    await h.layoutDestination();
+    expect(h.rootSplash).toBeUndefined();
+    // There can be no onLoad from an unmounted logo. No timer should be
+    // needed to request the native handoff to the already-ready destination.
+    expect(h.hides).toBe(1);
+    expect(h.frames).toHaveLength(0);
+    expect(h.timers.size).toBe(0);
+    await h.unmount();
+  });
+
   for (const order of ['layout-first', 'image-first']) {
     it(`retains layout + image + animation-frame handoff (${order})`, async () => {
       const h = harness(true);
+      expect(h.clientOptions?.logger).toBeDefined();
       await h.mount();
       const splash = h.rootSplash;
       expect(splash).toBeDefined();
@@ -321,4 +433,107 @@ describe('development bridge lifecycle', () => {
     expect(h.timers.size).toBe(0);
     await h.unmount();
   });
+});
+
+for (const platform of ['ios', 'android'] as const) {
+  for (const development of [true, false]) {
+    it(`${platform} ${development ? 'development' : 'release'}: real auth/Welcome and splash components hand off when destination wins the image race`, async () => {
+      const h = harness(development, { platform, authenticated: false });
+      await h.mount();
+      if (development) {
+        await act(async () => h.rootSplash?.parent?.props.onLayout());
+      }
+      await h.showDestination();
+      await h.layoutDestination();
+      expect(h.hides).toBe(1);
+      expect(h.rootSplash).toBeUndefined();
+      // Auth wrapper layout does not mean Welcome's own overlay is gone.
+      expect(h.splashes.map((s) => s.props.source)).toEqual(['welcome']);
+      await h.settleWelcome();
+      expect(h.splashes).toHaveLength(0);
+      expect(h.welcomeVisible).toBe(true);
+      expect(h.logs.join('\n')).toContain('T0_HIDE_NATIVE_SPLASH_RESOLVED');
+      if (development) {
+        expect(h.logs.join('\n')).toContain('T0_CHILD_SPLASH_UNMOUNTED');
+        expect(h.logs.join('\n')).toContain('"source":"welcome"');
+      }
+      await h.unmount();
+    });
+  }
+
+  it(`${platform}: full unauthenticated Reload gets its own native handoff; warm renders do not reintroduce the bridge`, async () => {
+    for (let runtime = 0; runtime < 2; runtime++) {
+      const h = harness(true, { platform, authenticated: false });
+      await h.mount();
+      await act(async () => h.rootSplash?.parent?.props.onLayout());
+      await h.showDestination();
+      await h.layoutDestination();
+      await h.settleWelcome();
+      expect(h.prevents).toBe(1);
+      expect(h.hides).toBe(1);
+      // Same runtime, repeated destination layout/focus = warm render.
+      await h.showDestination();
+      await h.layoutDestination();
+      await h.focusDestination();
+      expect(h.hides).toBe(1);
+      expect(h.welcomeVisible).toBe(true);
+      await h.unmount();
+    }
+  });
+}
+
+it('buffered ready destination still hides native splash if bridge layout arrives before any logo load', async () => {
+  const h = harness(true, { authenticated: false });
+  await h.mount();
+  await h.showDestination();
+  await h.layoutDestination();
+  expect(h.rootSplash).toBeDefined();
+  expect(h.hides).toBe(0);
+  await act(async () => h.rootSplash?.parent?.props.onLayout());
+  expect(h.hides).toBe(1);
+  expect(h.rootSplash).toBeUndefined();
+  await h.unmount();
+});
+
+it('destination readiness and a queued image handoff request hide only once', async () => {
+  const h = harness(true);
+  await h.mount();
+  await act(async () => {
+    h.rootSplash?.parent?.props.onLayout();
+    h.rootSplash?.findByType('Image').props.onLoad();
+  });
+  expect(h.frames).toHaveLength(1);
+  await h.showDestination();
+  await h.layoutDestination();
+  await act(async () => h.frames.shift()?.());
+  expect(h.hides).toBe(1);
+  expect(h.splashes).toHaveLength(0);
+  await h.unmount();
+});
+
+it('development hide failure is diagnosed without claiming native removal or starting retries', async () => {
+  const h = harness(true, { hideFails: true });
+  await h.mount();
+  await act(async () => h.rootSplash?.parent?.props.onLayout());
+  await h.showDestination();
+  await h.layoutDestination();
+  expect(h.logs.join('\n')).toContain('T0_HIDE_NATIVE_SPLASH_FAILED');
+  expect(h.logs.join('\n')).not.toContain('T0_HIDE_NATIVE_SPLASH_RESOLVED');
+  expect(h.logs.join('\n')).not.toContain('synthetic native failure');
+  expect(h.hides).toBe(1);
+  expect(h.timers.size).toBe(0);
+  await h.unmount();
+});
+
+it('destination readiness after the existing bridge failsafe still requests native hide', async () => {
+  const h = harness(true);
+  await h.mount();
+  await act(async () => h.rootSplash?.parent?.props.onLayout());
+  await h.advance(10_000);
+  expect(h.rootSplash).toBeUndefined();
+  expect(h.hides).toBe(0);
+  await h.showDestination();
+  await h.layoutDestination();
+  expect(h.hides).toBe(1);
+  await h.unmount();
 });

@@ -177,6 +177,11 @@ export function BirthdaySheetsProvider({
     loadedUserIdRef.current = nextUserId;
     birthdaysRef.current = [];
     setBirthdays([]);
+    setSelectedBirthday(null);
+    setCardSheetVisible(false);
+    setEditSheetVisible(false);
+    setAddChoiceVisible(false);
+    setContactPickerVisible(false);
 
     if (nextUserId === null) {
       // Signed out — nothing to load. The previous user's persisted,

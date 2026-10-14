@@ -6505,7 +6505,6 @@ function TimelineView({
       getItemType={(row) => row.type}
       renderItem={renderFlatRow}
       initialScrollIndex={todayRowIndex >= 0 ? todayRowIndex : undefined}
-      initialScrollIndexParams={{ viewOffset: 12 }}
       style={{ flex: 1, overflow: 'hidden' }}
       contentContainerStyle={{
         paddingTop: 16,

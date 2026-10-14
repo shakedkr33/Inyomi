@@ -1,10 +1,10 @@
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { ConvexError, v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { mutation, query } from './_generated/server';
 import { isActiveCommunityMember } from './communityMemberUtils';
 import { canReadPersonalEvent } from './eventAccess';
+import { getAuthUserId } from './sessionAuth';
 
 function assertEventAcceptsRsvp(
   event: Pick<Doc<'events'>, 'status' | 'deletedAt'>

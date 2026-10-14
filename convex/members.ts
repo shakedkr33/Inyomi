@@ -1,4 +1,3 @@
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import { buildCanonicalFamilyMembers } from '../lib/canonicalFamilyMembers';
 import { hasCreatorOrphanFallbackAuthority } from '../lib/creatorOrphanAuthority';
@@ -6,6 +5,7 @@ import { filterPendingPhoneMatchCandidates } from '../lib/pendingPhoneMatches';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation, mutation, query } from './_generated/server';
+import { getAuthUserId } from './sessionAuth';
 
 // ── Phone normalization ───────────────────────────────────────────────────────
 // Mirrors lib/phoneUtils.ts — duplicated because Convex cannot import client libs.
@@ -1326,6 +1326,7 @@ export const removeEntityMember = mutation({
     memberId: v.id('members'),
   },
   handler: async (ctx, { memberId }) => {
+    if (!(await getAuthUserId(ctx))) throw new Error(PERMISSION_DENIED);
     const row = await ctx.db.get(memberId);
     if (!row) throw new Error('פרופיל לא נמצא');
     if (resolveKind(row) !== 'entity') throw new Error(PERMISSION_DENIED);

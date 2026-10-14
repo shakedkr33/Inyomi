@@ -4,12 +4,12 @@
  * Community events: "גם הוסיפו ליומן" — family members from the same space
  * who also added the same community event to their personal calendar.
  */
-import { getAuthUserId } from '@convex-dev/auth/server';
 import { v } from 'convex/values';
 import type { Id } from './_generated/dataModel';
 import type { QueryCtx } from './_generated/server';
 import { query } from './_generated/server';
 import { resolveKind, resolveMySpaceId } from './members';
+import { getAuthUserId } from './sessionAuth';
 
 export type ProfileCircle = {
   id: string;

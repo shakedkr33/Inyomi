@@ -107,6 +107,9 @@ export default defineSchema({
   // טבלת משפחות/יומנים (Spaces = Families/Calendars)
   // ═══════════════════════════════════════════════════════
   spaces: defineTable({
+    // Legacy Production field: retain validation compatibility; no new writer.
+    // Removal requires a separately approved data-lifecycle plan.
+    primarySources: v.optional(v.array(v.string())),
     name: v.string(),
     type: v.union(
       v.literal('personal'),
