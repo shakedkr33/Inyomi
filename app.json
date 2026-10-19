@@ -4,7 +4,7 @@
     "slug": "inyomi",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/branding/inyomi-app-icon-master.png",
     "scheme": [
       "inyomi",
       "com.googleusercontent.apps.223048558449-cab0cdv12hiq0g7ujdsibuauoummed6o",
@@ -33,8 +33,9 @@
       "package": "com.shakedkr.inyomi",
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "foregroundImage": "./assets/images/branding/inyomi-launcher-foreground.png",
+        "backgroundColor": "#EDE8E2",
+        "monochromeImage": "./assets/images/branding/inyomi-launcher-monochrome.png"
       },
       "intentFilters": [
         {
@@ -70,6 +71,7 @@
       "expo-router",
       ["expo-localization", { "supportsRTL": true }],
       ["expo-notifications", {
+        "icon": "./assets/images/notification-icon.png",
         "color": "#36a9e2",
         "defaultChannel": "communities"
       }]

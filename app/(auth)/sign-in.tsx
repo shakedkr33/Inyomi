@@ -96,7 +96,7 @@ export default function PhoneInputScreen() {
         >
           <View style={styles.logoWrapper}>
             <Image
-              source={require('@/assets/images/logo-inyomi.png')}
+              source={require('@/assets/branding/inyomi-mark.png')}
               style={styles.logo}
               resizeMode="contain"
               accessibilityLabel="InYomi Logo"

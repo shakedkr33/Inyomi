@@ -597,7 +597,7 @@ export default function ProfileScreen() {
               <MaterialIcons name="close" size={22} color="#64748b" />
             </TouchableOpacity>
             <Image
-              source={require('@/assets/images/logo-inyomi-current.png')}
+              source={require('@/assets/branding/inyomi-logo-horizontal.png')}
               style={styles.headerLogo}
               resizeMode="contain"
               accessibilityLabel="InYomi logo"
