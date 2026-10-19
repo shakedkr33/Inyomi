@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { removeContactEmail } from '../lib/familyContactPrivacy';
 import { buildOnboardingAnswersPatch } from '../lib/onboardingAnswers';
 import type { Id } from './_generated/dataModel';
 import { mutation } from './_generated/server';
@@ -122,15 +123,19 @@ export const finishOnboarding = mutation({
     if (args.familyContacts && Array.isArray(args.familyContacts)) {
       resolvedFamilyContacts = await Promise.all(
         (args.familyContacts as FamilyContactEntry[]).map(async (entry) => {
-          const { matchedUserId: _ignored, ...contact } = entry;
-          if (!entry.selectedPhoneNumber) return contact;
-          const normalizedPhone = normalizeToE164(entry.selectedPhoneNumber);
+          const sanitizedEntry = removeContactEmail(entry);
+          const { matchedUserId: _ignored, ...contact } = sanitizedEntry;
+          if (!sanitizedEntry.selectedPhoneNumber) return contact;
+          const normalizedPhone = normalizeToE164(
+            sanitizedEntry.selectedPhoneNumber
+          );
           if (!normalizedPhone) return contact;
           const matchedUser = await ctx.db
             .query('users')
             .withIndex('by_phone', (q) => q.eq('phone', normalizedPhone))
             .unique();
-          if (matchedUser) return { ...contact, matchedUserId: matchedUser._id };
+          if (matchedUser)
+            return { ...contact, matchedUserId: matchedUser._id };
           return contact;
         })
       );

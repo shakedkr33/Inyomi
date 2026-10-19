@@ -19,8 +19,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { colors, shadows } from '../../constants/theme';
 import { rtl } from '@/lib/rtl';
+import { colors, shadows } from '../../constants/theme';
 // SHARED: phone selection logic for contact import
 // FIXED: removed label filtering — branching now based on total phone count
 import { getPhoneLabel, normalizePhone } from '../../lib/utils/contactPhone';
@@ -31,7 +31,6 @@ const TINT = '#e8f5fd';
 export interface SelectedContactData {
   name: string;
   phone?: string;
-  email?: string;
   contactId?: string;
 }
 
@@ -131,11 +130,7 @@ export function AddPersonBottomSheet({
       }
 
       const result = await Contacts.getContactsAsync({
-        fields: [
-          Contacts.Fields.Name,
-          Contacts.Fields.PhoneNumbers,
-          Contacts.Fields.Emails,
-        ],
+        fields: [Contacts.Fields.Name, Contacts.Fields.PhoneNumbers],
         sort: Contacts.SortTypes.FirstName,
       });
       const withPhone = (result.data ?? []).filter(
@@ -173,7 +168,6 @@ export function AddPersonBottomSheet({
         .filter(Boolean)
         .join(' ') ||
       'איש קשר',
-    email: contact.emails?.[0]?.email || undefined,
     contactId: (contact as { id?: string }).id,
   });
 
@@ -198,9 +192,9 @@ export function AddPersonBottomSheet({
       setView('phone-picker');
     } else {
       // Exactly 1 number → auto-continue, no sheet
-      const { name, email, contactId } = resolveContactFields(contact);
+      const { name, contactId } = resolveContactFields(contact);
       const phone = normalizePhone(allPhones[0]?.number ?? '') || undefined;
-      onContactSelected({ name, phone, email, contactId });
+      onContactSelected({ name, phone, contactId });
       onClose();
     }
   };
@@ -208,9 +202,9 @@ export function AddPersonBottomSheet({
   // ── Confirm phone selection (phone-picker view) ────────────────────────────
   const confirmPhoneSelection = () => {
     if (!disambigContact || !selectedPhone) return;
-    const { name, email, contactId } = resolveContactFields(disambigContact);
+    const { name, contactId } = resolveContactFields(disambigContact);
     const phone = normalizePhone(selectedPhone) || undefined;
-    onContactSelected({ name, phone, email, contactId });
+    onContactSelected({ name, phone, contactId });
     onClose();
   };
 

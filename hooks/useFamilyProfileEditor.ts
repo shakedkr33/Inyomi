@@ -10,6 +10,7 @@ import {
 } from '../components/onboarding/ColorPicker';
 import type { FamilyMember } from '../contexts/OnboardingContext';
 import { useOnboarding } from '../contexts/OnboardingContext';
+import { removeContactEmails } from '../lib/familyContactPrivacy';
 // Phase 1 final correction: pure guard preventing a hydrated fallback name
 // from being silently persisted as an identity edit on an unrelated save.
 import { buildProfileNameSavePatch } from '../lib/identityEditGuard';
@@ -27,7 +28,6 @@ export interface PendingMember {
   type?: 'person' | 'pet';
   contactId?: string;
   phone?: string;
-  email?: string;
   // FIXED: added family-member status fields — additive only
   sourceType?: 'contact' | 'manual';
   selectedPhoneNumber?: string;
@@ -109,7 +109,7 @@ export function useFamilyProfileEditor(
   );
   // FIXED: deduplicated family members on initialization to prevent false canAddPerson
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>(() =>
-    (initialFamilyMembers ?? []).filter(
+    removeContactEmails(initialFamilyMembers ?? []).filter(
       (m, i, arr) => arr.findIndex((x) => x.id === m.id) === i
     )
   );
@@ -206,7 +206,6 @@ export function useFamilyProfileEditor(
       type: 'person',
       contactId: data.contactId,
       phone: selectedPhone,
-      email: data.email,
       sourceType: 'contact',
       selectedPhoneNumber: selectedPhone || undefined,
       maskedPhone: selectedPhone ? maskPhone(selectedPhone) : undefined,
@@ -243,7 +242,6 @@ export function useFamilyProfileEditor(
       type: pendingMember.type ?? 'person',
       contactId: pendingMember.contactId,
       phone: pendingMember.phone,
-      email: pendingMember.email,
       // FIXED: preserve status fields through confirm
       sourceType: pendingMember.sourceType,
       selectedPhoneNumber: pendingMember.selectedPhoneNumber,
@@ -296,7 +294,6 @@ export function useFamilyProfileEditor(
       type: member.type,
       contactId: member.contactId,
       phone: member.phone,
-      email: member.email,
       // FIXED: preserve status fields through edit
       sourceType: member.sourceType,
       selectedPhoneNumber: member.selectedPhoneNumber,

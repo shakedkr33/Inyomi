@@ -14,7 +14,6 @@ export interface FamilyMember {
   type?: 'person' | 'pet';
   contactId?: string;
   phone?: string;
-  email?: string;
   // FIXED: added family-member status fields — additive only
   sourceType?: 'contact' | 'manual';
   selectedPhoneNumber?: string;

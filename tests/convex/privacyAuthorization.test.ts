@@ -7,10 +7,17 @@ import {
   getLinkedEventsForSpace,
   saveLinkedEvent,
 } from '../../convex/linkedEvents';
-import { removeEntityMember, renameSpace, listMyFamilyContacts, getMySpaceRole, acceptPendingPhoneMatch, completeExistingUserFamilyJoin } from '../../convex/members';
-import { updateMyProfile } from '../../convex/users';
+import {
+  acceptPendingPhoneMatch,
+  completeExistingUserFamilyJoin,
+  getMySpaceRole,
+  listMyFamilyContacts,
+  removeEntityMember,
+  renameSpace,
+} from '../../convex/members';
 import { finishOnboarding } from '../../convex/onboarding';
 import * as links from '../../convex/shareLinks';
+import { getMyProfile, updateMyProfile } from '../../convex/users';
 
 // Execute the real registered query handlers against an in-memory read adapter.
 // No module mocks, deployed functions, network requests or real records are used.
@@ -1019,6 +1026,95 @@ describe('owner-only family management through registered handlers', () => {
     displayName: 'Child',
   };
   const contacts = [{ id: 'child', name: 'Child', color: '#123456' }];
+
+  it('strips a legacy client contact email while preserving name and phone on profile update', async () => {
+    const profile = { ...child };
+    const { ctx, tables } = mutationFixture(owner, personal, {
+      members: [admin, profile],
+    });
+
+    await invoke(updateMyProfile, ctx, {
+      familyContacts: [
+        {
+          id: 'child',
+          name: 'Child',
+          color: '#123456',
+          email: 'device-contact@example.com',
+          phone: '050-123-4567',
+          selectedPhoneNumber: '050-123-4567',
+          sourceType: 'contact',
+        },
+      ],
+    });
+
+    expect(
+      tables.users.find((row) => row._id === owner)?.familyContacts
+    ).toEqual([
+      expect.objectContaining({
+        id: 'child',
+        name: 'Child',
+        phone: '050-123-4567',
+        selectedPhoneNumber: '050-123-4567',
+      }),
+    ]);
+    expect(
+      (
+        tables.users.find((row) => row._id === owner)?.familyContacts as Row[]
+      )[0]
+    ).not.toHaveProperty('email');
+  });
+
+  it('strips a legacy client contact email during onboarding persistence', async () => {
+    const { ctx, tables } = mutationFixture(viewer, personal, {
+      members: [],
+      spaces: [],
+    });
+
+    await invoke(finishOnboarding, ctx, {
+      firstName: 'New',
+      lastName: 'Person',
+      profileColor: '#123456',
+      spaceType: 'family',
+      challenges: [],
+      familyContacts: [
+        {
+          id: 'local',
+          name: 'Contact',
+          email: 'device-contact@example.com',
+          phone: '050-123-4567',
+          selectedPhoneNumber: '050-123-4567',
+        },
+      ],
+    });
+
+    const stored = tables.users.find((row) => row._id === viewer)
+      ?.familyContacts as Row[];
+    expect(stored[0]).toMatchObject({
+      id: 'local',
+      name: 'Contact',
+      phone: '050-123-4567',
+      selectedPhoneNumber: '050-123-4567',
+    });
+    expect(stored[0]).not.toHaveProperty('email');
+  });
+
+  it('keeps untouched historical familyContacts readable without a migration', async () => {
+    const historicalContacts = [
+      {
+        id: 'legacy',
+        name: 'Legacy Contact',
+        email: 'historical@example.com',
+      },
+    ];
+    const { ctx } = fixture(owner, personal, {
+      users: [{ _id: owner, familyContacts: historicalContacts }],
+    });
+
+    const profile = (await invoke(getMyProfile, ctx, {})) as {
+      familyContacts?: Row[];
+    };
+    expect(profile.familyContacts).toEqual(historicalContacts);
+  });
 
   for (const familyContacts of [
     contacts,

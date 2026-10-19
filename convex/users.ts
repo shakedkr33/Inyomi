@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { isCalendarImportPromptPending } from '../lib/calendarImportOnboarding';
+import { removeContactEmail } from '../lib/familyContactPrivacy';
 import type { Id } from './_generated/dataModel';
 import { mutation, query } from './_generated/server';
 import { runAccountDeletion } from './accountDeletion';
@@ -294,10 +295,13 @@ export const updateMyProfile = mutation({
       if (Array.isArray(args.familyContacts)) {
         const resolved = await Promise.all(
           (args.familyContacts as FamilyContactEntry[]).map(async (entry) => {
+            const sanitizedEntry = removeContactEmail(entry);
             // Account links are resolved by the server, never by supplied IDs.
-            const { matchedUserId: _ignored, ...contact } = entry;
-            if (!entry.selectedPhoneNumber) return contact;
-            const normalizedPhone = normalizeToE164(entry.selectedPhoneNumber);
+            const { matchedUserId: _ignored, ...contact } = sanitizedEntry;
+            if (!sanitizedEntry.selectedPhoneNumber) return contact;
+            const normalizedPhone = normalizeToE164(
+              sanitizedEntry.selectedPhoneNumber
+            );
             if (!normalizedPhone) return contact;
             const matchedUser = await ctx.db
               .query('users')
