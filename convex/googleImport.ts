@@ -183,6 +183,7 @@ async function insertImportedEvents(
       // Same canonical fields the manual event create/edit "כתובת"/"קישור"
       // tabs read and write (LocationCard → EventData.location/onlineUrl).
       location: ev.location,
+      locationSource: ev.location?.trim() ? 'imported' : undefined,
       onlineUrl: ev.onlineUrl,
       spaceId,
       createdBy: userId,

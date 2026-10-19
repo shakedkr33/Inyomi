@@ -65,13 +65,10 @@ export async function safeDeleteStorageIfUnreferenced(
     }
   }
 
-  // No remaining references — physically delete.
-  // Catch errors so a missing storage object does not crash the mutation.
-  try {
-    await ctx.storage.delete(storageId);
-  } catch {
-    // Already gone — not an error.
-  }
+  // Missing objects are an idempotent no-op. All other failures must abort
+  // the mutation so removing the reference cannot falsely report cleanup.
+  if (!(await ctx.db.system.get(storageId))) return;
+  await ctx.storage.delete(storageId);
 }
 
 /**

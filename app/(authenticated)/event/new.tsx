@@ -44,6 +44,8 @@ function buildDuplicateInitialData(
     location: template.location,
     onlineUrl: template.onlineUrl,
     locationUrl: template.locationUrl,
+    locationSource: template.locationSource,
+    googlePlaceId: template.googlePlaceId,
     notes: template.notes,
     remindersEnabled: template.remindersEnabled,
     reminders: template.reminders,
@@ -70,7 +72,8 @@ function CommunityEventForm({
   const createEvent = useMutation(api.events.create);
   const createEventTasks = useMutation(api.eventTasks.createBatch);
   const setTaskAssignee = useMutation(api.eventTasks.setAssignee);
-  const generateUploadUrl = useMutation(api.events.generateUploadUrl);
+  const createUploadIntent = useMutation(api.events.createStorageUploadIntent);
+  const registerStorageUpload = useMutation(api.events.registerStorageUpload);
   const spaceId = useQuery(api.users.getMySpace);
   const communityMembersData = useQuery(api.communities.getCommunityMembers, {
     communityId: communityId as Id<'communities'>,
@@ -230,7 +233,8 @@ function CommunityEventForm({
             })();
       const resolvedAttachments = await uploadDraftAttachments(
         data.attachments ?? [],
-        generateUploadUrl
+        createUploadIntent,
+        registerStorageUpload
       );
 
       const eventId = await createEvent({
@@ -243,6 +247,8 @@ function CommunityEventForm({
         location: data.location?.trim() || undefined,
         onlineUrl: data.onlineUrl?.trim() || undefined,
         locationUrl: data.locationUrl || undefined,
+        locationSource: data.locationSource,
+        googlePlaceId: data.googlePlaceId,
         spaceId: (spaceId as Id<'spaces'> | null) ?? undefined,
         communityId: communityId as Id<'communities'>,
         tasksVisibleToParticipants: data.tasksVisibleToParticipants,
@@ -295,7 +301,8 @@ function CommunityEventForm({
       communityId,
       createEvent,
       createEventTasks,
-      generateUploadUrl,
+      createUploadIntent,
+      registerStorageUpload,
       router,
       rsvpRequired,
       setTaskAssignee,
@@ -368,7 +375,14 @@ type ConvexAttachment = {
 
 async function uploadDraftAttachments(
   drafts: EventAttachmentDraft[],
-  generateUrl: () => Promise<string>
+  createUploadIntent: () => Promise<{
+    intentId: Id<'storageUploadIntents'>;
+    uploadUrl: string;
+  }>,
+  registerStorageUpload: (args: {
+    intentId: Id<'storageUploadIntents'>;
+    storageId: Id<'_storage'>;
+  }) => Promise<unknown>
 ): Promise<ConvexAttachment[]> {
   const results: ConvexAttachment[] = [];
 
@@ -387,7 +401,7 @@ async function uploadDraftAttachments(
 
     if (!draft.localUri) continue; // skip anything with neither
 
-    const uploadUrl = await generateUrl();
+    const { intentId, uploadUrl } = await createUploadIntent();
     const response = await fetch(draft.localUri);
     const blob = await response.blob();
 
@@ -404,9 +418,11 @@ async function uploadDraftAttachments(
     const { storageId } = (await uploadResponse.json()) as {
       storageId: string;
     };
+    const typedStorageId = storageId as Id<'_storage'>;
+    await registerStorageUpload({ intentId, storageId: typedStorageId });
 
     results.push({
-      storageId: storageId as Id<'_storage'>,
+      storageId: typedStorageId,
       originalName: draft.originalName,
       displayName: draft.displayName,
       mimeType: draft.mimeType,
@@ -449,9 +465,10 @@ export default function NewEventScreen(): React.JSX.Element {
     duplicateFromEventId?: string;
   }>();
   const router = useRouter();
-  // FIXED: added generateUploadUrl + upload loop before createEvent for file attachments
+  // Managed upload registration runs before the parent event mutation.
   const createEvent = useMutation(api.events.create);
-  const generateUploadUrl = useMutation(api.events.generateUploadUrl);
+  const createUploadIntent = useMutation(api.events.createStorageUploadIntent);
+  const registerStorageUpload = useMutation(api.events.registerStorageUpload);
   // FIXED: persist personal event checklist tasks created in EventScreen
   // Use resolveMySpaceId-backed query so the event lands in the same space
   // that listByDateRange (calendar/home) reads from.
@@ -556,7 +573,8 @@ export default function NewEventScreen(): React.JSX.Element {
       // Upload any new draft attachments (localUri set, storageId not yet set)
       const resolvedAttachments = await uploadDraftAttachments(
         data.attachments ?? [],
-        generateUploadUrl
+        createUploadIntent,
+        registerStorageUpload
       );
 
       // FIXED: family sharing saved to event on creation
@@ -577,6 +595,8 @@ export default function NewEventScreen(): React.JSX.Element {
         location: data.location?.trim() || undefined,
         onlineUrl: data.onlineUrl?.trim() || undefined,
         locationUrl: data.locationUrl || undefined,
+        locationSource: data.locationSource,
+        googlePlaceId: data.googlePlaceId,
         tasksVisibleToParticipants: data.tasksVisibleToParticipants,
         participants:
           data.participants.length > 0
@@ -608,7 +628,8 @@ export default function NewEventScreen(): React.JSX.Element {
     },
     [
       createEvent,
-      generateUploadUrl,
+      createUploadIntent,
+      registerStorageUpload,
       relatedBirthdayId,
       relatedBirthdayName,
       spaceId,

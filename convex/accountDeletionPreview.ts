@@ -47,6 +47,11 @@ import {
 const accountDeletionPreviewSpaceValidator = v.object({
   spaceId: v.string(),
   spaceName: v.string(),
+  action: v.union(
+    v.literal('transfer'),
+    v.literal('hardDelete'),
+    v.literal('blocked')
+  ),
   deletable: v.boolean(),
   otherJoinedUserCount: v.number(),
 });
@@ -85,6 +90,7 @@ const accountDeletionPreviewReturns = v.object({
       writeSafetyLimit: v.number(),
       spaces: v.object({
         ownedCount: v.number(),
+        transferCount: v.number(),
         deletableCount: v.number(),
         blockedCount: v.number(),
         details: v.array(accountDeletionPreviewSpaceValidator),

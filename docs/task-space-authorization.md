@@ -13,6 +13,12 @@ Neither `spaceId`, membership nor `ownerScope` grants implicit task access.
 Explicit user assignments retain access across spaces and after membership
 removal; removing membership alone does not revoke a separate assignment.
 
+Retention correction (2026-10-14): `getTaskDetails` and
+`getTaskAttachmentUrl` return null for **all** soft-deleted tasks, including
+personal/assigned tasks and their creator. Trash remains available through its
+dedicated list/restore endpoints. This supersedes the former details-handler
+exception for soft-deleted personal tasks. See [deletion and retention](account-deletion-retention.md).
+
 There is no task-level “share with the whole family” field. The TaskEditorScreen
 “Everyone” action selects every visible assignee and persists account IDs in
 `assignedToUserIds` and profiles without accounts in `assignedToMemberIds` (with

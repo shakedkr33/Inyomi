@@ -91,6 +91,13 @@ export interface SubTask {
   title: string;
   completed: boolean;
   attachment?: SubTaskAttachment;
+  /** Retained historical slot; attachment takes precedence. */
+  image?: {
+    storageId: string;
+    mimeType: string;
+    sizeBytes: number;
+    createdAt: number;
+  };
 }
 
 export interface TaskAssignee {

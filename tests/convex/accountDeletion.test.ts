@@ -33,6 +33,7 @@ import {
   type CommunitySuccessorCandidate,
   estimateAccountDeletionWriteCount,
   evaluateAccountDeletionTransactionSize,
+  type FamilySuccessorCandidate,
   isAccountDeletionSafeToExecute,
   isTaskStrandedInDeletingUsersTrash,
   type MemberRemapRow,
@@ -47,6 +48,7 @@ import {
   planTaskAssignmentCleanup,
   planTaskMemberIdRemap,
   selectCommunitySuccessor,
+  selectFamilySuccessor,
   summarizeAccountDeletionPreview,
   verifyNoResidualCommunityMemberProfileReferences,
   verifyNoResidualDeletedByReference,
@@ -104,45 +106,98 @@ describe('isAccountDeletionSafeToExecute', () => {
 
 // ── Family/personal space ownership blocker (§1) ────────────────────────────
 describe('planOwnedSpaceDeletion', () => {
-  it('owner + another real joined account (kind:access) → blocks, not deletable', () => {
+  const successor: FamilySuccessorCandidate = {
+    accessMembershipId: 'access-other',
+    linkedProfileId: 'profile-other',
+    userId: OTHER_USER_ID,
+    joinedAt: 100,
+    creationTime: 50,
+  };
+
+  it('eligible linked account transfers ownership', () => {
     const result = planOwnedSpaceDeletion([
       {
         spaceId: 'space1',
         spaceName: 'משפחת כהן',
         otherAccessUserIds: [OTHER_USER_ID],
+        eligibleSuccessors: [successor],
+        hasAmbiguousActiveMembership: false,
       },
     ]);
     expect(result.deletableSpaceIds).toEqual([]);
-    expect(result.blockers).toHaveLength(1);
-    expect(result.blockers[0]).toContain('משפחת כהן');
+    expect(result.blockers).toEqual([]);
+    expect(result.transfers).toEqual([{ spaceId: 'space1', successor }]);
   });
 
   it('sole-user owned space (no other real joined user) → deletable, no blocker', () => {
     const result = planOwnedSpaceDeletion([
-      { spaceId: 'space1', spaceName: 'המרחב שלי', otherAccessUserIds: [] },
+      {
+        spaceId: 'space1',
+        spaceName: 'המרחב שלי',
+        otherAccessUserIds: [],
+        eligibleSuccessors: [],
+        hasAmbiguousActiveMembership: false,
+      },
     ]);
     expect(result.deletableSpaceIds).toEqual(['space1']);
     expect(result.blockers).toEqual([]);
   });
 
-  it('multiple owned spaces: one shared blocks the report but the solo one is still listed deletable', () => {
+  it('ambiguous active linkage blocks instead of closing the space', () => {
     const result = planOwnedSpaceDeletion([
-      { spaceId: 'solo', spaceName: 'Solo', otherAccessUserIds: [] },
       {
         spaceId: 'shared',
         spaceName: 'Shared',
         otherAccessUserIds: [OTHER_USER_ID],
+        eligibleSuccessors: [],
+        hasAmbiguousActiveMembership: true,
       },
     ]);
-    expect(result.deletableSpaceIds).toEqual(['solo']);
+    expect(result.deletableSpaceIds).toEqual([]);
     expect(result.blockers).toHaveLength(1);
+    expect(result.decisions[0].action).toBe('blocked');
   });
 
   it('no owned spaces at all → deletable [], no blockers', () => {
-    expect(planOwnedSpaceDeletion([])).toEqual({
-      deletableSpaceIds: [],
-      blockers: [],
-    });
+    const result = planOwnedSpaceDeletion([]);
+    expect(result.deletableSpaceIds).toEqual([]);
+    expect(result.transfers).toEqual([]);
+    expect(result.decisions).toEqual([]);
+    expect(result.blockers).toEqual([]);
+  });
+});
+
+describe('selectFamilySuccessor', () => {
+  const candidate = (
+    id: string,
+    joinedAt: number | undefined,
+    creationTime: number
+  ): FamilySuccessorCandidate => ({
+    accessMembershipId: id,
+    linkedProfileId: `profile-${id}`,
+    userId: `user-${id}`,
+    joinedAt,
+    creationTime,
+  });
+
+  it('uses earliest valid joinedAt regardless of input order', () => {
+    const early = candidate('early', 100, 900);
+    const late = candidate('late', 200, 10);
+    expect(selectFamilySuccessor([late, early])).toEqual(early);
+    expect(selectFamilySuccessor([early, late])).toEqual(early);
+  });
+
+  it('sorts missing joinedAt after valid values, then creation time and id', () => {
+    const valid = candidate('valid', 500, 999);
+    expect(
+      selectFamilySuccessor([candidate('missing', undefined, 1), valid])
+    ).toEqual(valid);
+    expect(
+      selectFamilySuccessor([
+        candidate('b', undefined, 10),
+        candidate('a', undefined, 10),
+      ])?.accessMembershipId
+    ).toBe('a');
   });
 });
 
@@ -1291,18 +1346,21 @@ describe('summarizeAccountDeletionPreview', () => {
         {
           spaceId: 's1',
           spaceName: 'Solo',
+          action: 'hardDelete',
           deletable: true,
           otherJoinedUserCount: 0,
         },
         {
           spaceId: 's2',
           spaceName: 'Shared',
+          action: 'blocked',
           deletable: false,
           otherJoinedUserCount: 2,
         },
       ],
     });
     expect(result.spaces.ownedCount).toBe(2);
+    expect(result.spaces.transferCount).toBe(0);
     expect(result.spaces.deletableCount).toBe(1);
     expect(result.spaces.blockedCount).toBe(1);
   });

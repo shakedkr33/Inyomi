@@ -31,6 +31,7 @@ import { useEffectiveAccess } from '@/hooks/useEffectiveAccess';
 import { PersonalEventActions } from '@/lib/components/event/PersonalEventActions';
 import type { LocalAssignee } from '@/lib/components/event/TaskAssigneeSheet';
 import { TaskAssigneeSheet } from '@/lib/components/event/TaskAssigneeSheet';
+import { hasPhysicalLocation } from '@/lib/eventLocation';
 import { canManageEventReminderItem } from '@/lib/eventReminderPermissions';
 import {
   canViewUnansweredRsvp,
@@ -47,6 +48,7 @@ import {
   isOpenCommunityCalendarActionVisible,
   isRsvpCalendarActionVisible,
 } from '@/lib/openCommunityCalendarUi';
+import { openMeetingLink } from '@/lib/openMeetingLink';
 import {
   PERSONAL_TASK_VISIBILITY_DESCRIPTION,
   personalAssignmentPresentation,
@@ -814,15 +816,16 @@ export default function EventDetailScreen() {
 
   const handleOpenNavigationChooser = useCallback(() => {
     const location = event?.location?.trim();
-    const locationUrl = (event as { locationUrl?: string } | null | undefined)
-      ?.locationUrl;
-    if (!location || !parseGeoUri(locationUrl)) return;
+    if (!location || !hasPhysicalLocation(location, event?.onlineUrl)) return;
     setNavPickerLocation(location);
   }, [event]);
 
   const navPickerLocationUrl =
     (event as { locationUrl?: string } | null | undefined)?.locationUrl ?? null;
-  const hasNavigableLocation = parseGeoUri(navPickerLocationUrl) !== null;
+  const hasNavigableLocation = hasPhysicalLocation(
+    event?.location,
+    event?.onlineUrl
+  );
 
   const handleGatedAction = useCallback(
     (action: () => void): void => {
@@ -1310,7 +1313,7 @@ export default function EventDetailScreen() {
               <Ionicons name="videocam-outline" size={18} color={PRIMARY} />
               <TouchableOpacity
                 onPress={() => {
-                  Linking.openURL(onlineUrl).catch(() => {});
+                  void openMeetingLink(onlineUrl);
                 }}
                 accessible
                 accessibilityRole="link"
@@ -2392,6 +2395,7 @@ export default function EventDetailScreen() {
       />
       <NavigationPickerModal
         location={navPickerLocation}
+        googlePlaceId={event?.googlePlaceId}
         latitude={parseGeoUri(navPickerLocationUrl)?.lat}
         longitude={parseGeoUri(navPickerLocationUrl)?.lng}
         onClose={() => setNavPickerLocation(null)}

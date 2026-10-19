@@ -152,7 +152,8 @@ export function InlineSubtasksEditor({
   const setSubtaskAttachmentMutation = useMutation(
     api.tasks.setSubtaskAttachment
   );
-  const generateUploadUrl = useMutation(api.events.generateUploadUrl);
+  const createUploadIntent = useMutation(api.events.createStorageUploadIntent);
+  const registerStorageUpload = useMutation(api.events.registerStorageUpload);
 
   const taskIdTyped = taskId as Id<'tasks'>;
 
@@ -256,7 +257,8 @@ export function InlineSubtasksEditor({
     try {
       const [uploaded] = await uploadAttachmentDraftsForConvex(
         [draft],
-        generateUploadUrl
+        createUploadIntent,
+        registerStorageUpload
       );
       if (!uploaded) return;
 

@@ -23,18 +23,18 @@ describe('hasNavigableEventLocation — canonical predicate', () => {
     );
   });
 
-  it('missing locationUrl (plain free-text address) is NOT navigable — preserves existing behavior', () => {
-    expect(hasNavigableEventLocation('רחוב הרצל 5', undefined)).toBe(false);
+  it('plain free-text addresses are navigable without coordinates', () => {
+    expect(hasNavigableEventLocation('רחוב הרצל 5', undefined)).toBe(true);
   });
 
   it('empty address text is NOT navigable even with a geo URI present', () => {
     expect(hasNavigableEventLocation('   ', 'geo:32.08,34.78')).toBe(false);
   });
 
-  it('a non-geo locationUrl (e.g. a plain link) is NOT navigable', () => {
+  it('a legacy non-geo hint does not prevent address-based navigation', () => {
     expect(
       hasNavigableEventLocation('רחוב הרצל 5', 'https://maps.google.com/x')
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 

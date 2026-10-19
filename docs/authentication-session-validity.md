@@ -41,8 +41,11 @@ All ownership/membership/role/share checks remain after authentication.
   events, tasks/eventTasks, RSVP, families, communities/admin, Google import,
   birthdays, moods, onboarding/profile, notifications and push registration.
 - auth.isAuthenticated now reflects live validity. Auth signIn/signOut and
-  internal store remain library-managed. No protected application actions exist
-  in the inspected tree; auth signIn/signOut are the public actions. HTTP routes
+  internal store remain library-managed. At the original audit no protected
+  application actions existed. The local
+  [Google Places proxy](google-places.md) now adds two public actions; both call
+  an internal mutation that validates the live session and atomically reserves
+  usage before any external request. HTTP routes
   are exclusively the library's auth routes. No new HTTP middleware was added.
 - Exactly two app public previews remain intentional exceptions:
   shareLinks.getSharePreview and communities.getCommunityByInviteCode. Revoked

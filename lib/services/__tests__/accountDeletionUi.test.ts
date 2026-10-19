@@ -24,6 +24,7 @@ import {
   LEGACY_UNSAFE_DATA_ACCOUNT_DELETION_ERROR_MESSAGE,
   resolveAccountDeletionErrorMessage,
   runAccountDeletionCleanup,
+  SHARED_OWNERSHIP_ACCOUNT_DELETION_ERROR_MESSAGE,
 } from '@/lib/accountDeletionUi';
 
 // Exact known-safe backend blocker strings (see
@@ -54,10 +55,10 @@ const UNSAFE_COMMUNITY_TRANSFER_BLOCKER =
 // ── resolveAccountDeletionErrorMessage ──────────────────────────────────────
 
 describe('resolveAccountDeletionErrorMessage — known-safe blockers stay actionable', () => {
-  it('preserves the family-ownership blocker verbatim (name only, no id)', () => {
+  it('directs family owners to support without suggesting unavailable transfer/removal', () => {
     expect(
       resolveAccountDeletionErrorMessage(new Error(FAMILY_OWNERSHIP_BLOCKER))
-    ).toBe(FAMILY_OWNERSHIP_BLOCKER);
+    ).toBe(SHARED_OWNERSHIP_ACCOUNT_DELETION_ERROR_MESSAGE);
   });
 
   it('preserves the community-ownership blocker verbatim (name only, no id)', () => {
@@ -76,7 +77,9 @@ describe('resolveAccountDeletionErrorMessage — known-safe blockers stay action
     const joined = [FAMILY_OWNERSHIP_BLOCKER, COMMUNITY_OWNERSHIP_BLOCKER].join(
       '\n'
     );
-    expect(resolveAccountDeletionErrorMessage(new Error(joined))).toBe(joined);
+    expect(resolveAccountDeletionErrorMessage(new Error(joined))).toBe(
+      SHARED_OWNERSHIP_ACCOUNT_DELETION_ERROR_MESSAGE
+    );
   });
 });
 
@@ -280,6 +283,7 @@ describe('delete-account flow orchestration — success runs cleanup immediately
     const calls: string[] = [];
     const deleteMyAccount = async () => {
       calls.push('deleteMyAccount');
+      return { success: true };
     };
     const cleanupDeps = {
       clearOnboardingDraft: async () => {
@@ -485,8 +489,14 @@ describe('profile.tsx — delete account UI wiring (source inspection)', () => {
     expect(subscriptionWarningBlock).not.toContain('ניהול המנוי');
   });
 
-  it('shows the exact required Hebrew copy for all three confirmation steps', () => {
-    expect(PROFILE_SOURCE).toContain('מחיקת החשבון תמחק לצמיתות');
+  it('explains retained shared content and keeps the subscription and irreversible-action warnings', () => {
+    expect(PROFILE_SOURCE).toContain(
+      'החשבון והנתונים האישיים שבבעלותו הבלעדית יימחקו'
+    );
+    expect(PROFILE_SOURCE).toContain('תוכן משותף, עותקים שנשמרו אצל אחרים');
+    expect(PROFILE_SOURCE).toContain(
+      'ניקוי קבצים ומידע אצל ספקים חיצוניים עשוי לדרוש טיפול נוסף'
+    );
     expect(PROFILE_SOURCE).toContain(
       'מחיקת חשבון InYomi אינה מבטלת בהכרח מנוי דרך App Store או Google Play'
     );

@@ -83,41 +83,114 @@ export function isAccountDeletionSafeToExecute(
 
 // ── Family space ownership blocker (§1) ─────────────────────────────────────
 
+export interface FamilySuccessorCandidate {
+  accessMembershipId: string;
+  linkedProfileId: string;
+  userId: string;
+  joinedAt: number | undefined;
+  creationTime: number;
+}
+
+/**
+ * Total deterministic membership order: valid joinedAt (earliest first),
+ * then missing/invalid joinedAt, then creation time, then membership id.
+ */
+function compareFamilySuccessorCandidates(
+  a: FamilySuccessorCandidate,
+  b: FamilySuccessorCandidate
+): number {
+  const aJoinedAt = isValidTimestamp(a.joinedAt) ? a.joinedAt : null;
+  const bJoinedAt = isValidTimestamp(b.joinedAt) ? b.joinedAt : null;
+  const aHasJoinedAt = aJoinedAt !== null;
+  const bHasJoinedAt = bJoinedAt !== null;
+  if (aHasJoinedAt !== bHasJoinedAt) return aHasJoinedAt ? -1 : 1;
+  if (aJoinedAt !== null && bJoinedAt !== null && aJoinedAt !== bJoinedAt) {
+    return aJoinedAt - bJoinedAt;
+  }
+  if (a.creationTime !== b.creationTime) {
+    return a.creationTime - b.creationTime;
+  }
+  if (a.accessMembershipId === b.accessMembershipId) return 0;
+  return a.accessMembershipId < b.accessMembershipId ? -1 : 1;
+}
+
+export function selectFamilySuccessor(
+  candidates: readonly FamilySuccessorCandidate[]
+): FamilySuccessorCandidate | null {
+  if (candidates.length === 0) return null;
+  return candidates.reduce((best, current) =>
+    compareFamilySuccessorCandidates(current, best) < 0 ? current : best
+  );
+}
+
+export type FamilyOwnershipAction = 'transfer' | 'hardDelete' | 'blocked';
+
 export interface OwnedSpaceOwnershipInfo {
   spaceId: string;
   spaceName: string;
-  /** userIds of every OTHER real user (not the deleting user) with a kind:'access' row in this space. */
+  /** Informational list of every OTHER user id on a kind:'access' row. */
   otherAccessUserIds: readonly string[];
+  eligibleSuccessors: readonly FamilySuccessorCandidate[];
+  hasAmbiguousActiveMembership: boolean;
 }
 
 export interface OwnedSpaceDeletionPlan {
-  /** spaceIds safe to fully delete (sole ownership, no other real joined user). */
   deletableSpaceIds: string[];
-  /** One entry per owned space that still has another real joined user — blocks the ENTIRE deletion. */
+  transfers: {
+    spaceId: string;
+    successor: FamilySuccessorCandidate;
+  }[];
+  decisions: {
+    spaceId: string;
+    action: FamilyOwnershipAction;
+    successor: FamilySuccessorCandidate | null;
+    blockerReason: string | null;
+  }[];
   blockers: string[];
 }
 
 /**
- * An owned family/personal space is only eligible for deletion when the
- * deleting user is the sole `kind:'access'` holder. If ANY other real
- * user has access to ANY owned space, the ENTIRE account deletion is
- * blocked — ownership is never automatically transferred.
+ * Selects an eligible linked successor when one exists. A space is closed
+ * only when there is neither an eligible successor nor an ambiguous active
+ * account membership. Invalid/deleted/inactive accounts never inherit.
  */
 export function planOwnedSpaceDeletion(
   spaces: readonly OwnedSpaceOwnershipInfo[]
 ): OwnedSpaceDeletionPlan {
   const deletableSpaceIds: string[] = [];
+  const transfers: OwnedSpaceDeletionPlan['transfers'] = [];
+  const decisions: OwnedSpaceDeletionPlan['decisions'] = [];
   const blockers: string[] = [];
   for (const space of spaces) {
-    if (space.otherAccessUserIds.length > 0) {
-      blockers.push(
-        `לא ניתן למחוק את החשבון: מרחב המשפחה "${space.spaceName}" בבעלותך משותף עם ${space.otherAccessUserIds.length} משתמש/ים נוספים. יש להעביר בעלות או להסיר אותם מהמרחב לפני מחיקת החשבון.`
-      );
+    const successor = selectFamilySuccessor(space.eligibleSuccessors);
+    if (successor) {
+      transfers.push({ spaceId: space.spaceId, successor });
+      decisions.push({
+        spaceId: space.spaceId,
+        action: 'transfer',
+        successor,
+        blockerReason: null,
+      });
+    } else if (space.hasAmbiguousActiveMembership) {
+      const blockerReason = `לא ניתן להשלים בבטחה את העברת הבעלות או סגירת המרחב "${space.spaceName}": נתוני הקישור לחשבון החבר אינם חד-משמעיים. יש לפנות לתמיכה.`;
+      blockers.push(blockerReason);
+      decisions.push({
+        spaceId: space.spaceId,
+        action: 'blocked',
+        successor: null,
+        blockerReason,
+      });
     } else {
       deletableSpaceIds.push(space.spaceId);
+      decisions.push({
+        spaceId: space.spaceId,
+        action: 'hardDelete',
+        successor: null,
+        blockerReason: null,
+      });
     }
   }
-  return { deletableSpaceIds, blockers };
+  return { deletableSpaceIds, transfers, decisions, blockers };
 }
 
 // ── Community ownership — automatic successor transfer (§2, updated) ───────
@@ -779,6 +852,7 @@ export function verifyNoResidualEventTaskAssignment(
 export interface AccountDeletionPreviewSpaceInfo {
   spaceId: string;
   spaceName: string;
+  action: FamilyOwnershipAction;
   deletable: boolean;
   otherJoinedUserCount: number;
 }
@@ -858,6 +932,7 @@ export interface AccountDeletionPreview {
   writeSafetyLimit: number;
   spaces: {
     ownedCount: number;
+    transferCount: number;
     deletableCount: number;
     blockedCount: number;
     details: AccountDeletionPreviewSpaceInfo[];
@@ -926,6 +1001,12 @@ export function summarizeAccountDeletionPreview(
   input: AccountDeletionPreviewInput
 ): AccountDeletionPreview {
   const deletableSpaceCount = input.spaces.filter((s) => s.deletable).length;
+  const transferSpaceCount = input.spaces.filter(
+    (s) => s.action === 'transfer'
+  ).length;
+  const blockedSpaceCount = input.spaces.filter(
+    (s) => s.action === 'blocked'
+  ).length;
   const transferCommunityCount = input.communities.filter(
     (c) => c.action === 'transfer'
   ).length;
@@ -943,8 +1024,9 @@ export function summarizeAccountDeletionPreview(
     writeSafetyLimit: input.writeSafetyLimit,
     spaces: {
       ownedCount: input.spaces.length,
+      transferCount: transferSpaceCount,
       deletableCount: deletableSpaceCount,
-      blockedCount: input.spaces.length - deletableSpaceCount,
+      blockedCount: blockedSpaceCount,
       details: input.spaces,
     },
     communities: {

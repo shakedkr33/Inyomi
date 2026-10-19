@@ -6,6 +6,13 @@ import { participantDetail } from './personalEventValidators';
 export default defineSchema({
   ...authTables,
 
+  // Short-lived abuse counters only; no addresses, coordinates, or Google tokens.
+  placesRateLimits: defineTable({
+    key: v.string(),
+    count: v.number(),
+    expiresAt: v.number(),
+  }).index('by_key', ['key']),
+
   // ═══════════════════════════════════════════════════════
   // טבלת משתמשים
   // ═══════════════════════════════════════════════════════
@@ -179,7 +186,16 @@ export default defineSchema({
     createdAt: v.number(),
     // MVP additions
     allDay: v.optional(v.boolean()),
-    locationUrl: v.optional(v.string()), // Google Maps / Waze link
+    locationUrl: v.optional(v.string()),
+    locationSource: v.optional(
+      v.union(
+        v.literal('manual'),
+        v.literal('imported'),
+        v.literal('google'),
+        v.literal('unknown')
+      )
+    ),
+    googlePlaceId: v.optional(v.string()), // Google Maps / Waze link
     onlineUrl: v.optional(v.string()), // Zoom / Meet link
     // TODO: migrate groupId → communityId (groupId was v.optional(v.id('spaces')))
     sharedWithUserIds: v.optional(v.array(v.id('users'))), // משתמשים מוזמנים
@@ -900,6 +916,56 @@ export default defineSchema({
   })
     // Primary dedup lookup: is this externalId already copied by this user?
     .index('by_owner_external_id', ['createdBy', 'externalId']),
+
+  // ═══════════════════════════════════════════════════════
+  // Storage lifecycle registry (Stage 1 — tracking only)
+  // ═══════════════════════════════════════════════════════
+  // New clients create an intent before uploading and finalize it with the
+  // returned Storage ID. Older clients remain supported: their files are
+  // registered as legacy/unknown only when an event or task write references
+  // them. None of these tables authorizes reads or enables physical cleanup.
+  storageUploadIntents: defineTable({
+    userId: v.id('users'),
+    state: v.union(
+      v.literal('pending'),
+      v.literal('uploaded'),
+      v.literal('bound')
+    ),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    updatedAt: v.number(),
+    storageId: v.optional(v.id('_storage')),
+    boundParentType: v.optional(v.union(v.literal('event'), v.literal('task'))),
+    boundParentId: v.optional(v.string()),
+    boundAt: v.optional(v.number()),
+  })
+    .index('by_user', ['userId', 'createdAt'])
+    .index('by_storage_id', ['storageId']),
+
+  storageFiles: defineTable({
+    storageId: v.id('_storage'),
+    // Historical managed rows do NOT prove upload provenance. New direct-upload
+    // receipts are legacy (unverified), even when associated with an intent.
+    origin: v.union(v.literal('managed'), v.literal('legacy')),
+    // Historical client-claimed attribution, never deletion authority.
+    uploadedBy: v.optional(v.id('users')),
+    uploadIntentId: v.optional(v.id('storageUploadIntents')),
+    registeredAt: v.number(),
+    updatedAt: v.number(),
+    // Reserved for a future verified cleanup stage. Stage 1 never sets it.
+    cleanupEligibleAt: v.optional(v.number()),
+  }).index('by_storage_id', ['storageId']),
+
+  storageReferences: defineTable({
+    storageId: v.id('_storage'),
+    parentType: v.union(v.literal('event'), v.literal('task')),
+    parentId: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_storage_id', ['storageId'])
+    .index('by_parent', ['parentType', 'parentId'])
+    .index('by_parent_storage', ['parentType', 'parentId', 'storageId']),
 
   // ═══════════════════════════════════════════════════════
   // Push notification tokens per device

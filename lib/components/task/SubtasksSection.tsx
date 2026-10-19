@@ -1,10 +1,11 @@
 import { MaterialIcons } from '@expo/vector-icons';
-import { useQuery } from 'convex/react';
+import { useConvex } from 'convex/react';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
   Pressable,
   StyleSheet,
   Switch,
@@ -22,6 +23,10 @@ import type { Id } from '@/convex/_generated/dataModel';
 import { AttachmentSourceSheet } from '@/lib/components/attachments/AttachmentSourceSheet';
 import { SubtaskImagePreviewModal } from '@/lib/components/task/SubtaskImagePreviewModal';
 import { rtl } from '@/lib/rtl';
+import {
+  displayedSubtaskAttachment,
+  replaceSubtaskAttachment,
+} from '@/lib/subtaskAttachment';
 import type { EventAttachmentDraft } from '@/lib/types/event';
 import type { SubTask, SubTaskAttachment } from '@/lib/types/task';
 
@@ -49,8 +54,7 @@ interface SubtasksSectionProps {
    * When provided (editing an existing task), subtask attachment URLs are
    * fetched via the task-scoped getTaskAttachmentUrl query so the server
    * verifies both task access and the exact storageId reference.
-   * When absent (creating a new task), falls back to the auth-only
-   * getAttachmentUrl query for pre-save upload previews.
+   * Unsaved attachments preview their local URI, never an unscoped Storage URL.
    */
   taskId?: string;
 }
@@ -92,28 +96,87 @@ export function SubtaskAttachmentPreview({
   onImageThumbnailPress?: (uri: string) => void;
 }): React.JSX.Element | null {
   const storageId = attachment?.storageId as Id<'_storage'> | undefined;
-  // Use task-scoped query when taskId is available (existing task with saved
-  // attachment). Fall back to auth-only query only during new task creation
-  // (no document reference exists yet — pre-save upload preview).
-  const urlFromStorage = useQuery(
-    api.tasks.getTaskAttachmentUrl,
-    taskId && storageId ? { taskId, storageId } : 'skip'
+  const convex = useConvex();
+  const [attempt, setAttempt] = useState(0);
+  const [uri, setUri] = useState<string | null>(null);
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(
+    'loading'
   );
-  const uri = attachment?.localUri ?? urlFromStorage ?? null;
-  const isImage = (attachment?.mimeType ?? '').startsWith('image/');
+  const isImage =
+    attachment?.type === 'image' ||
+    (attachment?.mimeType ?? '').startsWith('image/');
+  const localUri = attachment?.localUri;
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt deliberately starts a fresh authorized lookup on retry.
+  useEffect(() => {
+    let active = true;
+    setUri(null);
+    setImageLoaded(false);
+    setStatus('loading');
+    const timeout = setTimeout(() => {
+      if (active) setStatus('error');
+    }, 15000);
+    const resolve = async () => {
+      try {
+        const url =
+          localUri ||
+          (taskId && storageId
+            ? await convex.query(api.tasks.getTaskAttachmentUrl, {
+                taskId,
+                storageId,
+              })
+            : null);
+        if (!active) return;
+        setUri(url);
+        setStatus(url ? 'ready' : 'error');
+      } catch {
+        if (active) setStatus('error');
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+    void resolve();
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+    };
+  }, [convex, taskId, storageId, localUri, attempt]);
+
+  useEffect(() => {
+    if (!uri || !isImage || imageLoaded) return;
+    const timeout = setTimeout(() => setStatus('error'), 15000);
+    return () => clearTimeout(timeout);
+  }, [uri, isImage, imageLoaded]);
 
   if (!attachment?.storageId && !attachment?.localUri) {
     return null;
   }
 
+  if (status === 'error') {
+    return (
+      <Pressable
+        style={s.fileChip}
+        accessibilityRole="button"
+        accessibilityLabel="טעינת הקובץ נכשלה. ניסיון חוזר"
+        onPress={() => setAttempt((value) => value + 1)}
+      >
+        <MaterialIcons name="refresh" size={18} color={PRIMARY} />
+        <Text style={s.fileChipText}>ניסיון חוזר</Text>
+      </Pressable>
+    );
+  }
+
+  if (status === 'loading') {
+    return (
+      <View style={s.thumbWrap} accessibilityLabel="טעינת קובץ">
+        <ActivityIndicator color={PRIMARY} size="small" />
+      </View>
+    );
+  }
+
   if (isImage) {
-    if (!uri) {
-      return (
-        <View style={s.thumbWrap} accessible accessibilityLabel="טוען תמונה">
-          <ActivityIndicator color={PRIMARY} size="small" />
-        </View>
-      );
-    }
+    if (!uri) return null;
     return (
       <Pressable
         onPress={() => onImageThumbnailPress?.(uri)}
@@ -124,22 +187,33 @@ export function SubtaskAttachmentPreview({
         accessibilityLabel="תצוגה מקדימה של תמונה"
         accessibilityHint="פתיחה בתצוגה גדולה"
       >
-        <Image source={{ uri }} style={s.thumb} resizeMode="cover" />
+        <Image
+          key={`${uri}-${attempt}`}
+          source={{ uri }}
+          style={s.thumb}
+          resizeMode="cover"
+          onError={() => setStatus('error')}
+          onLoad={() => setImageLoaded(true)}
+        />
       </Pressable>
     );
   }
 
   return (
-    <View
+    <Pressable
       style={s.fileChip}
       accessible
+      accessibilityRole="button"
       accessibilityLabel={`קובץ: ${attachment.displayName}`}
+      onPress={() => {
+        if (uri) void Linking.openURL(uri).catch(() => setStatus('error'));
+      }}
     >
       <MaterialIcons name="insert-drive-file" size={18} color={PRIMARY} />
       <Text style={s.fileChipText} numberOfLines={1}>
         {attachment.displayName || attachment.originalName}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -211,7 +285,7 @@ export function SubtasksSection({
   const requestRemoveSubtask = (subtask: SubTask): void => {
     const hasContent =
       subtask.title.trim().length > 0 ||
-      subtask.attachment !== undefined ||
+      displayedSubtaskAttachment(subtask) !== undefined ||
       subtask.completed;
     if (!hasContent) {
       removeSubtask(subtask.id);
@@ -233,7 +307,9 @@ export function SubtasksSection({
     attachment: SubTaskAttachment | undefined
   ): void => {
     onSubtasksChange(
-      subtasks.map((st) => (st.id === id ? { ...st, attachment } : st))
+      subtasks.map((st) =>
+        st.id === id ? replaceSubtaskAttachment(st, attachment) : st
+      )
     );
   };
 
@@ -255,7 +331,8 @@ export function SubtasksSection({
   };
 
   const onAttachButtonPress = (st: SubTask): void => {
-    if (st.attachment?.localUri || st.attachment?.storageId) {
+    const attachment = displayedSubtaskAttachment(st);
+    if (attachment?.localUri || attachment?.storageId) {
       Alert.alert('קובץ מצורף', '', [
         { text: 'ביטול', style: 'cancel' },
         {
@@ -304,7 +381,7 @@ export function SubtasksSection({
           />
           <SubtaskAttachmentPreview
             taskId={taskIdTyped}
-            attachment={st.attachment}
+            attachment={displayedSubtaskAttachment(st)}
             onImageThumbnailPress={(uri) => setImagePreviewUri(uri)}
           />
           <View style={s.imageBtnPlaceholder} />
@@ -356,7 +433,7 @@ export function SubtasksSection({
 
           <SubtaskAttachmentPreview
             taskId={taskIdTyped}
-            attachment={st.attachment}
+            attachment={displayedSubtaskAttachment(st)}
             onImageThumbnailPress={(uri) => setImagePreviewUri(uri)}
           />
 
@@ -367,7 +444,7 @@ export function SubtasksSection({
             accessible={true}
             accessibilityRole="button"
             accessibilityLabel={
-              st.attachment?.localUri || st.attachment?.storageId
+              displayedSubtaskAttachment(st)
                 ? 'הסר או החלף קובץ'
                 : 'הוסף קובץ או תמונה'
             }

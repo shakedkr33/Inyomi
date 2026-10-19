@@ -10,12 +10,23 @@ export type ConvexAttachmentPayload = {
   sizeBytes: number;
 };
 
+export type ManagedUploadIntent = {
+  intentId: Id<'storageUploadIntents'>;
+  uploadUrl: string;
+};
+
+export type RegisterManagedUpload = (args: {
+  intentId: Id<'storageUploadIntents'>;
+  storageId: Id<'_storage'>;
+}) => Promise<unknown>;
+
 /**
  * Uploads local attachment drafts to Convex Storage (same flow as event creation).
  */
 export async function uploadAttachmentDraftsForConvex(
   drafts: EventAttachmentDraft[],
-  generateUrl: () => Promise<string>
+  createUploadIntent: () => Promise<ManagedUploadIntent>,
+  registerUpload: RegisterManagedUpload
 ): Promise<ConvexAttachmentPayload[]> {
   const results: ConvexAttachmentPayload[] = [];
 
@@ -33,7 +44,7 @@ export async function uploadAttachmentDraftsForConvex(
 
     if (!draft.localUri) continue;
 
-    const uploadUrl = await generateUrl();
+    const { intentId, uploadUrl } = await createUploadIntent();
     const response = await fetch(draft.localUri);
     const blob = await response.blob();
 
@@ -50,9 +61,11 @@ export async function uploadAttachmentDraftsForConvex(
     const { storageId } = (await uploadResponse.json()) as {
       storageId: string;
     };
+    const typedStorageId = storageId as Id<'_storage'>;
+    await registerUpload({ intentId, storageId: typedStorageId });
 
     results.push({
-      storageId: storageId as Id<'_storage'>,
+      storageId: typedStorageId,
       originalName: draft.originalName,
       displayName: draft.displayName,
       mimeType: draft.mimeType,

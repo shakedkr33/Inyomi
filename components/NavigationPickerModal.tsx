@@ -8,7 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { hasValidCoords } from '@/lib/utils/geoUri';
+import { eventNavigationUrl, hasPhysicalLocation } from '@/lib/eventLocation';
 
 const googleMapsIcon = require('@/assets/images/navigation/google-maps.png');
 const wazeIcon = require('@/assets/images/navigation/waze.png');
@@ -17,9 +17,10 @@ interface NavigationPickerModalProps {
   visible: boolean;
   /** Human-readable address text — used for Google Maps when no coordinates. */
   location: string | null;
-  /** Decimal latitude — required for Waze and coordinate-based Google Maps. */
+  /** Decimal latitude — used only for legacy coordinate-based navigation. */
   latitude?: number;
-  /** Decimal longitude — required for Waze and coordinate-based Google Maps. */
+  googlePlaceId?: string;
+  /** Decimal longitude — used only for legacy coordinate-based navigation. */
   longitude?: number;
   onClose: () => void;
 }
@@ -29,23 +30,18 @@ export function NavigationPickerModal({
   location,
   latitude,
   longitude,
+  googlePlaceId,
   onClose,
 }: NavigationPickerModalProps): React.JSX.Element | null {
-  const hasCoords = hasValidCoords(latitude, longitude);
-
   const openApp = (app: 'google' | 'waze'): void => {
-    let url: string;
-
-    if (hasCoords) {
-      url =
-        app === 'google'
-          ? `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`
-          : `waze://?ll=${latitude},${longitude}&navigate=yes`;
-    } else {
-      if (!location) return;
-      const encoded = encodeURIComponent(location.trim());
-      url = `https://www.google.com/maps/search/?api=1&query=${encoded}`;
-    }
+    const url = eventNavigationUrl(
+      app,
+      location,
+      googlePlaceId,
+      latitude,
+      longitude
+    );
+    if (!url) return;
 
     onClose();
     Linking.openURL(url).catch(() =>
@@ -64,7 +60,7 @@ export function NavigationPickerModal({
       <View style={styles.sheet}>
         <Text style={styles.title}>פתיחה בניווט</Text>
         <Pressable
-          accessibilityLabel="פתח ב-Google Maps"
+          accessibilityLabel="פתיחה ב-Google Maps"
           accessibilityRole="button"
           accessible={true}
           onPress={() => openApp('google')}
@@ -77,9 +73,9 @@ export function NavigationPickerModal({
           />
           <Text style={styles.optionText}>Google Maps</Text>
         </Pressable>
-        {hasCoords ? (
+        {hasPhysicalLocation(location) ? (
           <Pressable
-            accessibilityLabel="פתח ב-Waze"
+            accessibilityLabel="פתיחה ב-Waze"
             accessibilityRole="button"
             accessible={true}
             onPress={() => openApp('waze')}

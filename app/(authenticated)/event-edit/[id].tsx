@@ -62,7 +62,14 @@ type ConvexAttachment = {
 
 async function uploadDraftAttachmentsEdit(
   drafts: EventAttachmentDraft[],
-  generateUrl: () => Promise<string>
+  createUploadIntent: () => Promise<{
+    intentId: Id<'storageUploadIntents'>;
+    uploadUrl: string;
+  }>,
+  registerStorageUpload: (args: {
+    intentId: Id<'storageUploadIntents'>;
+    storageId: Id<'_storage'>;
+  }) => Promise<unknown>
 ): Promise<ConvexAttachment[]> {
   const results: ConvexAttachment[] = [];
   for (const draft of drafts) {
@@ -77,7 +84,7 @@ async function uploadDraftAttachmentsEdit(
       continue;
     }
     if (!draft.localUri) continue;
-    const uploadUrl = await generateUrl();
+    const { intentId, uploadUrl } = await createUploadIntent();
     const response = await fetch(draft.localUri);
     const blob = await response.blob();
     const uploadResponse = await fetch(uploadUrl, {
@@ -91,8 +98,10 @@ async function uploadDraftAttachmentsEdit(
     const { storageId } = (await uploadResponse.json()) as {
       storageId: string;
     };
+    const typedStorageId = storageId as Id<'_storage'>;
+    await registerStorageUpload({ intentId, storageId: typedStorageId });
     results.push({
-      storageId: storageId as Id<'_storage'>,
+      storageId: typedStorageId,
       originalName: draft.originalName,
       displayName: draft.displayName,
       mimeType: draft.mimeType,
@@ -142,8 +151,6 @@ function convexEventToEventData(
   const reminders = offsetsToReminders(
     remindersEnabled ? savedOffsets : undefined
   );
-
-  const isLink = Boolean(event.onlineUrl?.trim());
 
   // Restore family sharing fields from the DB event record.
   const eventRecord = event as unknown as {
@@ -248,9 +255,11 @@ function convexEventToEventData(
       event.isRecurring && isRecurrenceType(event.recurringPattern)
         ? event.recurringPattern
         : 'none',
-    location: isLink ? undefined : (event.location ?? undefined),
-    onlineUrl: isLink ? (event.onlineUrl ?? undefined) : undefined,
-    locationUrl: isLink ? undefined : (event.locationUrl ?? undefined),
+    location: event.location ?? undefined,
+    onlineUrl: event.onlineUrl ?? undefined,
+    locationUrl: event.locationUrl ?? undefined,
+    locationSource: event.locationSource,
+    googlePlaceId: event.googlePlaceId,
     notes: event.description ?? undefined,
     remindersEnabled,
     reminders,
@@ -316,7 +325,8 @@ export default function EditEventScreen(): React.JSX.Element {
   );
 
   const updateEventMutation = useMutation(api.events.update);
-  const generateUploadUrl = useMutation(api.events.generateUploadUrl);
+  const createUploadIntent = useMutation(api.events.createStorageUploadIntent);
+  const registerStorageUpload = useMutation(api.events.registerStorageUpload);
   const createEventTasks = useMutation(api.eventTasks.createBatch);
   const updateEventTask = useMutation(api.eventTasks.update);
   const removeEventTask = useMutation(api.eventTasks.remove);
@@ -387,7 +397,8 @@ export default function EditEventScreen(): React.JSX.Element {
 
       const resolvedAttachments = await uploadDraftAttachmentsEdit(
         data.attachments ?? [],
-        generateUploadUrl
+        createUploadIntent,
+        registerStorageUpload
       );
 
       // Build the participants list for persistence:
@@ -416,11 +427,16 @@ export default function EditEventScreen(): React.JSX.Element {
                 data.recurrence !== 'none' ? data.recurrence : undefined,
             }
           : {}),
-        location: data.onlineUrl
-          ? undefined
-          : data.location?.trim() || undefined,
-        onlineUrl: data.onlineUrl?.trim() || undefined,
-        locationUrl: data.onlineUrl ? undefined : data.locationUrl || undefined,
+        // Explicit empty strings survive Convex transport and clear old values.
+        ...(data.locationDirty
+          ? {
+              location: data.onlineUrl ? '' : data.location?.trim() || '',
+              onlineUrl: data.onlineUrl?.trim() || '',
+              locationUrl: data.onlineUrl ? '' : data.locationUrl,
+              locationSource: data.onlineUrl ? null : data.locationSource,
+              googlePlaceId: data.onlineUrl ? null : data.googlePlaceId,
+            }
+          : {}),
         tasksVisibleToParticipants: data.tasksVisibleToParticipants,
         requiresRsvp: rsvpRequired,
         ...(isCommunityEvent
@@ -587,7 +603,8 @@ export default function EditEventScreen(): React.JSX.Element {
       rsvpRequired,
       eventTasks,
       updateEventMutation,
-      generateUploadUrl,
+      createUploadIntent,
+      registerStorageUpload,
       createEventTasks,
       updateEventTask,
       removeEventTask,

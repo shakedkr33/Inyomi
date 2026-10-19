@@ -4,7 +4,10 @@ import * as React from 'react';
 import * as jsxRuntime from 'react/jsx-runtime';
 import { act, create } from 'react-test-renderer';
 import ts from 'typescript';
+import * as communityAssignmentSave from '../../../lib/communityTaskAssignmentSave';
 import * as assignmentDiff from '../../../lib/eventTaskAssignmentDiff';
+import * as orderReconcile from '../../../lib/eventTaskOrderReconcile';
+import * as meetingLink from '../../../lib/meetingLink';
 import * as personalEditing from '../../../lib/personalEventEditing';
 import * as personalPresentation from '../../../lib/personalEventTaskPresentation';
 import type { EventTask } from '../../../lib/types/event';
@@ -17,6 +20,7 @@ const files = [
   'app/(authenticated)/event-edit/[id].tsx',
   'lib/components/event/EventScreen.tsx',
   'lib/components/event/RelatedTasksSection.tsx',
+  'lib/components/event/LocationCard.tsx',
 ];
 const compiled = new Map(
   files.map((file) => [
@@ -36,6 +40,7 @@ export function personalEventEditorHarness(options: {
   event: Row;
   tasks: Row[];
   familyContacts?: Row[];
+  realLocationCard?: boolean;
   save: (args: Record<string, unknown>) => Promise<unknown>;
 }) {
   const navigations: unknown[] = [];
@@ -54,6 +59,7 @@ export function personalEventEditorHarness(options: {
       'members',
       'communities',
       'shareLinks',
+      'googlePlaces',
     ].map((domain) => [
       domain,
       new Proxy({}, { get: (_, name) => `${domain}.${String(name)}` }),
@@ -83,9 +89,11 @@ export function personalEventEditorHarness(options: {
       'TouchableOpacity',
     ].map((key) => [key, key])
   );
+  const mockAction = async () => ({ ok: true, value: [] });
   const mocks: Record<string, unknown> = {
     react: React,
     'react/jsx-runtime': jsxRuntime,
+    'expo-crypto': { randomUUID: () => 'test-session' },
     'react-native': {
       ...native,
       Platform: { OS: 'android' },
@@ -96,7 +104,7 @@ export function personalEventEditorHarness(options: {
       }: React.PropsWithChildren<{ visible: boolean }>) =>
         visible ? children : null,
       Alert: { alert: (...args: unknown[]) => alerts.push(args) },
-      Keyboard: { addListener: () => ({ remove() {} }) },
+      Keyboard: { addListener: () => ({ remove() {} }), dismiss() {} },
       BackHandler: { addEventListener: () => ({ remove() {} }) },
       useWindowDimensions: () => ({ height: 800, width: 400 }),
     },
@@ -125,6 +133,7 @@ export function personalEventEditorHarness(options: {
       OpacityDecorator: ({ children }: React.PropsWithChildren) => children,
     },
     'convex/react': {
+      useAction: () => mockAction,
       useQuery: (key: string, args: unknown) =>
         args === 'skip' ? undefined : queries[key],
       useMutation: (key: string) => async (args: Record<string, unknown>) => {
@@ -146,13 +155,12 @@ export function personalEventEditorHarness(options: {
       rtl: { flexDirection: 'row', textAlign: 'right' },
     },
     '@/lib/types/event': eventTypes,
+    '@/lib/meetingLink': meetingLink,
     '@/lib/personalEventEditing': personalEditing,
     '@/lib/personalEventTaskPresentation': personalPresentation,
     '@/lib/eventTaskAssignmentDiff': assignmentDiff,
-    '@/lib/communityTaskAssignmentSave': {
-      CommunityTaskAssignmentSaveError: class extends Error {},
-    },
-    '@/lib/eventTaskOrderReconcile': {},
+    '@/lib/communityTaskAssignmentSave': communityAssignmentSave,
+    '@/lib/eventTaskOrderReconcile': orderReconcile,
     '@/lib/eventDuplication': {
       isDuplicateSaveBlockedByUnconfirmedDate: () => false,
     },
@@ -161,6 +169,9 @@ export function personalEventEditorHarness(options: {
       roundToNextHour: (date: Date) => date,
       fmt2: (value: number) => String(value).padStart(2, '0'),
       applyDuration: (date: number) => ({ endDate: date, endTime: '11:00' }),
+    },
+    './GooglePlacesAttribution': {
+      GooglePlacesAttribution: 'GooglePlacesAttribution',
     },
     '@/lib/components/event/LocationCard': { LocationCard: 'LocationCard' },
     ...Object.fromEntries(
@@ -172,6 +183,8 @@ export function personalEventEditorHarness(options: {
       ].map((name) => [`@/lib/components/event/${name}`, { [name]: name }])
     ),
   };
+  if (options.realLocationCard)
+    delete mocks['@/lib/components/event/LocationCard'];
   const modules = new Map<string, Record<string, unknown>>();
   const load = (file: string): Record<string, unknown> => {
     const cached = modules.get(file);
@@ -182,6 +195,7 @@ export function personalEventEditorHarness(options: {
     modules.set(file, exports);
     runInNewContext(source, {
       exports,
+      AbortController,
       require: (name: string) =>
         name in mocks ? mocks[name] : load(`${name.replace('@/', '')}.tsx`),
       setTimeout: () => 0,

@@ -247,7 +247,8 @@ export default function CommunityReminderNewScreen() {
   // ── Backend
   const spaceId = useQuery(api.users.getMySpace);
   const createReminder = useMutation(api.tasks.create);
-  const generateUploadUrl = useMutation(api.events.generateUploadUrl);
+  const createUploadIntent = useMutation(api.events.createStorageUploadIntent);
+  const registerStorageUpload = useMutation(api.events.registerStorageUpload);
 
   // ── Derived reminder state
   const currentCustomReminder = reminders.find((r) => r.type === 'custom');
@@ -395,7 +396,8 @@ export default function CommunityReminderNewScreen() {
       // Upload any attachment drafts (localUri-based) to Convex Storage
       const uploadedAttachments = await uploadAttachmentDraftsForConvex(
         attachments,
-        () => generateUploadUrl()
+        () => createUploadIntent(),
+        registerStorageUpload
       );
 
       // Payload — with reminder configured:
@@ -453,7 +455,8 @@ export default function CommunityReminderNewScreen() {
     reminders,
     attachments,
     createReminder,
-    generateUploadUrl,
+    createUploadIntent,
+    registerStorageUpload,
     resetForm,
     router,
     resolveDueDate,

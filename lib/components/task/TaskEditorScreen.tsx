@@ -327,6 +327,7 @@ function normalizeSubtasks(subtasks: SubTask[]): SubTask[] {
       id: subtask.id || createId('subtask'),
       title: subtask.title.trim(),
       completed: subtask.completed,
+      ...(subtask.image ? { image: { ...subtask.image } } : {}),
       ...(subtask.attachment ? { attachment: { ...subtask.attachment } } : {}),
     }))
     .filter((subtask) => subtask.title.length > 0);
@@ -491,6 +492,7 @@ function stableSerializeTaskDraft(d: TaskDraft): string {
       id: s.id,
       title: s.title,
       completed: s.completed,
+      image: s.image,
       attachment: s.attachment
         ? {
             id: s.attachment.id,
@@ -553,6 +555,7 @@ function draftFromTask(task: EditableTask): TaskDraft {
         id: st.id,
         title: st.title,
         completed: st.completed,
+        image: st.image,
       };
       if (st.attachment?.storageId) {
         return {
@@ -567,21 +570,6 @@ function draftFromTask(task: EditableTask): TaskDraft {
             originalName: st.attachment.originalName ?? 'file',
             displayName:
               st.attachment.displayName ?? st.attachment.originalName ?? 'קובץ',
-          },
-        };
-      }
-      if (st.image) {
-        return {
-          ...base,
-          attachment: {
-            id: `legacy-${st.id}`,
-            type: 'image' as const,
-            storageId: st.image.storageId as unknown as string,
-            mimeType: st.image.mimeType,
-            sizeBytes: st.image.sizeBytes,
-            createdAt: st.image.createdAt,
-            originalName: 'image',
-            displayName: 'תמונה',
           },
         };
       }
@@ -654,7 +642,8 @@ export default function TaskEditorScreen({
   const createTask = useMutation(api.tasks.create);
   const updateTask = useMutation(api.tasks.update);
   const softDeleteTask = useMutation(api.tasks.softDeleteTask);
-  const generateUploadUrl = useMutation(api.events.generateUploadUrl);
+  const createUploadIntent = useMutation(api.events.createStorageUploadIntent);
+  const registerStorageUpload = useMutation(api.events.registerStorageUpload);
   const updateMyTaskReminder = useMutation(api.tasks.updateMyTaskReminder);
   const leaveTaskMutation = useMutation(api.tasks.leaveTask);
 
@@ -1181,13 +1170,20 @@ export default function TaskEditorScreen({
     try {
       const resolvedAttachments = await uploadAttachmentDraftsForConvex(
         draft.attachments ?? [],
-        generateUploadUrl
+        createUploadIntent,
+        registerStorageUpload
       );
 
       type SubtaskConvexRow = {
         id: string;
         title: string;
         completed: boolean;
+        image?: {
+          storageId: Id<'_storage'>;
+          mimeType: string;
+          sizeBytes: number;
+          createdAt: number;
+        };
         attachment?: {
           id: string;
           type: 'image' | 'file';
@@ -1215,7 +1211,8 @@ export default function TaskEditorScreen({
                 localUri: att.localUri,
               },
             ],
-            generateUploadUrl
+            createUploadIntent,
+            registerStorageUpload
           );
           attachmentRow = {
             id: att.id,
@@ -1243,6 +1240,14 @@ export default function TaskEditorScreen({
           id: st.id,
           title: st.title,
           completed: st.completed,
+          ...(st.image
+            ? {
+                image: {
+                  ...st.image,
+                  storageId: st.image.storageId as Id<'_storage'>,
+                },
+              }
+            : {}),
           ...(attachmentRow ? { attachment: attachmentRow } : {}),
         });
       }
@@ -1862,6 +1867,7 @@ export default function TaskEditorScreen({
 
           <View style={styles.card}>
             <SubtasksSection
+              taskId={taskId}
               subtasks={draft.subtasks}
               allowEditing={draft.allowParticipantEditing}
               onSubtasksChange={(subtasks) => updateDraft({ subtasks })}

@@ -1,3 +1,4 @@
+import type { LocationSource } from './eventLocation';
 /**
  * Pure "שכפל אירוע" (Part D) template-building helpers for community events.
  * Extracted out of app/(authenticated)/event/new.tsx so the actual
@@ -32,6 +33,8 @@ export type DuplicateSourceEvent = {
   location?: string;
   onlineUrl?: string;
   locationUrl?: string;
+  locationSource?: LocationSource;
+  googlePlaceId?: string;
   requiresRsvp?: boolean;
   tasksVisibleToParticipants?: boolean;
   importantItems?: { id: string; title: string }[];
@@ -67,6 +70,8 @@ export type DuplicateEventTemplate = {
   location: string | undefined;
   onlineUrl: string | undefined;
   locationUrl: string | undefined;
+  locationSource?: LocationSource;
+  googlePlaceId?: string;
   notes: string | undefined;
   remindersEnabled: boolean;
   reminders: DuplicateReminder[];
@@ -213,7 +218,10 @@ export function buildDuplicateEventTemplate(
     isAllDay: source.allDay ?? false,
     location: source.location,
     onlineUrl: source.onlineUrl,
-    locationUrl: source.locationUrl,
+    locationUrl: undefined,
+    locationSource: source.locationSource,
+    googlePlaceId:
+      source.locationSource === 'google' ? source.googlePlaceId : undefined,
     notes: source.description,
     remindersEnabled,
     reminders: offsetsToDuplicateReminders(

@@ -24,6 +24,8 @@ import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { useEffectiveAccess } from '@/hooks/useEffectiveAccess';
 import { getAvatarInitials } from '@/lib/avatarInitials';
+import { SubtaskAttachmentPreview } from '@/lib/components/task/SubtasksSection';
+import { displayedSubtaskAttachment } from '@/lib/subtaskAttachment';
 import { TASK_CATEGORY_LABELS } from '@/lib/types/task';
 import { getHebrewDateInfo } from '@/lib/utils/hebrewDate';
 
@@ -862,6 +864,11 @@ export function TaskDetailsBottomSheet({
                           >
                             {sub.title}
                           </Text>
+                          <SubtaskAttachmentPreview
+                            taskId={taskId as Id<'tasks'>}
+                            attachment={displayedSubtaskAttachment(sub)}
+                            onImageThumbnailPress={setSelectedImageUrl}
+                          />
                         </View>
                       ))}
                     </View>

@@ -111,7 +111,10 @@ export default function RecentlyDeletedScreen() {
     try {
       await restoreTaskMutation({ id });
     } catch {
-      Alert.alert('שגיאה', `לא הצלחנו לשחזר את "${title}". נסה שוב.`);
+      Alert.alert(
+        'שגיאה',
+        `לא ניתן לשחזר את "${title}" כרגע. ייתכן שתקופת השחזור הסתיימה.`
+      );
     }
   };
 
@@ -119,7 +122,10 @@ export default function RecentlyDeletedScreen() {
     try {
       await restoreEventMutation({ eventId: id });
     } catch {
-      Alert.alert('שגיאה', `לא הצלחנו לשחזר את "${title}". נסה שוב.`);
+      Alert.alert(
+        'שגיאה',
+        `לא ניתן לשחזר את "${title}" כרגע. ייתכן שתקופת השחזור הסתיימה.`
+      );
     }
   };
 
@@ -148,7 +154,8 @@ export default function RecentlyDeletedScreen() {
       >
         {/* Explanatory text */}
         <Text style={styles.explanationText}>
-          פריטים שנמחקו נשמרים כאן למשך 30 יום.
+          ניתן לשחזר פריטים עד למועד סיום השחזור המוצג. סיום תקופת השחזור אינו
+          אישור למחיקה סופית של הנתונים.
         </Text>
 
         {isEmpty ? (
@@ -165,6 +172,9 @@ export default function RecentlyDeletedScreen() {
             {combinedItems.map((entry) => {
               const { item, kind } = entry;
               const days = daysLeft(item.deleteExpiresAt);
+              const expired =
+                item.deleteExpiresAt !== undefined &&
+                item.deleteExpiresAt <= Date.now();
               const deletedDate = formatDeletedDate(item.deletedAt);
               const typeLabel = kind === 'task' ? 'משימה' : 'אירוע';
 
@@ -195,6 +205,8 @@ export default function RecentlyDeletedScreen() {
                   </View>
                   <Pressable
                     style={styles.restoreButton}
+                    disabled={expired}
+                    accessibilityState={{ disabled: expired }}
                     onPress={() => {
                       if (kind === 'task') {
                         void handleRestoreTask(
@@ -214,7 +226,9 @@ export default function RecentlyDeletedScreen() {
                     hitSlop={8}
                   >
                     <MaterialIcons name="restore" size={20} color="#36a9e2" />
-                    <Text style={styles.restoreButtonText}>שחזר</Text>
+                    <Text style={styles.restoreButtonText}>
+                      {expired ? 'תקופת השחזור הסתיימה' : 'שחזור'}
+                    </Text>
                   </Pressable>
                 </View>
               );

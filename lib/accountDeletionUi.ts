@@ -26,7 +26,7 @@
  * free of internal detail — never exposes internal ids or stack traces.
  */
 export const GENERIC_ACCOUNT_DELETION_ERROR_MESSAGE =
-  'לא הצלחנו למחוק את החשבון כרגע. לא בוצעו שינויים בחשבון. אפשר לנסות שוב מאוחר יותר.';
+  'לא ניתן לאשר שמחיקת החשבון הושלמה. אפשר לנסות שוב או לפנות לתמיכה דרך מידע ובקשת מחיקת חשבון.';
 
 /**
  * Shown for a recognized "legacy/unsafe data" backend blocker — these
@@ -36,6 +36,9 @@ export const GENERIC_ACCOUNT_DELETION_ERROR_MESSAGE =
  */
 export const LEGACY_UNSAFE_DATA_ACCOUNT_DELETION_ERROR_MESSAGE =
   'לא ניתן להשלים כרגע את מחיקת החשבון באופן בטוח. יש לפנות לתמיכה כדי להשלים את המחיקה.';
+
+export const SHARED_OWNERSHIP_ACCOUNT_DELETION_ERROR_MESSAGE =
+  'החשבון הוא בעלים של מרחב משותף. כדי להגן על המידע של שאר החברים, נדרש טיפול בתמיכה לפני המחיקה. אפשר לפתוח מידע ובקשת מחיקה.';
 
 // ── Known-safe backend blocker patterns ─────────────────────────────────────
 //
@@ -68,6 +71,7 @@ const TRANSACTION_SIZE_BLOCKER_PATTERN =
  * is treated as unsafe as a whole.
  */
 const LEGACY_UNSAFE_DATA_BLOCKER_MARKERS = [
+  'לא ניתן להשלים סגירת מרחב בבטחה',
   'לא ניתן לסווג באופן חד-משמעי',
   'אימות מחיקת החשבון נכשל',
   // Community ownership transfer could not be determined safely (see
@@ -110,7 +114,8 @@ function isLegacyUnsafeDataBlockerLine(line: string): boolean {
  *   - Else, if EVERY line matches a known-safe blocker pattern (family
  *     ownership, community ownership, or the transaction-size/support
  *     limit — none of which can embed an id), the original message is
- *     preserved verbatim so its actionable meaning survives.
+ *     preserved, except the family blocker is directed to support because
+ *     self-service ownership transfer/member removal is unavailable.
  *   - Any other/unrecognized error shape (including non-`Error` throws,
  *     empty messages, or unrecognized text) falls back to the generic
  *     calm Hebrew message rather than risking a technical leak.
@@ -138,6 +143,11 @@ export function resolveAccountDeletionErrorMessage(error: unknown): string {
   }
 
   if (lines.every(isKnownSafeBlockerLine)) {
+    // The legacy backend text suggests transfer/removal, but safe family
+    // transfer is not implemented and authenticated-member removal is blocked.
+    if (lines.some((line) => FAMILY_OWNERSHIP_BLOCKER_PATTERN.test(line))) {
+      return SHARED_OWNERSHIP_ACCOUNT_DELETION_ERROR_MESSAGE;
+    }
     return lines.join('\n');
   }
 
@@ -158,7 +168,15 @@ export async function executeAccountDeletion(
   deleteMyAccount: () => Promise<unknown>
 ): Promise<AccountDeletionExecutionResult> {
   try {
-    await deleteMyAccount();
+    const result = await deleteMyAccount();
+    if (
+      typeof result !== 'object' ||
+      result === null ||
+      !('success' in result) ||
+      result.success !== true
+    ) {
+      return { ok: false, message: GENERIC_ACCOUNT_DELETION_ERROR_MESSAGE };
+    }
     return { ok: true };
   } catch (error) {
     return { ok: false, message: resolveAccountDeletionErrorMessage(error) };

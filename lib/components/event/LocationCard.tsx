@@ -1,4 +1,6 @@
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { useAction } from 'convex/react';
+import { randomUUID } from 'expo-crypto';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Keyboard,
@@ -9,38 +11,31 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { api } from '@/convex/_generated/api';
+import type { PlaceSuggestion } from '@/convex/googlePlaces';
+import type { LocationSource } from '@/lib/eventLocation';
 import { rtl } from '@/lib/rtl';
-import { buildGeoUri } from '@/lib/utils/geoUri';
+import { GooglePlacesAttribution } from './GooglePlacesAttribution';
 
 const PRIMARY = '#36a9e2';
 const TINT = '#e8f5fd';
-const PLACES_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY ?? '';
-const PLACES_AUTOCOMPLETE_URL =
-  'https://maps.googleapis.com/maps/api/place/autocomplete/json';
-const PLACES_DETAILS_URL =
-  'https://maps.googleapis.com/maps/api/place/details/json';
 const AUTOCOMPLETE_DEBOUNCE_MS = 250;
-const MAX_SUGGESTIONS = 5;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type LocMode = 'address' | 'link';
 
-export interface PlaceSuggestion {
-  description: string;
-  placeId: string;
-}
+export type { PlaceSuggestion } from '@/convex/googlePlaces';
 
 /** Values emitted on every change. Callers spread these into event state. */
 export interface LocationUpdate {
+  onlineUrlEdited?: boolean;
   location: string; // physical address → EventData.location
   onlineUrl: string; // meeting URL     → EventData.onlineUrl
-  /**
-   * geo:lat,lng URI — populated when user picks from autocomplete.
-   * Empty string (`''`) means the geo URI was explicitly cleared (user manually typed).
-   * Undefined means the field was not touched in this update.
-   */
+  /** Empty string clears legacy coordinates. */
   locationUrl?: string;
+  locationSource?: LocationSource | null;
+  googlePlaceId?: string | null;
 }
 
 /**
@@ -64,6 +59,9 @@ export interface LocationOverlayAnchor {
 }
 
 interface LocationCardProps {
+  locationUrl?: string;
+  locationSource?: LocationSource | null;
+  googlePlaceId?: string | null;
   /** Current physical address (EventData.location) */
   location?: string;
   /** Current meeting URL (EventData.onlineUrl) */
@@ -78,92 +76,77 @@ interface LocationCardProps {
   onOverlayUpdate?: (anchor: LocationOverlayAnchor | null) => void;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function parseSuggestions(payload: unknown): PlaceSuggestion[] {
-  if (!isRecord(payload) || !Array.isArray(payload.predictions)) return [];
-
-  const suggestions: PlaceSuggestion[] = [];
-  for (const prediction of payload.predictions) {
-    if (!isRecord(prediction)) continue;
-    const description = prediction.description;
-    const placeId = prediction.place_id;
-    if (typeof description !== 'string' || typeof placeId !== 'string') {
-      continue;
-    }
-    suggestions.push({ description, placeId });
-    if (suggestions.length === MAX_SUGGESTIONS) break;
-  }
-  return suggestions;
-}
-
-function parseCoordinates(
-  payload: unknown
-): { lat: number; lng: number } | null {
-  if (!isRecord(payload) || !isRecord(payload.result)) return null;
-  const { geometry } = payload.result;
-  if (!isRecord(geometry) || !isRecord(geometry.location)) return null;
-  const { lat, lng } = geometry.location;
-  if (
-    typeof lat !== 'number' ||
-    typeof lng !== 'number' ||
-    !Number.isFinite(lat) ||
-    !Number.isFinite(lng)
-  ) {
-    return null;
-  }
-  return { lat, lng };
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function LocationCard({
   location,
   onlineUrl,
+  locationUrl,
+  locationSource,
+  googlePlaceId,
   onChange,
   onOverlayUpdate,
 }: LocationCardProps): React.JSX.Element {
+  const autocomplete = useAction(api.googlePlaces.autocomplete);
+  const details = useAction(api.googlePlaces.details);
+  const sessionRef = useRef<string | null>(null);
+  const autocompleteRequestRef = useRef<AbortController | null>(null);
+  const [searchError, setSearchError] = useState(false);
   const hasAddress = !!location?.trim();
   const hasLink = !!onlineUrl?.trim();
 
   // Derive initial open/mode from saved values
   const [cardOpen, setCardOpen] = useState(hasAddress || hasLink);
   const [locMode, setLocMode] = useState<LocMode>(hasLink ? 'link' : 'address');
+  // Editing-session drafts only. Parent state always contains the active tab's
+  // save payload; switching does not destroy the other tab's draft.
+  const addressDraft = useRef<LocationUpdate>({
+    location: location ?? '',
+    onlineUrl: '',
+    locationUrl,
+    locationSource,
+    googlePlaceId,
+  });
+  const linkDraft = useRef(onlineUrl ?? '');
+  const linkEdited = useRef(false);
+  const emitAddress = useCallback(
+    (update: LocationUpdate) => {
+      addressDraft.current = update;
+      onChange(update);
+    },
+    [onChange]
+  );
   const [addressFocused, setAddressFocused] = useState(false);
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
   const addressInputRef = useRef<TextInput>(null);
   const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const detailsRequestRef = useRef<AbortController | null>(null);
-  const latestLocationRef = useRef(location ?? '');
-  latestLocationRef.current = location ?? '';
 
   useEffect(() => {
     const input = location?.trim() ?? '';
-    if (!addressFocused || input.length < 2 || !PLACES_KEY) {
+    if (!addressFocused || input.length < 2 || input.length > 200) {
       setSuggestions([]);
       return undefined;
     }
 
     const controller = new AbortController();
+    autocompleteRequestRef.current = controller;
+    sessionRef.current ??= randomUUID();
+    const sessionToken = sessionRef.current;
     const timer = setTimeout(() => {
       const loadSuggestions = async (): Promise<void> => {
+        if (controller.signal.aborted) return;
         try {
-          const url =
-            `${PLACES_AUTOCOMPLETE_URL}?input=${encodeURIComponent(input)}` +
-            `&key=${encodeURIComponent(PLACES_KEY)}&language=he`;
-          const response = await fetch(url, { signal: controller.signal });
-          if (!response.ok) {
-            setSuggestions([]);
-            return;
-          }
-          const payload: unknown = await response.json();
+          const result = await autocomplete({ input, sessionToken });
           if (!controller.signal.aborted) {
-            setSuggestions(parseSuggestions(payload));
+            setSuggestions(result.ok ? result.value : []);
+            setSearchError(!result.ok);
           }
         } catch {
-          if (!controller.signal.aborted) setSuggestions([]);
+          if (!controller.signal.aborted) {
+            setSuggestions([]);
+            setSearchError(true);
+          }
         }
       };
       void loadSuggestions();
@@ -173,7 +156,7 @@ export function LocationCard({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [addressFocused, location]);
+  }, [addressFocused, location, autocomplete]);
 
   useEffect(
     () => () => {
@@ -190,6 +173,8 @@ export function LocationCard({
       clearTimeout(blurTimerRef.current);
       blurTimerRef.current = null;
     }
+    autocompleteRequestRef.current?.abort();
+    sessionRef.current = null;
     setAddressFocused(false);
     setSuggestions([]);
     onOverlayUpdate?.(null);
@@ -205,24 +190,49 @@ export function LocationCard({
     detailsRequestRef.current?.abort();
     setCardOpen(false);
     setLocMode('address');
-    onChange({ location: '', onlineUrl: '' });
+    linkDraft.current = '';
+    linkEdited.current = false;
+    emitAddress({
+      location: '',
+      onlineUrl: '',
+      locationUrl: '',
+      locationSource: null,
+      googlePlaceId: null,
+    });
   };
 
   const switchMode = (mode: LocMode): void => {
     if (mode === locMode) return;
     closeSuggestions();
     detailsRequestRef.current?.abort();
+    setSearchError(false);
     setLocMode(mode);
-    onChange({ location: '', onlineUrl: '' });
+    onChange(
+      mode === 'address'
+        ? addressDraft.current
+        : {
+            location: '',
+            onlineUrl: linkDraft.current,
+            onlineUrlEdited: linkEdited.current,
+            locationUrl: '',
+            locationSource: null,
+            googlePlaceId: null,
+          }
+    );
   };
 
   const handleAddressChange = (text: string): void => {
-    latestLocationRef.current = text;
+    autocompleteRequestRef.current?.abort();
+    setSuggestions([]);
+    setSearchError(false);
+    if (!text.trim()) sessionRef.current = null;
     detailsRequestRef.current?.abort();
-    onChange({
+    emitAddress({
       location: text,
       onlineUrl: '',
-      locationUrl: '', // empty string = geo URI explicitly cleared by manual typing
+      locationUrl: '',
+      locationSource: text.trim() ? 'manual' : null,
+      googlePlaceId: null,
     });
   };
 
@@ -240,47 +250,35 @@ export function LocationCard({
 
   const handleSuggestionPress = useCallback(
     async (suggestion: PlaceSuggestion): Promise<void> => {
+      const sessionToken = sessionRef.current;
       closeSuggestions();
+      setSearchError(false);
       addressInputRef.current?.blur();
       Keyboard.dismiss();
 
-      latestLocationRef.current = suggestion.description;
-      onChange({
+      emitAddress({
         location: suggestion.description,
         onlineUrl: '',
-        // locationUrl intentionally omitted — do not clear it here.
-        // It is set below once coordinates arrive, or left as-is if the
-        // Place Details fetch fails. Manual text edits elsewhere in this
-        // file are still responsible for explicitly clearing locationUrl
-        // when the user types a new address by hand — verify that clearing
-        // logic still exists and still works after this change.
+        locationUrl: '',
+        locationSource: 'google',
+        googlePlaceId: suggestion.placeId,
       });
 
       detailsRequestRef.current?.abort();
-      if (!PLACES_KEY) return;
+      if (!sessionToken) return;
 
       const controller = new AbortController();
       detailsRequestRef.current = controller;
       try {
-        const url =
-          `${PLACES_DETAILS_URL}?placeid=${encodeURIComponent(suggestion.placeId)}` +
-          `&key=${encodeURIComponent(PLACES_KEY)}&language=he`;
-        const response = await fetch(url, { signal: controller.signal });
-        if (!response.ok) return;
-        const payload: unknown = await response.json();
-        const coordinates = parseCoordinates(payload);
-        if (
-          coordinates &&
-          !controller.signal.aborted &&
-          latestLocationRef.current === suggestion.description
-        ) {
-          onChange({
-            location: suggestion.description,
-            onlineUrl: '',
-            locationUrl: buildGeoUri(coordinates.lat, coordinates.lng),
-          });
-        }
+        const result = await details({
+          placeId: suggestion.placeId,
+          sessionToken,
+        });
+        // Complete the existing autocomplete session, but never persist Details
+        // coordinates or let its response rewrite the selected address.
+        if (!controller.signal.aborted && !result.ok) setSearchError(true);
       } catch {
+        if (!controller.signal.aborted) setSearchError(true);
         // Keep the selected description as a plain address if details fail.
       } finally {
         if (detailsRequestRef.current === controller) {
@@ -288,7 +286,7 @@ export function LocationCard({
         }
       }
     },
-    [closeSuggestions, onChange]
+    [closeSuggestions, emitAddress, details]
   );
 
   // ── Overlay: notify parent when anchor position / suggestions change ────────
@@ -314,7 +312,9 @@ export function LocationCard({
       return;
     }
     // measureInWindow gives absolute screen coordinates (accounts for scroll/layout)
+    let active = true;
     addressInputRef.current?.measureInWindow((x, y, w, h) => {
+      if (!active) return;
       onOverlayUpdate({
         inputX: x,
         inputY: y,
@@ -333,6 +333,9 @@ export function LocationCard({
         onDismiss: () => latestCloseSuggestions.current(),
       });
     });
+    return () => {
+      active = false;
+    };
   }, [
     addressFocused,
     suggestions,
@@ -350,12 +353,12 @@ export function LocationCard({
         onPress={handleOpen}
         accessible={true}
         accessibilityRole="button"
-        accessibilityLabel="הוסף מיקום"
+        accessibilityLabel="הוספת מיקום"
       >
         <View style={s.emptyIconCircle}>
           <Ionicons name="location-outline" size={18} color="#36a9e2" />
         </View>
-        <Text style={s.emptyText}>הוסף מיקום</Text>
+        <Text style={s.emptyText}>הוספת מיקום</Text>
       </Pressable>
     );
   }
@@ -371,7 +374,7 @@ export function LocationCard({
           onPress={handleClose}
           accessible={true}
           accessibilityRole="button"
-          accessibilityLabel="הסר מיקום"
+          accessibilityLabel="הסרת מיקום"
           style={s.closeBtn}
         >
           <MaterialIcons name="close" size={16} color="#94a3b8" />
@@ -402,7 +405,7 @@ export function LocationCard({
             onChangeText={handleAddressChange}
             onFocus={handleAddressFocus}
             onBlur={handleAddressBlur}
-            placeholder="חפשי כתובת..."
+            placeholder="חיפוש כתובת..."
             placeholderTextColor="#94a3b8"
             textAlign={rtl.inputTextAlign}
             clearButtonMode="while-editing"
@@ -410,6 +413,14 @@ export function LocationCard({
             accessibilityLabel="חיפוש כתובת"
           />
 
+          {searchError ? (
+            <Text
+              accessibilityLiveRegion="polite"
+              style={{ color: '#475569', textAlign: rtl.textAlign }}
+            >
+              חיפוש המיקום לא זמין כרגע. אפשר להזין כתובת ידנית.
+            </Text>
+          ) : null}
           {addressFocused && suggestions.length > 0 && !onOverlayUpdate ? (
             <InlineSuggestionList
               suggestions={suggestions}
@@ -431,7 +442,18 @@ export function LocationCard({
           <TextInput
             style={s.linkInput}
             value={onlineUrl ?? ''}
-            onChangeText={(text) => onChange({ location: '', onlineUrl: text })}
+            onChangeText={(text) => {
+              linkDraft.current = text;
+              linkEdited.current = true;
+              onChange({
+                location: '',
+                onlineUrl: text,
+                onlineUrlEdited: true,
+                locationUrl: '',
+                locationSource: null,
+                googlePlaceId: null,
+              });
+            }}
             placeholder="https://..."
             placeholderTextColor="#94a3b8"
             textAlign="right"
@@ -459,29 +481,31 @@ function InlineSuggestionList({
   onSelect: (s: PlaceSuggestion) => void;
 }): React.JSX.Element {
   return (
-    <ScrollView
-      style={s.placesList}
-      keyboardShouldPersistTaps="always"
-      nestedScrollEnabled={true}
-      showsVerticalScrollIndicator={true}
-    >
-      {suggestions.map((suggestion, index) => (
-        <Pressable
-          key={suggestion.placeId}
-          style={[
-            s.placesRow,
-            index < suggestions.length - 1 && s.placesRowWithSeparator,
-          ]}
-          onPressIn={onPressIn}
-          onPress={() => onSelect(suggestion)}
-          accessible={true}
-          accessibilityRole="button"
-          accessibilityLabel={`בחרי כתובת: ${suggestion.description}`}
-        >
-          <Text style={s.placesDescription}>{suggestion.description}</Text>
-        </Pressable>
-      ))}
-    </ScrollView>
+    <View style={s.placesList}>
+      <ScrollView
+        keyboardShouldPersistTaps="always"
+        nestedScrollEnabled={true}
+        showsVerticalScrollIndicator={true}
+      >
+        {suggestions.map((suggestion, index) => (
+          <Pressable
+            key={suggestion.placeId}
+            style={[
+              s.placesRow,
+              index < suggestions.length - 1 && s.placesRowWithSeparator,
+            ]}
+            onPressIn={onPressIn}
+            onPress={() => onSelect(suggestion)}
+            accessible={true}
+            accessibilityRole="button"
+            accessibilityLabel={`בחירת כתובת: ${suggestion.description}`}
+          >
+            <Text style={s.placesDescription}>{suggestion.description}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      <GooglePlacesAttribution />
+    </View>
   );
 }
 

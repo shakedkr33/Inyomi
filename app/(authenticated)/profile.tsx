@@ -427,7 +427,13 @@ export default function ProfileScreen() {
 
     if (!result.ok) {
       setIsDeletingAccount(false);
-      Alert.alert('לא ניתן למחוק את החשבון', result.message);
+      Alert.alert('לא ניתן לאשר את מחיקת החשבון', result.message, [
+        { text: 'סגירה', style: 'cancel' },
+        {
+          text: 'מידע ובקשת מחיקה',
+          onPress: () => void openLegalUrl(ACCOUNT_DELETION_URL),
+        },
+      ]);
       return;
     }
 
@@ -514,7 +520,7 @@ export default function ProfileScreen() {
     }
     Alert.alert(
       'מחיקת חשבון',
-      'מחיקת החשבון תמחק לצמיתות את החשבון ואת המידע האישי המשויך אליו. לא ניתן לבטל את הפעולה לאחר השלמתה.\n\nאם קיימות קהילות בבעלות החשבון ובהן חברים נוספים, הבעלות תועבר אוטומטית לאחד מחברי הקהילה בהתאם להרשאות ולוותק.',
+      'החשבון והנתונים האישיים שבבעלותו הבלעדית יימחקו. תוכן משותף, עותקים שנשמרו אצל אחרים ופרטי קשר שהם שמרו עשויים להישאר. ניקוי קבצים ומידע אצל ספקים חיצוניים עשוי לדרוש טיפול נוסף. לא ניתן לבטל את הפעולה לאחר השלמתה.\n\nאם קיימות קהילות בבעלות החשבון ובהן חברים נוספים, הבעלות תועבר אוטומטית לאחד מחברי הקהילה בהתאם להרשאות ולוותק.',
       [
         { text: 'ביטול', style: 'cancel' },
         { text: 'המשך', onPress: showDeleteAccountSubscriptionWarning },

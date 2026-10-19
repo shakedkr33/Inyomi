@@ -1,6 +1,10 @@
 # Focused Production P0 follow-up — 2026-10-13
 
 Status: local implementation only; **external TestFlight release remains blocked**.
+Follow-up (2026-10-14): [deletion and retention](../account-deletion-retention.md)
+records expiry enforcement, deleted-task access, storage failure propagation and
+corrected UX. The thirty-day and swallowed-storage-error findings below describe
+the earlier baseline; permanent purge/account-file cleanup remain unimplemented.
 No cloud writes, deployment, migration, real SMS/push, build/submission, user-record
 inspection/export, commit or push. Base revision: develop / 867e6f1. The audit's
 remote observations describe the read-only baseline, not a new deployment.
@@ -116,8 +120,10 @@ Required follow-up design before external release:
 
 ## Blocked account deletion and support procedure
 
-Current rules remain unchanged: an owned family/personal space with another real
-access user blocks deletion; community ownership already transfers to the existing
+Current local rules transfer an owned family/personal space to the earliest
+eligible active account with a strict joined contact-profile and same-space access
+membership. Manual/unlinked/invalid profiles are excluded; ambiguous active
+family linkage blocks before writes. Community ownership transfers to its existing
 approved deterministic successor, but inconsistent membership blocks. Ambiguous
 legacy ownerScope/member remaps and the 4,000 planned-write guard can also block.
 Source comments/state do not prove any particular Production account is blocked.
@@ -125,11 +131,11 @@ Source comments/state do not prove any particular Production account is blocked.
 The existing /delete-account support page is reachable. Before release, establish
 an operated request process: verify the requester, record/request a minimal
 scoped deletion plan under separate authorization, explain genuinely shared data,
-resolve family ownership only using an approved rule, execute reviewed bounded
+resolve family ownership only using the implemented approved rule, execute reviewed bounded
 cleanup, and confirm completion without exposing other users. A support link
 alone does not supply this procedure or guarantee App Review compliance. Do not
-remove other members or change ownership as a shortcut. Broad deletion changes
-were deliberately not implemented here.
+remove other members or manually change ownership as a shortcut. Hosted/device
+verification of the local automatic transfer remains outstanding.
 
 ## Thirty-day trash lifecycle
 

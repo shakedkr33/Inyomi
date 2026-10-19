@@ -43,9 +43,11 @@ import { useBirthdaySheets } from '@/lib/components/birthday/BirthdaySheetsProvi
 import { NotificationsDrawer } from '@/lib/components/notifications/NotificationsDrawer';
 import { SubtaskImagePreviewModal } from '@/lib/components/task/SubtaskImagePreviewModal';
 import { SubtaskAttachmentPreview } from '@/lib/components/task/SubtasksSection';
+import { hasPhysicalLocation } from '@/lib/eventLocation';
 import { filterHomeVisibleEventTasks } from '@/lib/homeEventTaskVisibility';
 import { isEventEligibleForHomeImportantItemsPreview } from '@/lib/homeImportantItemsPreview';
 import { useStartupDestinationReady } from '@/lib/hooks/useStartupDestinationReady';
+import { openMeetingLink } from '@/lib/openMeetingLink';
 import {
   type PersonalHomeParticipants,
   personalHomeCircles,
@@ -135,6 +137,7 @@ type Item = {
   location: string;
   /** geo:lat,lng URI — present when the event was saved with autocomplete coordinates */
   locationUrl?: string;
+  googlePlaceId?: string;
   type: 'event' | 'task';
   icon: string;
   iconBg: string;
@@ -636,6 +639,9 @@ export default function HomeScreen() {
   const [navPickerLocation, setNavPickerLocation] = useState<string | null>(
     null
   );
+  const [navPickerPlaceId, setNavPickerPlaceId] = useState<
+    string | undefined
+  >();
   const [navPickerLocationUrl, setNavPickerLocationUrl] = useState<
     string | null
   >(null);
@@ -1239,6 +1245,7 @@ export default function HomeScreen() {
         title: ev.title,
         location: ev.location ?? '',
         locationUrl: (ev as { locationUrl?: string }).locationUrl,
+        googlePlaceId: (ev as { googlePlaceId?: string }).googlePlaceId,
         remoteUrl: (ev as { onlineUrl?: string }).onlineUrl,
         type: 'event' as const,
         icon: 'event',
@@ -1481,6 +1488,7 @@ export default function HomeScreen() {
           title: ev.title,
           location: ev.location ?? '',
           locationUrl: (ev as { locationUrl?: string }).locationUrl,
+          googlePlaceId: (ev as { googlePlaceId?: string }).googlePlaceId,
           remoteUrl: (ev as { onlineUrl?: string }).onlineUrl,
           type: 'event' as const,
           icon: 'event',
@@ -1562,6 +1570,7 @@ export default function HomeScreen() {
           title: ev.title,
           location: ev.location ?? '',
           locationUrl: (ev as { locationUrl?: string }).locationUrl,
+          googlePlaceId: (ev as { googlePlaceId?: string }).googlePlaceId,
           type: 'event' as const,
           icon: 'link',
           iconBg: isCancelled || isDeleted ? '#f3f4f6' : '#eff8ff',
@@ -2104,9 +2113,7 @@ export default function HomeScreen() {
   };
 
   const handleOpenRemoteUrl = (url: string): void => {
-    Linking.openURL(url).catch(() =>
-      Alert.alert('שגיאה', 'לא ניתן לפתוח את הקישור.')
-    );
+    void openMeetingLink(url);
   };
 
   useEffect(() => {
@@ -2116,9 +2123,11 @@ export default function HomeScreen() {
 
   const handleOpenNavPicker = (
     location: string,
-    locationUrl?: string
+    locationUrl?: string,
+    googlePlaceId?: string
   ): void => {
-    if (!parseGeoUri(locationUrl)) return;
+    if (!hasPhysicalLocation(location)) return;
+    setNavPickerPlaceId(googlePlaceId);
     setNavPickerLocation(location);
     setNavPickerLocationUrl(locationUrl ?? null);
   };
@@ -2683,14 +2692,18 @@ export default function HomeScreen() {
                           {nextEvent.location}
                         </Text>
                       </View>
-                      {parseGeoUri(nextEvent.locationUrl) ? (
+                      {hasPhysicalLocation(
+                        nextEvent.location,
+                        nextEvent.remoteUrl
+                      ) ? (
                         <Pressable
                           style={stylesRtl.navBtn}
                           onPress={(e) => {
                             e.stopPropagation?.();
                             handleOpenNavPicker(
                               nextEvent.location,
-                              nextEvent.locationUrl
+                              nextEvent.locationUrl,
+                              nextEvent.googlePlaceId
                             );
                           }}
                           accessible={true}
@@ -3274,13 +3287,18 @@ export default function HomeScreen() {
                               </View>
                             ) : null}
                             {/* Nav button — warm brown, same as active-day */}
-                            {item.location && parseGeoUri(item.locationUrl) ? (
+                            {item.location &&
+                            hasPhysicalLocation(
+                              item.location,
+                              item.remoteUrl
+                            ) ? (
                               <Pressable
                                 onPress={(e) => {
                                   e.stopPropagation?.();
                                   handleOpenNavPicker(
                                     item.location,
-                                    item.locationUrl
+                                    item.locationUrl,
+                                    item.googlePlaceId
                                   );
                                 }}
                                 style={{
@@ -3856,22 +3874,20 @@ export default function HomeScreen() {
                                 {/* Navigate / Join button */}
                                 {item.remoteUrl ||
                                 (item.location &&
-                                  parseGeoUri(item.locationUrl)) ? (
+                                  hasPhysicalLocation(
+                                    item.location,
+                                    item.remoteUrl
+                                  )) ? (
                                   <Pressable
                                     onPress={(e) => {
                                       e.stopPropagation?.();
                                       if (item.remoteUrl) {
-                                        Linking.openURL(item.remoteUrl).catch(
-                                          () =>
-                                            Alert.alert(
-                                              'שגיאה',
-                                              'לא ניתן לפתוח את הקישור.'
-                                            )
-                                        );
+                                        void openMeetingLink(item.remoteUrl);
                                       } else {
                                         handleOpenNavPicker(
                                           item.location,
-                                          item.locationUrl
+                                          item.locationUrl,
+                                          item.googlePlaceId
                                         );
                                       }
                                     }}
@@ -4443,6 +4459,7 @@ export default function HomeScreen() {
 
       <NavigationPickerModal
         location={navPickerLocation}
+        googlePlaceId={navPickerPlaceId}
         latitude={parseGeoUri(navPickerLocationUrl)?.lat}
         longitude={parseGeoUri(navPickerLocationUrl)?.lng}
         onClose={() => {

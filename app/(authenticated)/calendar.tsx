@@ -56,6 +56,7 @@ import { useEffectiveAccess } from '@/hooks/useEffectiveAccess';
 import { getAvatarInitials } from '@/lib/avatarInitials';
 import { useBirthdaySheets } from '@/lib/components/birthday/BirthdaySheetsProvider';
 import { NotificationsDrawer } from '@/lib/components/notifications/NotificationsDrawer';
+import { hasPhysicalLocation } from '@/lib/eventLocation';
 import { useHolidayOverlay } from '@/lib/hooks/useHolidayOverlay';
 import { APP_IS_RTL, getTextAlign, needsExplicitRTL, position, rtl, spacing } from '@/lib/rtl';
 import { ProfileAvatarCircle } from '@/components/ProfileAvatarCircle';
@@ -197,6 +198,8 @@ interface CalendarEvent {
   location?: string;
   /** geo:lat,lng URI — present when the event was saved with autocomplete coordinates */
   locationUrl?: string;
+  googlePlaceId?: string;
+  onlineUrl?: string;
   icon?: string;
   cancelled?: boolean;
   assigneeColors?: string[];
@@ -337,6 +340,8 @@ type TimelineEventRow = MockTimelineEvent & {
   communityName?: string;
   endTime?: string;
   locationUrl?: string;
+  googlePlaceId?: string;
+  onlineUrl?: string;
   myAssignedTasks?: AssignedEventTask[];
   importantItems?: ImportantItem[];
   /** True for rows synthesised from the personal tasks table */
@@ -2060,6 +2065,9 @@ export default function CalendarScreen(): React.JSX.Element {
         time: event.time,
         title: event.title,
         location: event.location,
+        locationUrl: event.locationUrl,
+        googlePlaceId: event.googlePlaceId,
+        onlineUrl: event.onlineUrl,
         type: 'event',
         iconColor: event.categoryColor,
         completed: false,
@@ -2086,15 +2094,20 @@ export default function CalendarScreen(): React.JSX.Element {
   const [navPickerLocation, setNavPickerLocation] = useState<string | null>(
     null
   );
+  const [navPickerPlaceId, setNavPickerPlaceId] = useState<
+    string | undefined
+  >();
   const [navPickerLocationUrl, setNavPickerLocationUrl] = useState<
     string | null
   >(null);
 
   const handleNavigateToLocation = (
     location: string,
-    locationUrl?: string
+    locationUrl?: string,
+    googlePlaceId?: string
   ): void => {
-    if (!parseGeoUri(locationUrl)) return;
+    if (!hasPhysicalLocation(location)) return;
+    setNavPickerPlaceId(googlePlaceId);
     setNavPickerLocation(location);
     setNavPickerLocationUrl(locationUrl ?? null);
   };
@@ -2676,6 +2689,9 @@ export default function CalendarScreen(): React.JSX.Element {
       const linkedRow = {
         id: ev._id,
         listKey: `${ev._id}-linked`,
+        location: ev.location,
+        locationUrl: ev.locationUrl,
+        googlePlaceId: ev.googlePlaceId,
         title: ev.title,
         time: ev.allDay
           ? ''
@@ -3848,6 +3864,8 @@ export default function CalendarScreen(): React.JSX.Element {
             : undefined,
           location: event.location ?? '',
           locationUrl: (event as { locationUrl?: string }).locationUrl,
+          googlePlaceId: (event as { googlePlaceId?: string }).googlePlaceId,
+          onlineUrl: (event as { onlineUrl?: string }).onlineUrl,
           icon: 'event',
           cancelled: event.status === 'cancelled',
           sourceType: 'event',
@@ -3912,6 +3930,8 @@ export default function CalendarScreen(): React.JSX.Element {
             : undefined,
           location: event.location ?? '',
           locationUrl: (event as { locationUrl?: string }).locationUrl,
+          googlePlaceId: (event as { googlePlaceId?: string }).googlePlaceId,
+          onlineUrl: (event as { onlineUrl?: string }).onlineUrl,
           icon: 'event',
           cancelled: false,
           sourceType: 'event',
@@ -4076,6 +4096,9 @@ export default function CalendarScreen(): React.JSX.Element {
           ? `${String(endD3.getHours()).padStart(2, '0')}:${String(endD3.getMinutes()).padStart(2, '0')}`
           : undefined,
         location: event.location ?? '',
+        locationUrl: event.locationUrl,
+        googlePlaceId: event.googlePlaceId,
+        onlineUrl: event.onlineUrl,
         icon: 'event',
         cancelled: event.status === 'cancelled',
         sourceType: 'event',
@@ -4590,6 +4613,7 @@ export default function CalendarScreen(): React.JSX.Element {
         />
         <NavigationPickerModal
           location={navPickerLocation}
+          googlePlaceId={navPickerPlaceId}
           latitude={parseGeoUri(navPickerLocationUrl)?.lat}
           longitude={parseGeoUri(navPickerLocationUrl)?.lng}
           onClose={() => {
@@ -6045,7 +6069,11 @@ function TimelineView({
   /** Lifted to parent so the Convex subscription stays alive across tab switches. */
   myImportantItemChecks: Record<string, Record<string, boolean>>;
   onEventPress: (event: CalendarEvent) => void;
-  onNavigate: (location: string, locationUrl?: string) => void;
+  onNavigate: (
+    location: string,
+    locationUrl?: string,
+    googlePlaceId?: string
+  ) => void;
   onAddPress: (dateStr: string) => void;
   onOpenTaskSheet: (id: string) => void;
   /** FIX 9 empty-state follow-up: active Family Profile filter, if any. */
@@ -6372,14 +6400,18 @@ function TimelineView({
                                       {event.location}
                                     </Text>
                                   </View>
-                                  {parseGeoUri(event.locationUrl) ? (
+                                  {hasPhysicalLocation(
+                                    event.location,
+                                    event.onlineUrl
+                                  ) ? (
                                     <Pressable
                                       style={styles.eventNavBtn}
                                       onPress={(e) => {
                                         e.stopPropagation?.();
                                         onNavigate(
                                           event.location as string,
-                                          event.locationUrl
+                                          event.locationUrl,
+                                          event.googlePlaceId
                                         );
                                       }}
                                       accessible={true}

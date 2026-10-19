@@ -38,13 +38,11 @@
 //
 // SCOPE (see AGENTS.md / the approved account-deletion spec for full
 // rationale — summarized here):
-//   - Family-space ownership: if the deleting user owns a family/personal
-//     space that still has another real joined user (a surviving
-//     kind:'access' row for a different user), the ENTIRE deletion is
-//     blocked. No automatic ownership transfer. A sole-owned space is
-//     deleted along with all of its space-scoped content (events,
-//     eventTasks, tasks, birthdays, members — manual/pet entity profiles
-//     included).
+//   - Family-space ownership: an eligible successor is an existing active
+//     account with both a strict joined contact-profile link and a same-space
+//     access membership. Ownership transfers atomically to the earliest
+//     eligible membership. Manual, unlinked and invalid profiles never
+//     inherit; ambiguous active legacy linkage fails closed.
 //   - Community ownership (UPDATED — automatic successor transfer, see
 //     lib/accountDeletion.ts `planCommunityOwnershipTransfer` for the one
 //     implementation of this rule): owning a community with another
@@ -100,6 +98,7 @@ import {
   type CommunitySuccessorRole,
   estimateAccountDeletionWriteCount,
   evaluateAccountDeletionTransactionSize,
+  type FamilySuccessorCandidate,
   isAccountDeletionSafeToExecute,
   isTaskStrandedInDeletingUsersTrash,
   planCommunityMemberProfileRemap,
@@ -158,6 +157,7 @@ interface FamilyContactBlobEntry {
 export interface AccountDeletionSummary {
   userId: Id<'users'>;
   deletedSpaceIds: Id<'spaces'>[];
+  transferredSpaceIds: Id<'spaces'>[];
   deletedCommunityIds: Id<'communities'>[];
   transferredCommunityIds: Id<'communities'>[];
   deletedEventCount: number;
@@ -246,6 +246,8 @@ export async function buildAccountDeletionPlan(
     spaceId: Id<'spaces'>;
     spaceName: string;
     otherAccessUserIds: Id<'users'>[];
+    eligibleSuccessors: FamilySuccessorCandidate[];
+    hasAmbiguousActiveMembership: boolean;
   }[] = [];
   for (const space of ownedSpaces) {
     const spaceMembers = await ctx.db
@@ -253,18 +255,57 @@ export async function buildAccountDeletionPlan(
       .withIndex('by_space', (q) => q.eq('spaceId', space._id))
       .collect();
     ownedSpaceMembersBySpace.set(space._id, spaceMembers);
-    const otherAccessUserIds = spaceMembers
-      .filter(
-        (m) =>
-          resolveKind(m) === 'access' &&
-          m.userId !== undefined &&
-          m.userId !== userId
-      )
-      .map((m) => m.userId as Id<'users'>);
+    const otherAccessRows = spaceMembers.filter(
+      (m) =>
+        resolveKind(m) === 'access' &&
+        m.userId !== undefined &&
+        m.userId !== userId
+    );
+    const otherAccessUserIds = [
+      ...new Set(otherAccessRows.map((m) => m.userId as Id<'users'>)),
+    ];
+    const eligibleSuccessors: FamilySuccessorCandidate[] = [];
+    let hasAmbiguousActiveMembership = false;
+
+    for (const otherUserId of otherAccessUserIds) {
+      const accessRows = otherAccessRows.filter(
+        (row) => row.userId === otherUserId
+      );
+      const linkedProfiles = spaceMembers.filter(
+        (row) =>
+          resolveKind(row) === 'entity' &&
+          row.memberType !== 'pet' &&
+          row.userId === otherUserId &&
+          row.matchedUserId === otherUserId &&
+          row.inviteStatus === 'joined'
+      );
+      const linkedUser = await ctx.db.get(otherUserId);
+
+      // A missing/disabled account is invalid and simply ineligible. An
+      // existing active account that still has access but lacks a unique,
+      // strict profile/access linkage is ambiguous legacy data: it must not
+      // inherit, and closing the space would be unsafe if nobody else can.
+      if (!linkedUser || linkedUser.isActive !== true) continue;
+      if (accessRows.length !== 1 || linkedProfiles.length !== 1) {
+        hasAmbiguousActiveMembership = true;
+        continue;
+      }
+
+      const accessRow = accessRows[0];
+      eligibleSuccessors.push({
+        accessMembershipId: accessRow._id,
+        linkedProfileId: linkedProfiles[0]._id,
+        userId: otherUserId,
+        joinedAt: accessRow.joinedAt,
+        creationTime: accessRow._creationTime,
+      });
+    }
     ownedSpaceOwnershipInfos.push({
       spaceId: space._id,
       spaceName: space.name,
       otherAccessUserIds,
+      eligibleSuccessors,
+      hasAmbiguousActiveMembership,
     });
 
     const entitiesMatchedToOthers = spaceMembers.filter(
@@ -283,6 +324,29 @@ export async function buildAccountDeletionPlan(
   blockers.push(...spacePlan.blockers);
   const deletableSpaceIds = new Set(
     spacePlan.deletableSpaceIds as Id<'spaces'>[]
+  );
+  const familyTransferEntries = spacePlan.transfers.map((transfer) => {
+    const space = ownedSpaces.find((row) => row._id === transfer.spaceId);
+    if (!space)
+      throw new Error('Owned family space disappeared while planning');
+    const ownerMembershipIds = (ownedSpaceMembersBySpace.get(space._id) ?? [])
+      .filter((row) => resolveKind(row) === 'access' && row.userId === userId)
+      .map((row) => row._id);
+    return {
+      spaceId: space._id,
+      spaceName: space.name,
+      successor: {
+        ...transfer.successor,
+        accessMembershipId: transfer.successor
+          .accessMembershipId as Id<'members'>,
+        linkedProfileId: transfer.successor.linkedProfileId as Id<'members'>,
+        userId: transfer.successor.userId as Id<'users'>,
+      },
+      ownerMembershipIds,
+    };
+  });
+  const transferredSpaceIds = new Set(
+    familyTransferEntries.map((entry) => entry.spaceId)
   );
 
   // ── 2. Community ownership — automatic successor transfer (§2, updated
@@ -436,6 +500,7 @@ export async function buildAccountDeletionPlan(
     if (event.communityId && hardDeletableCommunityIds.has(event.communityId))
       continue;
     if (event.spaceId && deletableSpaceIds.has(event.spaceId)) continue;
+    if (event.spaceId && transferredSpaceIds.has(event.spaceId)) continue;
     const scope = resolveEventScope(event);
     const disposition = planOwnedContentDisposition(scope);
     if (disposition.blocked) {
@@ -460,6 +525,7 @@ export async function buildAccountDeletionPlan(
     if (task.communityId && hardDeletableCommunityIds.has(task.communityId))
       continue;
     if (task.spaceId && deletableSpaceIds.has(task.spaceId)) continue;
+    if (task.spaceId && transferredSpaceIds.has(task.spaceId)) continue;
     const scope = resolveTaskScope(task);
     const disposition = planOwnedContentDisposition(scope);
     if (disposition.blocked) {
@@ -553,6 +619,28 @@ export async function buildAccountDeletionPlan(
       .withIndex('by_space', (q) => q.eq('spaceId', spaceId))
       .collect();
     ownedSpaceBirthdaysBySpace.set(spaceId, birthdays);
+
+    // A sole remaining access member is not proof of exclusive data ownership:
+    // former members may still own records in this space. Until a safe relocation
+    // lifecycle exists, block the whole transaction rather than cascade them.
+    if (
+      events.some(
+        (event) =>
+          event.createdBy !== userId ||
+          (event.sharedWithUserIds ?? []).some((id) => id !== userId)
+      ) ||
+      tasks.some(
+        (task) =>
+          task.createdBy !== userId ||
+          (task.assignedTo !== undefined && task.assignedTo !== userId) ||
+          (task.assignedToUserIds ?? []).some((id) => id !== userId)
+      ) ||
+      birthdays.some((birthday) => birthday.createdBy !== userId)
+    ) {
+      blockers.push(
+        'לא ניתן להשלים סגירת מרחב בבטחה: קיימים בו נתונים שנוצרו בחשבון אחר או משותפים עם חשבון אחר. יש לפנות לתמיכה כדי לשמור על הנתונים לפני מחיקת החשבון.'
+      );
+    }
   }
 
   const communityEventsById = new Map<Id<'communities'>, Doc<'events'>[]>();
@@ -661,8 +749,14 @@ export async function buildAccountDeletionPlan(
       .collect()
   ).filter((row) => !deletableSpaceIds.has(row.spaceId));
 
+  const transferredOwnerAccessRows = myMemberRows.filter(
+    (m) => resolveKind(m) === 'access' && transferredSpaceIds.has(m.spaceId)
+  );
   const externalAccessRows = myMemberRows.filter(
-    (m) => resolveKind(m) === 'access' && !deletableSpaceIds.has(m.spaceId)
+    (m) =>
+      resolveKind(m) === 'access' &&
+      !deletableSpaceIds.has(m.spaceId) &&
+      !transferredSpaceIds.has(m.spaceId)
   );
   const externalAccessSpaceIdSet = new Set(
     externalAccessRows.map((r) => r.spaceId)
@@ -703,9 +797,34 @@ export async function buildAccountDeletionPlan(
       spaceId: r.spaceId,
     }))
   );
+  // A space owner commonly has only a synthetic profile backed by their
+  // access row. If an actual strict linked entity exists, it is the safe
+  // survivor for references to that access-row id. Otherwise we permit the
+  // access row to be removed only when the bounded reference discovery below
+  // proves that no retained event/task/community profile points to it.
+  for (const source of transferredOwnerAccessRows) {
+    const candidates = externalEntityCandidates.filter(
+      (target) =>
+        target.spaceId === source.spaceId &&
+        resolveKind(target) === 'entity' &&
+        target.userId === userId &&
+        target.matchedUserId === userId &&
+        target.inviteStatus === 'joined'
+    );
+    if (candidates.length === 1) {
+      memberIdRemapPlan.remap.set(source._id, candidates[0]._id);
+    }
+  }
   blockers.push(...memberIdRemapPlan.blockers);
   const deletedAccessMemberIds = new Set(
-    externalAccessRows.map((r) => r._id as string)
+    [...externalAccessRows, ...transferredOwnerAccessRows].map(
+      (r) => r._id as string
+    )
+  );
+  const unmappedTransferredOwnerMemberIds = new Set(
+    transferredOwnerAccessRows
+      .map((row) => row._id as string)
+      .filter((id) => !memberIdRemapPlan.remap.has(id))
   );
 
   // Preserved (non-community) events anywhere may reference the deleting
@@ -722,8 +841,31 @@ export async function buildAccountDeletionPlan(
     .withIndex('by_community_date', (q) => q.eq('communityId', undefined))
     .collect();
   const eventsNeedingResidualReferenceCleanup: Doc<'events'>[] = [];
+  const closingSpaceMemberIds = new Set<string>(
+    [...deletableSpaceIds].flatMap((spaceId) =>
+      (ownedSpaceMembersBySpace.get(spaceId) ?? []).map((member) => member._id)
+    )
+  );
   for (const event of personalEventCandidates) {
     if (eventsToDeleteIds.has(event._id)) continue; // deleted via cascade/personal-delete below
+    if (
+      (event.sharedWithFamilyMemberIds ?? []).some((id) =>
+        closingSpaceMemberIds.has(id)
+      )
+    ) {
+      blockers.push(
+        'לא ניתן להשלים סגירת מרחב בבטחה: אירוע שנשמר מחוץ למרחב מפנה לפרופיל משפחתי שיימחק. יש לפנות לתמיכה.'
+      );
+    }
+    if (
+      (event.sharedWithFamilyMemberIds ?? []).some((id) =>
+        unmappedTransferredOwnerMemberIds.has(id)
+      )
+    ) {
+      blockers.push(
+        'לא ניתן להשלים את העברת הבעלות בבטחה: אירוע שיישאר מפנה לפרופיל הבעלים שיימחק. יש לפנות לתמיכה.'
+      );
+    }
     const hasUserShare = (event.sharedWithUserIds ?? []).includes(userId);
     const hasMemberRef = (event.sharedWithFamilyMemberIds ?? []).some((id) =>
       deletedAccessMemberIds.has(id)
@@ -742,6 +884,28 @@ export async function buildAccountDeletionPlan(
   const tasksNeedingMemberIdRemap: Doc<'tasks'>[] = [];
   for (const [taskId, task] of taskById) {
     if (tasksToDeleteIds.has(taskId)) continue;
+    if (
+      (task.assignedToMemberId !== undefined &&
+        closingSpaceMemberIds.has(task.assignedToMemberId)) ||
+      (task.assignedToMemberIds ?? []).some((id) =>
+        closingSpaceMemberIds.has(id)
+      )
+    ) {
+      blockers.push(
+        'לא ניתן להשלים סגירת מרחב בבטחה: משימה שנשמרת מפנה לפרופיל משפחתי שיימחק. יש לפנות לתמיכה.'
+      );
+    }
+    if (
+      (task.assignedToMemberId !== undefined &&
+        unmappedTransferredOwnerMemberIds.has(task.assignedToMemberId)) ||
+      (task.assignedToMemberIds ?? []).some((id) =>
+        unmappedTransferredOwnerMemberIds.has(id)
+      )
+    ) {
+      blockers.push(
+        'לא ניתן להשלים את העברת הבעלות בבטחה: משימה שתישאר מפנה לפרופיל הבעלים שיימחק. יש לפנות לתמיכה.'
+      );
+    }
     const singularHit =
       task.assignedToMemberId !== undefined &&
       deletedAccessMemberIds.has(task.assignedToMemberId);
@@ -759,7 +923,11 @@ export async function buildAccountDeletionPlan(
   // kind:'access' row in that exact space. Bounded to those specific
   // spaces/users only — never a full table scan.
   const otherUsersInAffectedSpaces = new Set<Id<'users'>>();
-  for (const spaceId of externalAccessSpaceIdSet) {
+  const memberReferenceAffectedSpaceIds = new Set([
+    ...externalAccessSpaceIdSet,
+    ...transferredSpaceIds,
+  ]);
+  for (const spaceId of memberReferenceAffectedSpaceIds) {
     const spaceMembers = await ctx.db
       .query('members')
       .withIndex('by_space', (q) => q.eq('spaceId', spaceId))
@@ -786,6 +954,15 @@ export async function buildAccountDeletionPlan(
           deletedAccessMemberIds.has(id)
         )
       ) {
+        if (
+          (row.associatedProfileIds ?? []).some((id) =>
+            unmappedTransferredOwnerMemberIds.has(id)
+          )
+        ) {
+          blockers.push(
+            'לא ניתן להשלים את העברת הבעלות בבטחה: חברות בקהילה שתישאר מפנה לפרופיל הבעלים שיימחק. יש לפנות לתמיכה.'
+          );
+        }
         communityMembershipsNeedingProfileRemap.push(row);
       }
     }
@@ -946,6 +1123,12 @@ export async function buildAccountDeletionPlan(
   // ══════════════════════════════════════════════════════════════════════
   const plannedCounts: Record<string, number> = {
     ownedSpaces: deletableSpaceIds.size,
+    familyOwnershipTransfers: familyTransferEntries.length,
+    familyMembershipRoleUpdates: familyTransferEntries.length,
+    familyOwnerMembershipRemovals: familyTransferEntries.reduce(
+      (sum, entry) => sum + entry.ownerMembershipIds.length,
+      0
+    ),
     ownedCommunities: hardDeletableCommunityIds.size,
     personalEvents: personalEventsToDelete.length,
     personalTasks: personalTasksToDelete.length,
@@ -1025,7 +1208,10 @@ export async function buildAccountDeletionPlan(
     ownedSpaces,
     ownedSpaceMembersBySpace,
     ownedSpaceOwnershipInfos,
+    spacePlan,
     deletableSpaceIds,
+    familyTransferEntries,
+    transferredSpaceIds,
     ownedCommunities,
     ownedCommunityMembersByCommunity,
     ownedCommunityPlanEntries,
@@ -1121,6 +1307,10 @@ function tallyCreatedEventDisposition(
     )
       continue;
     if (event.spaceId && plan.deletableSpaceIds.has(event.spaceId)) continue;
+    if (event.spaceId && plan.transferredSpaceIds.has(event.spaceId)) {
+      tally.family += 1;
+      continue;
+    }
     if (event.ownerScope === undefined) tally.legacy += 1;
     const scope = resolveEventScope(event);
     const disposition = planOwnedContentDisposition(scope);
@@ -1153,6 +1343,10 @@ function tallyCreatedTaskDisposition(
     )
       continue;
     if (task.spaceId && plan.deletableSpaceIds.has(task.spaceId)) continue;
+    if (task.spaceId && plan.transferredSpaceIds.has(task.spaceId)) {
+      tally.family += 1;
+      continue;
+    }
     if (task.ownerScope === undefined) tally.legacy += 1;
     const scope = resolveTaskScope(task);
     const disposition = planOwnedContentDisposition(scope);
@@ -1223,6 +1417,10 @@ export function buildAccountDeletionPreview(
     spaces: plan.ownedSpaceOwnershipInfos.map((info) => ({
       spaceId: info.spaceId,
       spaceName: info.spaceName,
+      action:
+        plan.spacePlan.decisions.find(
+          (decision) => decision.spaceId === info.spaceId
+        )?.action ?? 'blocked',
       deletable: plan.deletableSpaceIds.has(info.spaceId),
       otherJoinedUserCount: info.otherAccessUserIds.length,
     })),
@@ -1307,6 +1505,7 @@ export async function runAccountDeletion(
 
   const {
     deletableSpaceIds,
+    familyTransferEntries,
     hardDeletableCommunityIds,
     communityTransferEntries,
     personalEventsToDelete,
@@ -1382,6 +1581,19 @@ export async function runAccountDeletion(
   //      they don't own (§6 — "remove corresponding kind:'access' row"). ──
   for (const row of externalAccessRows) {
     await ctx.db.delete(row._id);
+  }
+
+  // ── C2. Automatic family ownership transfer. The space and every
+  //      shared record/profile survive. ownerId and the access-role source of
+  //      authority move together, then every departing-owner access row is
+  //      removed in the same atomic mutation. No subscription identity,
+  //      entitlement or billing field is read or written here. ───────────────
+  for (const entry of familyTransferEntries) {
+    await ctx.db.patch(entry.spaceId, { ownerId: entry.successor.userId });
+    await ctx.db.patch(entry.successor.accessMembershipId, { role: 'admin' });
+    for (const ownerMembershipId of entry.ownerMembershipIds) {
+      await ctx.db.delete(ownerMembershipId);
+    }
   }
 
   // ── D. Task assignment cleanup (§9/§11) — preserved tasks only. ─────────
@@ -1766,6 +1978,34 @@ export async function runAccountDeletion(
       'אימות מחיקת החשבון נכשל: נותרו רשומות חברות (members) עבור המשתמש שנמחק.'
     );
   }
+  const residualOwnedSpaces = await ctx.db
+    .query('spaces')
+    .withIndex('by_owner', (q) => q.eq('ownerId', userId))
+    .collect();
+  if (residualOwnedSpaces.length > 0) {
+    throw new Error(
+      'אימות מחיקת החשבון נכשל: נותר מרחב משפחתי בבעלות המשתמש שנמחק.'
+    );
+  }
+  for (const entry of familyTransferEntries) {
+    const [space, successorMembership] = await Promise.all([
+      ctx.db.get(entry.spaceId),
+      ctx.db.get(entry.successor.accessMembershipId),
+    ]);
+    if (
+      !space ||
+      space.ownerId !== entry.successor.userId ||
+      !successorMembership ||
+      successorMembership.userId !== entry.successor.userId ||
+      successorMembership.spaceId !== entry.spaceId ||
+      resolveKind(successorMembership) !== 'access' ||
+      successorMembership.role !== 'admin'
+    ) {
+      throw new Error(
+        'אימות מחיקת החשבון נכשל: הבעלות על מרחב המשפחה ותפקיד החברות אינם תואמים.'
+      );
+    }
+  }
   // Community ownership transfer (§2/§5, updated rule) safety net: after
   // transfers (owner row explicitly deleted), non-owned removals (§12),
   // and hard-delete cascades (all member rows deleted with the
@@ -1864,6 +2104,7 @@ export async function runAccountDeletion(
   return {
     userId,
     deletedSpaceIds: [...deletableSpaceIds],
+    transferredSpaceIds: familyTransferEntries.map((entry) => entry.spaceId),
     deletedCommunityIds: [...hardDeletableCommunityIds],
     transferredCommunityIds,
     deletedEventCount,

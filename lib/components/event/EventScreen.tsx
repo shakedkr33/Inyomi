@@ -54,8 +54,10 @@ import {
 import { RelatedTasksSection } from '@/lib/components/event/RelatedTasksSection';
 import { RemindersCard } from '@/lib/components/event/RemindersCard';
 import { isDuplicateSaveBlockedByUnconfirmedDate } from '@/lib/eventDuplication';
+import { INVALID_MEETING_LINK, normalizeMeetingLink } from '@/lib/meetingLink';
 import { PERSONAL_TASK_VISIBILITY_DESCRIPTION } from '@/lib/personalEventTaskPresentation';
 import { APP_IS_RTL, needsExplicitRTL, rtl } from '@/lib/rtl';
+import { GooglePlacesAttribution } from './GooglePlacesAttribution';
 
 const ANDROID_MATCH_IOS_LAYOUT = Platform.OS === 'android' && APP_IS_RTL;
 import type {
@@ -275,6 +277,7 @@ export default function EventScreen({
     !requireDateConfirmation
   );
   const [duplicateDateError, setDuplicateDateError] = useState(false);
+  const [locationDraftSession, setLocationDraftSession] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const isSavingRef = useRef(false);
   const [pendingAssignmentSave, setPendingAssignmentSave] =
@@ -423,6 +426,15 @@ export default function EventScreen({
       scrollToDuplicateDateSection();
       return;
     }
+    let saveData = event;
+    if (event.onlineUrl?.trim() && (!isEditMode || event.onlineUrlEdited)) {
+      const onlineUrl = normalizeMeetingLink(event.onlineUrl);
+      if (!onlineUrl) {
+        Alert.alert('קישור לפגישה', INVALID_MEETING_LINK);
+        return;
+      }
+      saveData = { ...event, onlineUrl };
+    }
     if (isSavingRef.current) return;
 
     isSavingRef.current = true;
@@ -431,12 +443,13 @@ export default function EventScreen({
       if (onSave) {
         const newEventId = await (pendingAssignmentSave
           ? pendingAssignmentSave.retry()
-          : onSave(event));
+          : onSave(saveData));
         setPendingAssignmentSave(null);
         if (showSuccessSheet) {
           // FIXED: show success/share sheet instead of navigating away immediately
-          setSavedEvent({ ...event });
+          setSavedEvent({ ...saveData });
           setSavedEventId(newEventId);
+          setLocationDraftSession((value) => value + 1);
           setEvent(makeEmptyEvent(selectedDate));
           endDateUserEdited.current = false;
           endTimeUserEdited.current = false;
@@ -579,6 +592,7 @@ export default function EventScreen({
   }, []);
 
   const confirmDiscard = (): void => {
+    setLocationDraftSession((value) => value + 1);
     setDiscardOpen(false);
     setTitleError(false);
     if (isEditMode) {
@@ -875,13 +889,22 @@ export default function EventScreen({
 
           {/* Location */}
           <LocationCard
+            key={locationDraftSession}
             location={event.location}
             onlineUrl={event.onlineUrl}
+            locationUrl={event.locationUrl}
+            locationSource={event.locationSource}
+            googlePlaceId={event.googlePlaceId}
             onChange={(update: LocationUpdate) =>
               updateEvent({
                 location: update.location || undefined,
                 onlineUrl: update.onlineUrl || undefined,
                 locationUrl: update.locationUrl,
+                locationDirty: true,
+                onlineUrlEdited:
+                  update.onlineUrlEdited ?? Boolean(update.onlineUrl),
+                locationSource: update.locationSource,
+                googlePlaceId: update.googlePlaceId,
               })
             }
             onOverlayUpdate={handleOverlayUpdate}
@@ -1836,7 +1859,7 @@ function LocationSuggestionOverlay({
   const maxHeight = Math.max(
     SUGGESTION_ROW_H,
     Math.min(
-      SUGGESTION_ROW_H * anchor.suggestions.length,
+      SUGGESTION_ROW_H * anchor.suggestions.length + 33,
       showBelow ? spaceBelow : spaceAbove
     )
   );
@@ -1881,7 +1904,7 @@ function LocationSuggestionOverlay({
               onPress={() => anchor.onSelect(suggestion)}
               accessible={true}
               accessibilityRole="button"
-              accessibilityLabel={`בחרי כתובת: ${suggestion.description}`}
+              accessibilityLabel={`בחירת כתובת: ${suggestion.description}`}
             >
               <Text style={overlay.rowText} numberOfLines={2}>
                 {suggestion.description}
@@ -1889,6 +1912,7 @@ function LocationSuggestionOverlay({
             </Pressable>
           ))}
         </ScrollView>
+        <GooglePlacesAttribution />
       </View>
     </View>
   );

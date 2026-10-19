@@ -34,6 +34,7 @@ import { UpgradeModal } from '@/components/UpgradeModal';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { useEffectiveAccess } from '@/hooks/useEffectiveAccess';
+import { hasPhysicalLocation } from '@/lib/eventLocation';
 import { canManageEventReminderItem } from '@/lib/eventReminderPermissions';
 import {
   canViewUnansweredRsvp,
@@ -167,6 +168,8 @@ export interface EventItem {
   location?: string;
   /** geo:lat,lng URI — present when the event was saved with autocomplete coordinates */
   locationUrl?: string;
+  googlePlaceId?: string;
+  onlineUrl?: string;
   type: 'event' | 'task';
   iconColor: string;
   completed: boolean;
@@ -506,6 +509,8 @@ export function EventDetailsBottomSheet({
           groupName: event?.groupName,
           location: eventDoc.location,
           locationUrl: (eventDoc as { locationUrl?: string }).locationUrl,
+          googlePlaceId: (eventDoc as { googlePlaceId?: string }).googlePlaceId,
+          onlineUrl: (eventDoc as { onlineUrl?: string }).onlineUrl,
           description: eventDoc.description,
           isRecurring: eventDoc.isRecurring,
           recurringPattern: eventDoc.recurringPattern,
@@ -537,6 +542,8 @@ export function EventDetailsBottomSheet({
             groupName: event.groupName,
             location: event.location,
             locationUrl: event.locationUrl,
+            googlePlaceId: event.googlePlaceId,
+            onlineUrl: event.onlineUrl,
             description: event.description,
             isRecurring: event.isRecurring,
             recurringPattern: event.recurringPattern,
@@ -731,7 +738,8 @@ export function EventDetailsBottomSheet({
 
   const handleNavigate = (): void => {
     const location = displayEvent?.location?.trim();
-    if (!location || !parseGeoUri(displayEvent?.locationUrl)) return;
+    if (!location || !hasPhysicalLocation(location, displayEvent?.onlineUrl))
+      return;
     setNavPickerOpen(true);
   };
 
@@ -802,7 +810,10 @@ export function EventDetailsBottomSheet({
   const isLoading = convexEventId && eventDoc === undefined;
   const isNotFound = convexEventId && eventDoc === null;
   const hasLocation = Boolean(displayEvent?.location?.trim());
-  const hasNavigableLocation = parseGeoUri(displayEvent?.locationUrl) !== null;
+  const hasNavigableLocation = hasPhysicalLocation(
+    displayEvent?.location,
+    displayEvent?.onlineUrl
+  );
   const recurrenceLabel =
     displayEvent?.isRecurring === true
       ? formatRecurrenceLabel(displayEvent.recurringPattern)
@@ -2079,6 +2090,7 @@ export function EventDetailsBottomSheet({
 
       <NavigationPickerModal
         location={displayEvent?.location ?? null}
+        googlePlaceId={displayEvent?.googlePlaceId}
         latitude={parseGeoUri(displayEvent?.locationUrl)?.lat}
         longitude={parseGeoUri(displayEvent?.locationUrl)?.lng}
         onClose={() => setNavPickerOpen(false)}

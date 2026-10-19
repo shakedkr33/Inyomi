@@ -1,5 +1,6 @@
 // FIXED: added EventAttachmentDraft type and attachments field to EventData
 import type { Doc, Id } from '@/convex/_generated/dataModel';
+import type { LocationSource } from '../eventLocation';
 
 // ─── Attachments ──────────────────────────────────────────────────────────────
 
@@ -118,8 +119,13 @@ export interface EventData {
   location?: string; // physical address → events.location
   onlineUrl?: string; // meeting link → events.onlineUrl
   locationCoords?: { lat: number; lng: number };
-  /** geo:lat,lng URI — set when user picks from autocomplete, stored in events.locationUrl */
+  /** Compatibility-only legacy coordinates; new selections use googlePlaceId */
   locationUrl?: string;
+  /** Local edit intent; omitted location updates preserve stored fields. */
+  locationDirty?: boolean;
+  onlineUrlEdited?: boolean;
+  locationSource?: LocationSource | null;
+  googlePlaceId?: string | null;
   notes?: string;
   remindersEnabled: boolean;
   reminders: Reminder[];

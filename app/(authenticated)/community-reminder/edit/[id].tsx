@@ -192,7 +192,8 @@ export default function CommunityReminderEditScreen() {
   const taskId = id as Id<'tasks'>;
 
   const task = useQuery(api.tasks.getTaskDetails, { id: taskId });
-  const generateUploadUrl = useMutation(api.events.generateUploadUrl);
+  const createUploadIntent = useMutation(api.events.createStorageUploadIntent);
+  const registerStorageUpload = useMutation(api.events.registerStorageUpload);
   const updateReminder = useMutation(api.tasks.update);
 
   // ── Close / dismiss — always returns to the originating community screen ──
@@ -460,7 +461,8 @@ export default function CommunityReminderEditScreen() {
       // Upload any new attachment drafts (existing ones pass through as-is)
       const uploadedAttachments = await uploadAttachmentDraftsForConvex(
         attachments,
-        () => generateUploadUrl()
+        () => createUploadIntent(),
+        registerStorageUpload
       );
 
       // Build clearFields for fields that are being removed
@@ -534,7 +536,8 @@ export default function CommunityReminderEditScreen() {
     attachments,
     taskId,
     updateReminder,
-    generateUploadUrl,
+    createUploadIntent,
+    registerStorageUpload,
     handleClose,
     resolveDueDate,
     resolveDueAt,

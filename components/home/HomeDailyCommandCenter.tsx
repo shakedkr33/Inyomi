@@ -35,6 +35,7 @@ import {
   hasNavigableEventLocation,
   isHomeCompactNavButtonVisible,
 } from '@/lib/homeEventNavigation';
+import { normalizeMeetingLink } from '@/lib/meetingLink';
 import { getTextAlign, rtl } from '@/lib/rtl';
 import {
   COMMUNITY_REMINDER_DISMISS_LABEL,
@@ -64,6 +65,7 @@ export type HomeDailyItem = {
   endAt?: number;
   location: string;
   locationUrl?: string;
+  googlePlaceId?: string;
   remoteUrl?: string;
   type: 'event' | 'task';
   completed: boolean;
@@ -203,7 +205,11 @@ type HomeDailyCommandCenterProps = {
   onOpenItem: (item: HomeDailyItem) => void;
   onOpenTask: (taskId: string) => void;
   onToggleTask: (taskId: string) => void;
-  onNavigate: (location: string, locationUrl?: string) => void;
+  onNavigate: (
+    location: string,
+    locationUrl?: string,
+    googlePlaceId?: string
+  ) => void;
   onOpenRemoteUrl: (url: string) => void;
   onRsvp: (item: HomeDailyItem, status: 'yes' | 'maybe' | 'no') => void;
   onOpenTasks: () => void;
@@ -589,9 +595,12 @@ const UnifiedTimelineCard = ({
     : undefined;
   const hasNavigation = hasNavigableEventLocation(
     item.location,
-    item.locationUrl
+    item.locationUrl,
+    item.remoteUrl
   );
-  const hasRemoteAction = Boolean(item.remoteUrl);
+  const hasRemoteAction = Boolean(
+    item.remoteUrl && normalizeMeetingLink(item.remoteUrl)
+  );
   const hasPrimaryAction = hasNavigation || hasRemoteAction;
 
   // Badge config by temporal state
@@ -875,7 +884,7 @@ const UnifiedTimelineCard = ({
           <View style={styles.actionRow}>
             <Pressable
               accessible={true}
-              accessibilityLabel={hasRemoteAction ? 'הצטרפות לאירוע' : 'ניווט'}
+              accessibilityLabel={hasRemoteAction ? 'הצטרפות לפגישה' : 'ניווט'}
               accessibilityRole="button"
               onPress={hasRemoteAction ? onOpenRemoteUrl : onNavigate}
               style={styles.primaryAction}
@@ -886,7 +895,7 @@ const UnifiedTimelineCard = ({
                 size={18}
               />
               <Text style={styles.primaryActionText}>
-                {hasRemoteAction ? 'הצטרפות' : 'ניווט'}
+                {hasRemoteAction ? 'הצטרפות לפגישה' : 'ניווט'}
               </Text>
             </Pressable>
           </View>
@@ -1069,7 +1078,29 @@ const UnifiedTimelineCard = ({
     temporalState,
     location: item.location,
     locationUrl: item.locationUrl,
+    remoteUrl: item.remoteUrl,
   });
+
+  const compactLocationAction = showCompactNavButton ? (
+    <View style={styles.compactNavActionRow}>
+      <Pressable
+        accessible={true}
+        accessibilityLabel={hasRemoteAction ? 'הצטרפות לפגישה' : 'ניווט'}
+        accessibilityRole="button"
+        onPress={hasRemoteAction ? onOpenRemoteUrl : onNavigate}
+        style={styles.compactNavigateButton}
+      >
+        <MaterialIcons
+          color={tc.primary}
+          name={hasRemoteAction ? 'videocam' : 'near-me'}
+          size={17}
+        />
+        <Text style={styles.compactNavigateButtonText}>
+          {hasRemoteAction ? 'הצטרפות לפגישה' : 'ניווט'}
+        </Text>
+      </Pressable>
+    </View>
+  ) : null;
 
   if (showMaybeRsvpRow) {
     return (
@@ -1157,6 +1188,7 @@ const UnifiedTimelineCard = ({
             </Pressable>
           ))}
         </View>
+        {compactLocationAction}
       </View>
     );
   }
@@ -1217,18 +1249,7 @@ const UnifiedTimelineCard = ({
             emphasized
           />
         ) : null}
-        <View style={styles.compactNavActionRow}>
-          <Pressable
-            accessible={true}
-            accessibilityLabel={`ניווט אל ${item.title}`}
-            accessibilityRole="button"
-            onPress={onNavigate}
-            style={styles.compactNavigateButton}
-          >
-            <MaterialIcons color={tc.primary} name="near-me" size={17} />
-            <Text style={styles.compactNavigateButtonText}>ניווט</Text>
-          </Pressable>
-        </View>
+        {compactLocationAction}
       </View>
     );
   }
@@ -1916,7 +1937,13 @@ export function HomeDailyCommandCenter({
                   key={item.id}
                   nowMs={nowMs}
                   onImagePress={setImagePreviewUri}
-                  onNavigate={() => onNavigate(item.location, item.locationUrl)}
+                  onNavigate={() =>
+                    onNavigate(
+                      item.location,
+                      item.locationUrl,
+                      item.googlePlaceId
+                    )
+                  }
                   onOpen={() => onOpenItem(item)}
                   onOpenRemoteUrl={() => {
                     if (item.remoteUrl) onOpenRemoteUrl(item.remoteUrl);
@@ -1975,7 +2002,11 @@ export function HomeDailyCommandCenter({
                       nowMs={nowMs}
                       onImagePress={setImagePreviewUri}
                       onNavigate={() =>
-                        onNavigate(item.location, item.locationUrl)
+                        onNavigate(
+                          item.location,
+                          item.locationUrl,
+                          item.googlePlaceId
+                        )
                       }
                       onOpen={() => onOpenItem(item)}
                       onOpenRemoteUrl={() => {
@@ -2017,7 +2048,9 @@ export function HomeDailyCommandCenter({
               key={item.id}
               nowMs={nowMs}
               onImagePress={setImagePreviewUri}
-              onNavigate={() => onNavigate(item.location, item.locationUrl)}
+              onNavigate={() =>
+                onNavigate(item.location, item.locationUrl, item.googlePlaceId)
+              }
               onOpen={() => onOpenItem(item)}
               onOpenRemoteUrl={() => {
                 if (item.remoteUrl) onOpenRemoteUrl(item.remoteUrl);
@@ -2054,7 +2087,11 @@ export function HomeDailyCommandCenter({
               nowMs={nowMs}
               onImagePress={setImagePreviewUri}
               onNavigate={() =>
-                onNavigate(featuredItem.location, featuredItem.locationUrl)
+                onNavigate(
+                  featuredItem.location,
+                  featuredItem.locationUrl,
+                  featuredItem.googlePlaceId
+                )
               }
               onOpen={() => onOpenItem(featuredItem)}
               onOpenRemoteUrl={() => {
@@ -2097,7 +2134,11 @@ export function HomeDailyCommandCenter({
                     nowMs={nowMs}
                     onImagePress={setImagePreviewUri}
                     onNavigate={() =>
-                      onNavigate(item.location, item.locationUrl)
+                      onNavigate(
+                        item.location,
+                        item.locationUrl,
+                        item.googlePlaceId
+                      )
                     }
                     onOpen={() => onOpenItem(item)}
                     onOpenRemoteUrl={() => {

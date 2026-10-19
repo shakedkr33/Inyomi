@@ -15,6 +15,11 @@ import {
 import { getAuthUserId } from './sessionAuth';
 import { requireSpaceWriteAccess } from './spaceWriteAccess';
 import {
+  extractTaskStorageIds,
+  releaseStorageReferencesForParent,
+  syncStorageReferencesForParent,
+} from './storageLifecycle';
+import {
   buildImportantItemsBundleSubtasks,
   buildImportantItemsBundleTaskTitle,
   clearPersonalCompleted,
@@ -397,7 +402,8 @@ function sanitizeSubtasks(
       };
       if (subtask.attachment) {
         row.attachment = subtask.attachment;
-      } else if (subtask.image) {
+      }
+      if (subtask.image) {
         row.image = subtask.image;
       }
       return row;
@@ -1669,6 +1675,17 @@ export const create = mutation({
       }),
     });
 
+    await syncStorageReferencesForParent(ctx, {
+      parentType: 'task',
+      parentId: taskId as string,
+      before: new Set(),
+      after: extractTaskStorageIds({
+        attachments: stampedAttachments,
+        subtasks: sanitizeSubtasks(args.subtasks),
+      }),
+      actorUserId: userId,
+    });
+
     if (args.communityId && !hasExplicitAssigneeForCommunityActivity(args)) {
       const communityId = args.communityId;
       await insertCommunityActivity(ctx, {
@@ -1918,7 +1935,7 @@ export const getTaskDetails = query({
     //    visible only to active members; former/removed/never-joined → null.
     //
     // B. All other task types (personal, assigned, community-assigned,
-    //    event-linked copies, soft-deleted personal tasks):
+    //    event-linked copies):
     //    visible only to the creator or an explicit assignee
     //    (isUserParticipantInTask). An unrelated authenticated user receives
     //    null so the existence of the task is not revealed.
@@ -1931,6 +1948,7 @@ export const getTaskDetails = query({
     // guard, isGeneralCommunityReminder returns false (it excludes
     // deleted/archived), causing the logic to fall through to
     // isUserParticipantInTask whose creator check would grant access.
+    if (task.deletedAt !== undefined) return null;
     if (isDeletedOrArchivedGeneralCommunityReminder(task)) return null;
 
     let canEdit = false;
@@ -2096,6 +2114,7 @@ export const getTaskAttachmentUrl = query({
     if (!task) return null;
 
     // Same deleted/archived guard as getTaskDetails — see comment there.
+    if (task.deletedAt !== undefined) return null;
     if (isDeletedOrArchivedGeneralCommunityReminder(task)) return null;
 
     if (isGeneralCommunityReminder(task)) {
@@ -2461,7 +2480,18 @@ export const update = mutation({
       patch.assignedToMemberIds = existing.assignedToMemberIds;
     }
 
+    const storageReferencesBefore = extractTaskStorageIds(existing);
     await ctx.db.patch(id, patch);
+    await syncStorageReferencesForParent(ctx, {
+      parentType: 'task',
+      parentId: id as string,
+      before: storageReferencesBefore,
+      after: extractTaskStorageIds({
+        attachments: nextAttachments,
+        subtasks: nextSubtasks,
+      }),
+      actorUserId: userId,
+    });
 
     // ── General community reminder scheduling lifecycle ──
     const communityId = existing.communityId;
@@ -2597,11 +2627,26 @@ export const setSubtaskAttachment = mutation({
 
     await assertSubtaskEditAccess(ctx, existing, userId);
 
-    const subtasks = (existing.subtasks ?? []).map((st) =>
-      st.id === subtaskId ? { ...st, attachment: attachment ?? undefined } : st
-    );
+    const subtasks = (existing.subtasks ?? []).map((st) => {
+      if (st.id !== subtaskId) return st;
+      // Match InlineSubtasksEditor: attachment ?? image. Old clients omit a
+      // selector, so resolve the displayed slot against persisted state.
+      if (st.attachment !== undefined) return { ...st, attachment };
+      return { ...st, image: undefined, attachment };
+    });
 
+    const storageReferencesBefore = extractTaskStorageIds(existing);
     await ctx.db.patch(id, { subtasks, updatedAt: Date.now() });
+    await syncStorageReferencesForParent(ctx, {
+      parentType: 'task',
+      parentId: id as string,
+      before: storageReferencesBefore,
+      after: extractTaskStorageIds({
+        attachments: existing.attachments,
+        subtasks,
+      }),
+      actorUserId: userId,
+    });
   },
 });
 
@@ -2643,9 +2688,23 @@ export const removeSubtask = mutation({
 
     await assertSubtaskEditAccess(ctx, existing, userId);
 
+    const subtasks = (existing.subtasks ?? []).filter(
+      (st) => st.id !== subtaskId
+    );
+    const storageReferencesBefore = extractTaskStorageIds(existing);
     await ctx.db.patch(id, {
-      subtasks: (existing.subtasks ?? []).filter((st) => st.id !== subtaskId),
+      subtasks,
       updatedAt: Date.now(),
+    });
+    await syncStorageReferencesForParent(ctx, {
+      parentType: 'task',
+      parentId: id as string,
+      before: storageReferencesBefore,
+      after: extractTaskStorageIds({
+        attachments: existing.attachments,
+        subtasks,
+      }),
+      actorUserId: userId,
     });
   },
 });
@@ -2756,6 +2815,7 @@ export const remove = mutation({
       });
     }
 
+    await releaseStorageReferencesForParent(ctx, 'task', id as string);
     await ctx.db.delete(id);
   },
 });
@@ -3178,6 +3238,13 @@ export const restoreTask = mutation({
 
     if (task.deletedBy !== userId) {
       throw new Error('אין הרשאה לשחזר משימה זו');
+    }
+    if (task.deletedAt === undefined) throw new Error('המשימה לא נמחקה');
+    if (
+      task.deleteExpiresAt !== undefined &&
+      task.deleteExpiresAt <= Date.now()
+    ) {
+      throw new Error('תקופת השחזור של המשימה הסתיימה');
     }
 
     await ctx.db.patch(id, {

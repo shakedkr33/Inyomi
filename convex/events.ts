@@ -1,5 +1,6 @@
 // FIXED: added generateUploadUrl, getEventAttachmentUrl, and attachment support to create + update
 import { v } from 'convex/values';
+import { normalizeEventLocation } from '../lib/eventLocation';
 import { CANCELLED_COMMUNITY_EVENT_VISIBILITY_WINDOW_MS } from '../lib/eventsTabDateHelpers';
 import type { PersonalHomeParticipants } from '../lib/personalHomeParticipants';
 import { internal } from './_generated/api';
@@ -45,6 +46,13 @@ import {
 import { resolvePersonalHomeParticipants } from './personalHomeParticipants';
 import { getAuthUserId } from './sessionAuth';
 import { requireSpaceWriteAccess } from './spaceWriteAccess';
+import {
+  extractEventStorageIds,
+  registerUploadedFileForIntent,
+  releaseStorageReferencesForParent,
+  STORAGE_UPLOAD_INTENT_TTL_MS,
+  syncStorageReferencesForParent,
+} from './storageLifecycle';
 import {
   isStorageReferencedByOtherDocument,
   safeDeleteStorageIfUnreferenced,
@@ -273,6 +281,39 @@ export const generateUploadUrl = mutation({
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error('לא מחובר למערכת');
     return await ctx.storage.generateUploadUrl();
+  },
+});
+
+// Managed upload flow for current clients. The legacy mutation above remains
+// available so already-installed builds are not broken during the cutover.
+export const createStorageUploadIntent = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('לא מחובר למערכת');
+    const now = Date.now();
+    const uploadUrl = await ctx.storage.generateUploadUrl();
+    const intentId = await ctx.db.insert('storageUploadIntents', {
+      userId,
+      state: 'pending',
+      createdAt: now,
+      expiresAt: now + STORAGE_UPLOAD_INTENT_TTL_MS,
+      updatedAt: now,
+    });
+    return { intentId, uploadUrl };
+  },
+});
+
+export const registerStorageUpload = mutation({
+  args: {
+    intentId: v.id('storageUploadIntents'),
+    storageId: v.id('_storage'),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error('לא מחובר למערכת');
+    await registerUploadedFileForIntent(ctx, { ...args, userId });
+    return { registered: true as const };
   },
 });
 
@@ -1583,6 +1624,16 @@ export const create = mutation({
     category: v.optional(v.string()),
     location: v.optional(v.string()),
     locationUrl: v.optional(v.string()),
+    locationSource: v.optional(
+      v.union(
+        v.literal('manual'),
+        v.literal('imported'),
+        v.literal('google'),
+        v.literal('unknown'),
+        v.null()
+      )
+    ),
+    googlePlaceId: v.optional(v.union(v.string(), v.null())),
     onlineUrl: v.optional(v.string()),
     groupId: v.optional(v.id('spaces')),
     // FIXED: persist personal event participants collected in EventScreen
@@ -1678,6 +1729,7 @@ export const create = mutation({
       throw new Error('פעולה זו זמינה רק באירוע אישי');
     const eventId = await ctx.db.insert('events', {
       ...eventFields,
+      ...normalizeEventLocation(eventFields),
       allFamily: args.communityId ? args.allFamily : false,
       spaceId: resolvedSpaceId,
       attachments: stamped,
@@ -1695,6 +1747,14 @@ export const create = mutation({
         sharedWithUserIds: args.sharedWithUserIds,
         createdBy: userId,
       }),
+    });
+
+    await syncStorageReferencesForParent(ctx, {
+      parentType: 'event',
+      parentId: eventId as string,
+      before: new Set(),
+      after: extractEventStorageIds({ attachments: stamped }),
+      actorUserId: userId,
     });
 
     if (personalTaskChanges?.length) {
@@ -1812,6 +1872,16 @@ export const update = mutation({
     category: v.optional(v.string()),
     location: v.optional(v.string()),
     locationUrl: v.optional(v.string()),
+    locationSource: v.optional(
+      v.union(
+        v.literal('manual'),
+        v.literal('imported'),
+        v.literal('google'),
+        v.literal('unknown'),
+        v.null()
+      )
+    ),
+    googlePlaceId: v.optional(v.union(v.string(), v.null())),
     onlineUrl: v.optional(v.string()),
     groupId: v.optional(v.id('spaces')),
     // FIXED: allow edit flows to preserve/update existing event sharing fields
@@ -1880,7 +1950,7 @@ export const update = mutation({
       await validatePersonalInvitations(ctx, userId, fields, existing);
     const applyPersonalTasks = await preparePersonalTaskChanges(
       ctx,
-      { ...existing, ...fields },
+      { ...existing, ...fields, ...normalizeEventLocation(fields, existing) },
       userId,
       personalTaskChanges,
       deletedPersonalTaskIds,
@@ -1954,6 +2024,7 @@ export const update = mutation({
         : sanitizedImportantItems;
     const patch = {
       ...fields,
+      ...normalizeEventLocation(fields, existing),
       ...(stampedAttachments !== undefined
         ? { attachments: stampedAttachments }
         : {}),
@@ -1967,8 +2038,18 @@ export const update = mutation({
         value as unknown
       )
     );
+    const storageReferencesBefore = extractEventStorageIds(existing);
 
     await ctx.db.patch(id, patch);
+    await syncStorageReferencesForParent(ctx, {
+      parentType: 'event',
+      parentId: id as string,
+      before: storageReferencesBefore,
+      after: extractEventStorageIds({
+        attachments: stampedAttachments ?? existing.attachments,
+      }),
+      actorUserId: userId,
+    });
     await applyPersonalTasks();
 
     if (existing.communityId && hasActualChange) {
@@ -2457,6 +2538,7 @@ export const deleteCancelledEventsPastGracePeriod = internalMutation({
       )
       .collect();
     for (const ev of old) {
+      await releaseStorageReferencesForParent(ctx, 'event', ev._id as string);
       await ctx.db.delete(ev._id);
     }
     return { deleted: old.length };
@@ -2512,6 +2594,7 @@ export const deleteEvent = mutation({
       await ctx.db.patch(row._id, { sourceStatus: 'deleted' });
     }
 
+    await releaseStorageReferencesForParent(ctx, 'event', eventId as string);
     await ctx.db.delete(eventId);
   },
 });
@@ -2595,6 +2678,12 @@ export const restorePersonalEvent = mutation({
     if (event.deletedAt === undefined) throw new Error('האירוע לא נמחק');
     if ((event.deletedBy as string | undefined) !== (userId as string))
       throw new Error('אין הרשאה לשחזר אירוע זה');
+    if (
+      event.deleteExpiresAt !== undefined &&
+      event.deleteExpiresAt <= Date.now()
+    ) {
+      throw new Error('תקופת השחזור של האירוע הסתיימה');
+    }
 
     // Also cover legacy trash records deleted before link revocation shipped.
     // Restoring the event must not silently republish its original public URL.
@@ -2886,6 +2975,8 @@ export const listCommunityEventsForDate = query({
             communityName: community.name,
             location: ev.location,
             locationUrl: ev.locationUrl,
+            googlePlaceId: ev.googlePlaceId,
+            onlineUrl: ev.onlineUrl,
             importantItems: ev.importantItems ?? [],
             isSavedToMyCalendar,
           }));
